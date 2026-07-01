@@ -53,10 +53,12 @@
   .orb::after{content:"";position:absolute;inset:6px;border-radius:50%;background:#0a0e1c}
   .brandname{font-size:16px;font-weight:700}
   .brandsub{font-size:11px;color:var(--muted);letter-spacing:.04em}
-  nav#nav{display:flex;flex-direction:column;gap:3px}
+  nav#nav{display:flex;flex-direction:column;gap:2px}
+  .nav-sector{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:10px 12px 3px;margin-top:4px;border-top:1px solid var(--border)}
+  .nav-sector:first-child{border-top:none;margin-top:0;padding-top:4px}
   nav#nav button{display:flex;align-items:center;gap:11px;width:100%;justify-content:flex-start;
-    background:transparent;border:1px solid transparent;color:var(--muted);font-size:14px;font-weight:500;padding:10px 12px;border-radius:11px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
-  nav#nav button svg{width:18px;height:18px;flex:0 0 auto;opacity:.85}
+    background:transparent;border:1px solid transparent;color:var(--muted);font-size:14px;font-weight:500;padding:9px 12px;border-radius:11px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+  nav#nav button svg{width:17px;height:17px;flex:0 0 auto;opacity:.8}
   nav#nav button:hover{background:var(--surface);color:var(--text)}
   nav#nav button.active{color:#fff;background:linear-gradient(135deg,rgba(34,211,238,.18),rgba(139,92,246,.18));border-color:var(--border-2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
   nav#nav button.active svg{opacity:1;color:var(--cyan)}
@@ -121,6 +123,7 @@
     nav#nav{flex-direction:row}
     nav#nav button .label{display:none}
     nav#nav button{padding:9px}
+    .nav-sector{display:none}
     .side-foot{display:none}
     .content{padding:16px}
     .msg{max-width:94%}
@@ -137,23 +140,79 @@
     <div class="brand"><span class="orb" aria-hidden="true"></span>
       <div><div class="brandname">PersonalOS</div><div class="brandsub">AMY · AI OS</div></div></div>
     <nav id="nav" class="hidden" aria-label="Primary">
-      <button data-tab="chat" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="label">Chat</span></button>
-      <button data-tab="goals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg><span class="label">Goals</span></button>
-      <button data-tab="reflect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2"/></svg><span class="label">Reflect</span></button>
-      <button data-tab="learn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 7-7" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 5h4v4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="label">Learn</span></button>
-      <button data-tab="finance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="label">Finance</span></button>
-      <button data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span class="label">Agents</span></button>
-      <button data-tab="portfolio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg><span class="label">Portfolio</span></button>
-      <button data-tab="timeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="2" x2="12" y2="22"/><polyline points="17 7 12 2 7 7"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/></svg><span class="label">Timeline</span></button>
-      <button data-tab="decisions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="label">Decisions</span></button>
-      <button data-tab="intelligence"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="12" r="10"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="label">Intel</span></button>
-      <button data-tab="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><span class="label">Memory Lake</span></button>
-      <button data-tab="tags"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span class="label">Tags</span></button>
-      <button data-tab="habits"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span class="label">Habits</span></button>
-      <button data-tab="srs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span class="label">Review</span></button>
-      <button data-tab="entities"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/><line x1="12" y1="11" x2="5" y2="15"/><line x1="12" y1="11" x2="19" y2="15"/></svg><span class="label">People</span></button>
-      <button data-tab="import"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M8 8l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" stroke-linecap="round"/></svg><span class="label">Import</span></button>
-      <button data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0" stroke-linecap="round"/></svg><span class="label">Account</span></button>
+
+      <!-- ── MIND ── -->
+      <div class="nav-sector">Mind</div>
+      <button data-tab="chat" class="active">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="label">Chat</span></button>
+      <button data-tab="memory">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+        <span class="label">Memory Lake</span></button>
+      <button data-tab="tags">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg>
+        <span class="label">Tags</span></button>
+
+      <!-- ── DAILY LIFE ── -->
+      <div class="nav-sector">Daily Life</div>
+      <button data-tab="timeline">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="2" x2="12" y2="22"/><polyline points="17 7 12 2 7 7"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/></svg>
+        <span class="label">Timeline</span></button>
+      <button data-tab="habits">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span class="label">Habits</span></button>
+      <button data-tab="goals">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg>
+        <span class="label">Goals</span></button>
+      <button data-tab="decisions">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        <span class="label">Decisions</span></button>
+
+      <!-- ── FINANCE ── -->
+      <div class="nav-sector">Finance</div>
+      <button data-tab="finance">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        <span class="label">Finance CFO</span></button>
+
+      <!-- ── GROWTH ── -->
+      <div class="nav-sector">Growth</div>
+      <button data-tab="reflect">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2"/></svg>
+        <span class="label">Reflect</span></button>
+      <button data-tab="learn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 7-7" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 5h4v4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="label">Learn</span></button>
+      <button data-tab="srs">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        <span class="label">Review Cards</span></button>
+
+      <!-- ── PEOPLE ── -->
+      <div class="nav-sector">People</div>
+      <button data-tab="entities">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/><line x1="12" y1="11" x2="5" y2="15"/><line x1="12" y1="11" x2="19" y2="15"/></svg>
+        <span class="label">People &amp; Entities</span></button>
+
+      <!-- ── AI SYSTEMS ── -->
+      <div class="nav-sector">AI Systems</div>
+      <button data-tab="intelligence">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="12" r="10"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        <span class="label">Intelligence</span></button>
+      <button data-tab="agents">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg>
+        <span class="label">Agents</span></button>
+      <button data-tab="portfolio">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
+        <span class="label">Portfolio</span></button>
+
+      <!-- ── SYSTEM ── -->
+      <div class="nav-sector">System</div>
+      <button data-tab="import">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M8 8l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" stroke-linecap="round"/></svg>
+        <span class="label">Vault Import</span></button>
+      <button data-tab="account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0" stroke-linecap="round"/></svg>
+        <span class="label">Account</span></button>
+
     </nav>
     <div class="side-foot"><span class="dot"></span><span id="who">connecting…</span></div>
   </aside>
