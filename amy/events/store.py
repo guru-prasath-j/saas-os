@@ -16,8 +16,19 @@ GOAL_CREATED = "goal.created"
 GOAL_COMPLETED = "goal.completed"
 CAPTURE_ADDED = "capture.added"
 VAULT_IMPORTED = "vault.imported"
+VAULT_NOTE_EDITED = "vault.note_edited"
 AGENT_TOGGLED = "agent.toggled"
 DIGEST_GENERATED = "digest.generated"
+
+# Finance events
+FINANCE_TRANSACTION_ADDED = "finance.transaction_added"
+FINANCE_CSV_IMPORTED = "finance.csv_imported"
+FINANCE_PDF_IMPORTED = "finance.pdf_imported"
+FINANCE_GMAIL_SYNCED = "finance.gmail_synced"
+FINANCE_BUDGET_SET = "finance.budget_set"
+FINANCE_SUBSCRIPTION_ADDED = "finance.subscription_added"
+FINANCE_INVESTMENT_ADDED = "finance.investment_added"
+FINANCE_INCOME_ADDED = "finance.income_added"
 
 
 def _now() -> str:

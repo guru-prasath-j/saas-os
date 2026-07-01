@@ -7,6 +7,7 @@ the knowledge layer (that one is left untouched).
 """
 from __future__ import annotations
 
+import datetime as _dt
 import sqlite3
 from pathlib import Path
 
@@ -24,11 +25,19 @@ class GraphStore:
             CREATE TABLE IF NOT EXISTS nodes (id TEXT PRIMARY KEY, type TEXT, label TEXT, ref TEXT);
             CREATE TABLE IF NOT EXISTS edges (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, src TEXT, dst TEXT, rel TEXT, weight REAL,
+                created_at TEXT, updated_at TEXT,
                 UNIQUE(src, dst, rel));
             CREATE INDEX IF NOT EXISTS idx_nodes_type ON nodes(type);
             CREATE INDEX IF NOT EXISTS idx_edges_src ON edges(src);
             CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst);
-            """)
+            """
+        )
+        # Migrate existing DBs that lack the timestamp columns
+        for col in ("created_at", "updated_at"):
+            try:
+                self.conn.execute(f"ALTER TABLE edges ADD COLUMN {col} TEXT")
+            except Exception:
+                pass  # column already exists
         self.conn.commit()
 
     def reset(self):
@@ -42,8 +51,12 @@ class GraphStore:
     def add_edge(self, src, dst, rel, weight=1.0):
         if rel not in REL_TYPES:
             raise ValueError(f"unknown rel '{rel}'")
-        self.conn.execute("INSERT OR IGNORE INTO edges (src,dst,rel,weight) VALUES (?,?,?,?)",
-                          (src, dst, rel, weight))
+        now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+        self.conn.execute(
+            "INSERT INTO edges (src,dst,rel,weight,created_at,updated_at) VALUES (?,?,?,?,?,?) "
+            "ON CONFLICT(src,dst,rel) DO UPDATE SET weight=excluded.weight, updated_at=excluded.updated_at",
+            (src, dst, rel, weight, now, now)
+        )
 
     def commit(self):
         self.conn.commit()
@@ -62,7 +75,8 @@ class GraphStore:
 
     def edges(self, limit=5000):
         return [dict(r) for r in self.conn.execute(
-            "SELECT src,dst,rel,weight FROM edges LIMIT ?", (limit,)).fetchall()]
+            "SELECT src,dst,rel,weight,created_at,updated_at FROM edges LIMIT ?",
+            (limit,)).fetchall()]
 
     def neighbors(self, node_id, rel=None):
         q = ("SELECT dst AS other, rel, weight FROM edges WHERE src=? "

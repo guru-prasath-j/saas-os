@@ -35,6 +35,15 @@ _KIND = {
     "digest.generated": ("digest", False),
     "agent.toggled": ("system", False),
     "vault.imported": ("system", False),
+    "vault.note_edited": ("vault", False),
+    # Finance events
+    "finance.transaction_added": ("finance", False),
+    "finance.csv_imported": ("finance", True),
+    "finance.pdf_imported": ("finance", True),
+    "finance.gmail_synced": ("finance", True),
+    "finance.budget_set": ("finance", False),
+    "finance.subscription_added": ("finance", False),
+    "finance.investment_added": ("finance", False),
 }
 
 
@@ -189,6 +198,58 @@ class MemoryWriter:
             return txt, (f"{t} ({repo})" if t else repo), f"Repo: {repo}\nURL: {p.get('url','')}", links, ["github"]
         if etype == "digest.generated":
             return "Daily digest generated.", None, "", [], tags
+        if etype == "vault.note_edited":
+            path = p.get("path", "")
+            return f"Vault note edited: `{path}`", None, "", [], ["vault"]
+        # Finance events
+        if etype == "finance.transaction_added":
+            amt = p.get("amount", 0)
+            merchant = p.get("merchant", "")
+            cat = p.get("category", "")
+            sign = "+" if amt > 0 else ""
+            return (f"Transaction: {merchant} {sign}₹{abs(amt):,.0f} [{cat}]",
+                    None, "", [], ["finance"])
+        if etype == "finance.csv_imported":
+            bank = p.get("bank_name", "bank")
+            n = p.get("imported", 0)
+            skipped = p.get("skipped", 0)
+            title = f"CSV import — {bank} ({n} transactions)"
+            body = f"- Bank: {bank}\n- Imported: {n}\n- Skipped: {skipped}"
+            return (f"Imported {n} transactions from {bank} CSV (skipped {skipped})",
+                    title, body, [bank], ["finance", "import"])
+        if etype == "finance.pdf_imported":
+            bank = p.get("bank_name", "bank")
+            n = p.get("imported", 0)
+            skipped = p.get("skipped", 0)
+            title = f"PDF import — {bank} ({n} transactions)"
+            body = f"- Bank: {bank}\n- Imported: {n}\n- Skipped: {skipped}"
+            return (f"Imported {n} transactions from {bank} PDF (skipped {skipped})",
+                    title, body, [bank], ["finance", "import"])
+        if etype == "finance.gmail_synced":
+            n = p.get("imported", 0)
+            skipped = p.get("skipped", 0)
+            accounts = p.get("accounts_synced", 0)
+            title = f"Gmail sync — {n} transactions"
+            body = (f"- Imported: {n}\n- Skipped: {skipped}\n"
+                    f"- Accounts synced: {accounts}")
+            return (f"Gmail sync: {n} new transactions (skipped {skipped})",
+                    title, body, [], ["finance", "gmail"])
+        if etype == "finance.budget_set":
+            cat = p.get("category", "")
+            limit = p.get("monthly_limit", 0)
+            return (f"Budget set: {cat} → ₹{limit:,.0f}/month",
+                    None, "", [], ["finance", "budget"])
+        if etype == "finance.subscription_added":
+            name = p.get("name", "")
+            cost = p.get("monthly_cost", 0)
+            return (f"Subscription added: {name} (₹{cost:,.0f}/month)",
+                    None, "", [], ["finance", "subscription"])
+        if etype == "finance.investment_added":
+            name = p.get("name", "")
+            itype = p.get("type", "")
+            value = p.get("current_value", 0)
+            return (f"Investment added: {name} ({itype}, ₹{value:,.0f})",
+                    None, "", [], ["finance", "investment"])
         # generic
         summary = ", ".join(f"{k}={v}" for k, v in list(p.items())[:4])
         return f"{etype}: {summary}", None, "", [], tags
