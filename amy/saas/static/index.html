@@ -506,6 +506,7 @@
             <button class="ghost sm" id="finTab-subscriptions" onclick="switchFinView('subscriptions',this)">Subscriptions</button>
             <button class="ghost sm" id="finTab-investments" onclick="switchFinView('investments',this)">Investments</button>
             <button class="ghost sm" id="finTab-income" onclick="switchFinView('income',this)">Income</button>
+            <button class="ghost sm" id="finTab-custodial" onclick="switchFinView('custodial',this)">Custodial</button>
             <button class="ghost sm" id="finTab-import" onclick="switchFinView('import',this)">Import</button>
           </div>
         </div>
@@ -708,6 +709,53 @@
           </div>
         </div>
 
+        <!-- CUSTODIAL -->
+        <div id="finPane-custodial" class="hidden">
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+              <b style="flex:1">Custodial account</b>
+              <select id="custAccountPicker" onchange="loadCustodialAll()" style="flex:0 0 220px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
+                <option value="">No custodial account yet</option>
+              </select>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0">Money held in-trust for someone else — never counted as your own income or spend. Amy detects refills, nudges at month-end, and logs each transfer you send yourself to your Google Sheet in one tap. It never sends money.</p>
+          </div>
+
+          <div id="custBody" class="hidden">
+            <div class="card">
+              <div style="display:flex;align-items:center;gap:10px">
+                <b style="flex:1">Balance</b>
+                <span id="custBalance" class="chip" style="color:var(--success)"></span>
+              </div>
+            </div>
+
+            <div class="card" id="custValidationCard">
+              <b>Validation</b>
+              <div id="custValidationList" class="muted" style="margin-top:8px">Loading…</div>
+            </div>
+
+            <div class="card">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+                <b style="flex:1">This cycle</b>
+                <span id="custDueDate" class="faint" style="font-size:11px"></span>
+                <button class="ghost sm" onclick="loadCustodialPrefill()">Refresh</button>
+              </div>
+              <p class="faint" style="font-size:12.5px;margin:0 0 10px">Prefilled from last cycle — edit before confirming. Send the transfer yourself first, then confirm here.</p>
+              <div id="custPrefillList" class="muted">Loading…</div>
+            </div>
+
+            <div class="card">
+              <h3 style="margin-top:0">Add beneficiary</h3>
+              <div class="row" style="flex-wrap:wrap;gap:8px">
+                <input id="custBenName" placeholder="Name (e.g. Eswari (personal UPI))" style="flex:1;min-width:160px"/>
+                <input id="custBenSheetTab" placeholder="Sheet tab (defaults to name)" style="flex:1;min-width:140px"/>
+                <button style="flex:0 0 68px" onclick="addCustodialBeneficiary()">Add</button>
+              </div>
+              <span class="meta" id="custBenMsg"></span>
+            </div>
+          </div>
+        </div>
+
         <!-- IMPORT / ACCOUNTS -->
         <div id="finPane-import" class="hidden">
           <!-- Global Gmail sync card -->
@@ -729,9 +777,10 @@
               <input id="accBank" placeholder="Bank name (e.g. State Bank of India)" style="flex:1;min-width:140px"/>
               <select id="accType" style="flex:0 0 110px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
                 <option value="savings">Savings</option>
-                <option value="current">Current</option>
-                <option value="credit">Credit Card</option>
+                <option value="checking">Current</option>
+                <option value="credit_card">Credit Card</option>
                 <option value="investment">Investment</option>
+                <option value="custodial">Custodial</option>
               </select>
               <button style="flex:0 0 68px" onclick="addAccount()">Add</button>
             </div>
@@ -1715,7 +1764,7 @@ function loadFinance(){
 
 function switchFinView(view, btn){
   _finView=view;
-  ['overview','transactions','budget','subscriptions','investments','income','import'].forEach(v=>{
+  ['overview','transactions','budget','subscriptions','investments','income','custodial','import'].forEach(v=>{
     document.getElementById('finPane-'+v).classList.toggle('hidden', v!==view);
     const tb=document.getElementById('finTab-'+v);
     if(tb) tb.classList.toggle('active', v===view);
@@ -1726,6 +1775,7 @@ function switchFinView(view, btn){
   if(view==='subscriptions'){ loadFinSubs(); loadSubSuggestions(); }
   if(view==='investments') loadFinInvestments();
   if(view==='income'){ loadFinIncome(); loadIncomeTxns(); }
+  if(view==='custodial') loadCustodialAccountPicker();
   if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
 }
 
@@ -1994,6 +2044,125 @@ function dismissBudgetSuggestion(i){
   if(_budgetSuggestions.every(s=>!s)){
     document.getElementById('budgetSuggestList').innerHTML='<p class="muted">No new categories to suggest — all covered by existing budgets.</p>';
   }
+}
+
+/* ── Custodial accounts (money held in-trust — never the user's own) ───── */
+let _custPrefill=[];
+
+async function loadCustodialAccountPicker(){
+  const sel=document.getElementById('custAccountPicker');
+  try{
+    const d=await jget('/api/finance/accounts');
+    const custAccs=(d.accounts||[]).filter(a=>a.account_type==='custodial');
+    sel.innerHTML = custAccs.length
+      ? custAccs.map(a=>`<option value="${a.id}">${a.nickname}</option>`).join('')
+      : '<option value="">No custodial account yet — add one in Import tab</option>';
+  }catch(e){}
+  loadCustodialAll();
+}
+
+function loadCustodialAll(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const body=document.getElementById('custBody');
+  if(!aid){ body.classList.add('hidden'); return; }
+  body.classList.remove('hidden');
+  loadCustodialPrefill();
+  loadCustodialValidation();
+}
+
+async function loadCustodialPrefill(){
+  const aid=document.getElementById('custAccountPicker').value;
+  if(!aid) return;
+  const el=document.getElementById('custPrefillList');
+  el.innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget(`/api/finance/custodial/${aid}/next-cycle-prefill`);
+    document.getElementById('custBalance').textContent=_fmt(d.balance||0);
+    document.getElementById('custDueDate').textContent=d.due_date?('due '+d.due_date):'';
+    _custPrefill=d.beneficiaries||[];
+    if(!_custPrefill.length){
+      el.innerHTML='<p class="muted">No beneficiaries yet — add one below.</p>';
+      return;
+    }
+    el.innerHTML=_custPrefill.map((b,i)=>`
+      <div class="toggle" id="custRow-${i}" style="flex-wrap:wrap;gap:8px">
+        <div class="row" style="flex:1;min-width:220px;gap:8px">
+          <span style="flex:0 0 140px;align-self:center;font-size:13px">${b.name}</span>
+          <input id="cb-amt-${i}" type="number" min="0" step="1" placeholder="Amount" value="${b.last_amount||''}" style="flex:0 0 110px"/>
+          <select id="cb-mode-${i}" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+            <option value="UPI">UPI</option>
+            <option value="NEFT">NEFT</option>
+            <option value="Account Transfer">Account Transfer</option>
+          </select>
+          <input id="cb-notes-${i}" placeholder="Notes" style="flex:1;min-width:100px"/>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="faint" style="font-size:11px">${b.last_date?('last '+b.last_date):'never logged'}</span>
+          <button class="sm" onclick="confirmDisbursement(${i})">✓ Confirm sent</button>
+        </div>
+      </div>`).join('');
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+
+async function confirmDisbursement(i){
+  const aid=document.getElementById('custAccountPicker').value;
+  const b=_custPrefill[i];
+  const amount=parseFloat(document.getElementById('cb-amt-'+i).value);
+  const mode=document.getElementById('cb-mode-'+i).value;
+  const notes=document.getElementById('cb-notes-'+i).value;
+  if(!amount){ alert('Enter an amount.'); return; }
+  try{
+    const r=await api(`/api/finance/custodial/${aid}/disburse`,{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({beneficiary_id:b.beneficiary_id, amount, mode, notes})});
+    const d=await r.json();
+    if(!r.ok){ alert(d.detail||'Error confirming disbursement'); return; }
+    const row=document.getElementById('custRow-'+i);
+    if(row){
+      const sheetMsg=d.sheet_write&&d.sheet_write.ok ? '✓ logged to Sheet' : '⚠ Sheet write failed — retry from Validation';
+      row.innerHTML=`<span class="muted">${b.name}: confirmed ✓ (${sheetMsg})</span>`;
+    }
+    document.getElementById('custBalance').textContent=_fmt(d.balance||0);
+    loadCustodialValidation();
+  }catch(e){ alert(e.message); }
+}
+
+async function loadCustodialValidation(){
+  const aid=document.getElementById('custAccountPicker').value;
+  if(!aid) return;
+  const el=document.getElementById('custValidationList');
+  el.innerHTML='<p class="muted">Checking…</p>';
+  try{
+    const d=await jget(`/api/finance/custodial/${aid}/validate`);
+    const issues=d.issues||[];
+    if(!issues.length){ el.innerHTML='<p style="color:var(--success)">✓ No issues this cycle.</p>'; return; }
+    el.innerHTML=issues.map(iss=>{
+      if(iss.check==='split_sum_mismatch')
+        return `<div class="chip" style="color:var(--warn);display:block;margin-bottom:6px">⚠ ${iss.beneficiary} split totals ${_fmt(iss.actual)}, expected ${_fmt(iss.expected)}</div>`;
+      if(iss.check==='beneficiary_skipped')
+        return `<div class="chip" style="color:var(--warn);display:block;margin-bottom:6px">⚠ ${iss.beneficiary} not logged this cycle</div>`;
+      if(iss.check==='refill_overdue')
+        return `<div class="chip" style="color:var(--danger);display:block;margin-bottom:6px">⚠ Refill overdue since ${iss.due_date}</div>`;
+      return '';
+    }).join('');
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+
+async function addCustodialBeneficiary(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const name=document.getElementById('custBenName').value.trim();
+  const sheet_tab=document.getElementById('custBenSheetTab').value.trim()||null;
+  const m=document.getElementById('custBenMsg');
+  if(!aid){ m.textContent='Pick a custodial account first.'; return; }
+  if(!name){ m.textContent='Enter a name.'; return; }
+  m.textContent='adding…';
+  try{
+    await jpost(`/api/finance/custodial/${aid}/beneficiaries`,{name, sheet_tab});
+    document.getElementById('custBenName').value='';
+    document.getElementById('custBenSheetTab').value='';
+    m.textContent='added ✓';
+    loadCustodialPrefill();
+  }catch(e){ m.textContent=e.message; }
 }
 
 async function loadFinSubs(){

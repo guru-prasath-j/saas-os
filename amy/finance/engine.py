@@ -12,7 +12,7 @@ import sqlite3
 import uuid
 from pathlib import Path
 
-VALID_ACCOUNT_TYPES = {"savings", "checking", "credit_card", "loan", "investment"}
+VALID_ACCOUNT_TYPES = {"savings", "checking", "credit_card", "loan", "investment", "custodial"}
 VALID_SYNC_METHODS  = {"manual", "csv", "pdf", "gmail", "aa"}
 
 
@@ -110,9 +110,20 @@ class FinanceEngine:
                 bank_name  TEXT PRIMARY KEY,
                 column_map TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS beneficiaries (
+                id            TEXT PRIMARY KEY,
+                account_id    TEXT NOT NULL,
+                name          TEXT NOT NULL,
+                split_kind    TEXT NOT NULL DEFAULT 'single',
+                default_parts TEXT NOT NULL DEFAULT '[]',
+                sheet_tab     TEXT,
+                active        INTEGER NOT NULL DEFAULT 1,
+                created_at    TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_txn_date  ON transactions(date);
             CREATE INDEX IF NOT EXISTS idx_txn_cat   ON transactions(category);
             CREATE INDEX IF NOT EXISTS idx_sub_renew ON subscriptions(renewal_date);
+            CREATE INDEX IF NOT EXISTS idx_ben_account ON beneficiaries(account_id);
         """)
         self.conn.commit()
 
@@ -127,6 +138,17 @@ class FinanceEngine:
         # Index on account_id must come after the column exists
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_txn_account ON transactions(account_id)")
+        self.conn.commit()
+        # Custodial-account support: which beneficiary a disbursement was for,
+        # and an optional path to an attached UPI/NEFT confirmation screenshot.
+        for col, coltype in (("beneficiary_id", "TEXT"), ("screenshot_path", "TEXT")):
+            try:
+                self.conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {coltype}")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_txn_beneficiary ON transactions(beneficiary_id)")
         self.conn.commit()
 
     # =========================================================================
@@ -416,6 +438,72 @@ class FinanceEngine:
         self.conn.commit()
 
     # =========================================================================
+    # Beneficiaries (custodial accounts)
+    # =========================================================================
+
+    def add_beneficiary(self, account_id: str, name: str,
+                        split_kind: str = "single",
+                        default_parts: list | None = None,
+                        sheet_tab: str | None = None) -> str:
+        bid = _uuid()
+        self.conn.execute(
+            "INSERT INTO beneficiaries(id,account_id,name,split_kind,"
+            "default_parts,sheet_tab,created_at) VALUES(?,?,?,?,?,?,?)",
+            (bid, account_id, name, split_kind,
+             json.dumps(default_parts or []), sheet_tab, _now_iso()))
+        self.conn.commit()
+        return bid
+
+    def list_beneficiaries(self, account_id: str, active_only: bool = True) -> list[dict]:
+        q = "SELECT * FROM beneficiaries WHERE account_id=?"
+        if active_only:
+            q += " AND active=1"
+        rows = self.conn.execute(q + " ORDER BY name", (account_id,)).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["default_parts"] = json.loads(d.get("default_parts") or "[]")
+            result.append(d)
+        return result
+
+    def get_beneficiary(self, bid: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM beneficiaries WHERE id=?", (bid,)).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["default_parts"] = json.loads(d.get("default_parts") or "[]")
+        return d
+
+    def custodial_balance(self, account_id: str) -> float:
+        """sum(refills) - sum(disbursements) — never hand-edited, always derived."""
+        row = self.conn.execute(
+            "SELECT COALESCE(SUM(amount),0) bal FROM transactions WHERE account_id=?",
+            (account_id,)).fetchone()
+        return round(row["bal"], 2)
+
+    def custodial_cycle_dates(self, account_id: str, limit: int = 6) -> list[str]:
+        """Distinct disbursement dates for this account, most recent first."""
+        rows = self.conn.execute(
+            "SELECT DISTINCT date FROM transactions"
+            " WHERE account_id=? AND amount<0 ORDER BY date DESC LIMIT ?",
+            (account_id, limit)).fetchall()
+        return [r["date"] for r in rows]
+
+    def custodial_last_cycle(self, account_id: str) -> list[dict]:
+        """Most recent disbursement per beneficiary — the prefill source for
+        the nudge, and (via id/screenshot_path) what a shared screenshot
+        should link to."""
+        rows = self.conn.execute(
+            "SELECT t.id, t.beneficiary_id, t.amount, t.date, t.notes, t.screenshot_path"
+            " FROM transactions t"
+            " WHERE t.account_id=? AND t.beneficiary_id IS NOT NULL"
+            " AND t.date = (SELECT MAX(t2.date) FROM transactions t2"
+            "               WHERE t2.beneficiary_id=t.beneficiary_id)"
+            " ORDER BY t.date DESC", (account_id,)).fetchall()
+        return [dict(r) for r in rows]
+
+    # =========================================================================
     # Column maps (per bank, for CSV import)
     # =========================================================================
 
@@ -452,8 +540,11 @@ class FinanceEngine:
     def this_month_spend(self) -> dict[str, float]:
         start, end = _this_month_range()
         rows = self.conn.execute(
-            "SELECT category, SUM(amount) total FROM transactions"
-            " WHERE date>=? AND date<=? AND amount<0 GROUP BY category",
+            "SELECT t.category, SUM(t.amount) total FROM transactions t"
+            " LEFT JOIN accounts a ON t.account_id = a.id"
+            " WHERE t.date>=? AND t.date<=? AND t.amount<0"
+            " AND (a.account_type IS NULL OR a.account_type != 'custodial')"
+            " GROUP BY t.category",
             (start, end)).fetchall()
         return {r["category"]: abs(r["total"]) for r in rows}
 
@@ -466,15 +557,19 @@ class FinanceEngine:
 
     def effective_monthly_income(self, tolerance: float = 0.05) -> float:
         """
-        This month's real credited amount (any positive transaction) plus any
+        This month's real credited amount (any positive transaction, excluding
+        custodial accounts — a refill there isn't the user's income) plus any
         manually-entered income source whose expected monthly amount isn't
         already reflected among those transactions — avoids double-counting
         salary that's both entered manually and imported/synced from the bank.
         """
         start, end = _this_month_range()
         rows = self.conn.execute(
-            "SELECT amount FROM transactions"
-            " WHERE date>=? AND date<=? AND amount>0", (start, end)).fetchall()
+            "SELECT t.amount FROM transactions t"
+            " LEFT JOIN accounts a ON t.account_id = a.id"
+            " WHERE t.date>=? AND t.date<=? AND t.amount>0"
+            " AND (a.account_type IS NULL OR a.account_type != 'custodial')",
+            (start, end)).fetchall()
         remaining = [r["amount"] for r in rows]
         txn_total = sum(remaining)
 

@@ -28,6 +28,7 @@ async def create_capture(
     source: str = Form("mobile"),
     note: str = Form(""),
     tags: str = Form(""),
+    link_disbursement_txn: str | None = Form(None),
     user: User = Depends(current_user),
 ):
     from ... import captures as captures_mod
@@ -42,6 +43,21 @@ async def create_capture(
     )
     if not res.duplicate:
         _engine_for(user).add_capture_note(res.note_path)
+
+    # Narrowly-scoped: link this screenshot to a specific custodial
+    # disbursement transaction, if the caller (share-intent flow) asked for
+    # it. No general-purpose "attach to any entity" system — just this one.
+    if link_disbursement_txn:
+        from ...finance.engine import FinanceEngine
+        fe = FinanceEngine(str(paths.index_dir(user.id) / "finance.db"))
+        try:
+            fe.conn.execute(
+                "UPDATE transactions SET screenshot_path=? WHERE id=?",
+                (res.image_path, link_disbursement_txn))
+            fe.conn.commit()
+        finally:
+            fe.close()
+
     return {
         "ok": True, "duplicate": res.duplicate, "note_path": res.note_path,
         "image_path": res.image_path, "title": res.title, "caption": res.caption,

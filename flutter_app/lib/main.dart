@@ -88,14 +88,52 @@ class _HomePageState extends State<HomePage> {
     } catch (_) {}
     setState(() {});
     // capture mode C: photos shared into the app
-    ShareHandler.init(onUploaded: (up, skip) {
-      if (mounted && up > 0) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Shared $up photo(s) to Amy')));
-      }
-    });
+    ShareHandler.init(
+      onUploaded: (up, skip) {
+        if (mounted && up > 0) {
+          ScaffoldMessenger.of(context)
+              .showSnackBar(SnackBar(content: Text('Shared $up photo(s) to Amy')));
+        }
+      },
+      onPickDisbursement: (pending) => _pickDisbursementForScreenshot(pending),
+    );
     // capture mode A: auto-ingest new gallery photos (if enabled in Gallery sync)
     GallerySync.maybeAutoSync();
+  }
+
+  /// Shown when a screenshot is shared in and there's at least one recently-
+  /// confirmed custodial disbursement without a screenshot yet. Returns the
+  /// chosen beneficiary's transaction_id, or null if the user picks "Skip".
+  Future<String?> _pickDisbursementForScreenshot(
+      List<Map<String, dynamic>> pending) async {
+    if (!mounted) return null;
+    return showModalBottomSheet<String?>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Padding(
+              padding: EdgeInsets.all(16),
+              child: Text('Attach this screenshot to:',
+                  style: TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            for (final b in pending)
+              ListTile(
+                title: Text(b['name'] as String? ?? ''),
+                subtitle: b['last_amount'] != null
+                    ? Text('₹${b['last_amount']} · ${b['last_date'] ?? ''}')
+                    : null,
+                onTap: () => Navigator.pop(ctx, b['transaction_id'] as String?),
+              ),
+            ListTile(
+              title: const Text('Skip — just save the photo'),
+              onTap: () => Navigator.pop(ctx, null),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _onReply(Map<String, dynamic> r) {

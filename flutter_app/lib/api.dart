@@ -115,6 +115,8 @@ class AmyApi {
   }
 
   /// Upload a photo to be ingested into the vault (08_Captures/) and indexed.
+  /// [linkDisbursementTxn] optionally attaches this image (e.g. a UPI/NEFT
+  /// confirmation screenshot) to a specific custodial disbursement transaction.
   Future<Map<String, dynamic>> uploadCapture(
     File image, {
     double? lat,
@@ -123,6 +125,7 @@ class AmyApi {
     String source = 'mobile',
     String note = '',
     String tags = '',
+    String? linkDisbursementTxn,
   }) async {
     final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/captures'));
     req.headers.addAll(Config.authHeaders());
@@ -133,6 +136,9 @@ class AmyApi {
     req.fields['source'] = source;
     if (note.isNotEmpty) req.fields['note'] = note;
     if (tags.isNotEmpty) req.fields['tags'] = tags;
+    if (linkDisbursementTxn != null) {
+      req.fields['link_disbursement_txn'] = linkDisbursementTxn;
+    }
 
     final streamed = await req.send();
     final body = await streamed.stream.bytesToString();
@@ -140,6 +146,37 @@ class AmyApi {
       throw Exception('Upload failed (${streamed.statusCode}): $body');
     }
     return jsonDecode(body) as Map<String, dynamic>;
+  }
+
+  /// First custodial-type finance account, if any — used by share_handler.dart
+  /// to decide whether to offer the "attach to disbursement" picker at all.
+  Future<String?> custodialAccountId() async {
+    final r = await http.get(Uri.parse('$baseUrl/api/finance/accounts'), headers: Config.authHeaders());
+    if (r.statusCode >= 400) return null;
+    final d = jsonDecode(r.body) as Map<String, dynamic>;
+    final accounts = (d['accounts'] as List? ?? []).cast<Map<String, dynamic>>();
+    for (final a in accounts) {
+      if (a['account_type'] == 'custodial') return a['id'] as String;
+    }
+    return null;
+  }
+
+  /// Recently-confirmed custodial disbursements for a beneficiary picker
+  /// when a screenshot is shared in (share_handler.dart). Returns
+  /// [{beneficiary_id, name, last_amount, last_date}, ...] for beneficiaries
+  /// with a logged transfer but no screenshot attached yet — pass the
+  /// custodial account id.
+  Future<List<Map<String, dynamic>>> custodialPendingScreenshots(String accountId) async {
+    final r = await http.get(
+      Uri.parse('$baseUrl/api/finance/custodial/$accountId/next-cycle-prefill'),
+      headers: Config.authHeaders(),
+    );
+    if (r.statusCode >= 400) return [];
+    final d = jsonDecode(r.body) as Map<String, dynamic>;
+    final beneficiaries = (d['beneficiaries'] as List? ?? []).cast<Map<String, dynamic>>();
+    return beneficiaries
+        .where((b) => b['transaction_id'] != null && b['has_screenshot'] != true)
+        .toList();
   }
 
   /// Recent capture notes (newest first).

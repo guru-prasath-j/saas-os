@@ -19,11 +19,14 @@ import os
 
 from .base import Connector, Item
 
-# read-only scopes
+# read-only scopes, except spreadsheets (needed to append custodial-account
+# disbursement rows to the user's own existing Sheet — never used to create
+# or restructure sheets, only append_disbursement_row's values().append)
 SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
     "https://www.googleapis.com/auth/calendar.events",  # read + create/edit events
     "https://www.googleapis.com/auth/tasks.readonly",
+    "https://www.googleapis.com/auth/spreadsheets",
 ]
 TOKEN_FILENAME = "google_token.json"
 

@@ -697,6 +697,7 @@ async def upload_csv(
     """
     from ...finance.sync.csv_import import CSVImportProvider
     fe = _finance_db(user)
+    cdb = _open_collab(user)
     try:
         if fe.get_account(aid) is None:
             raise HTTPException(status_code=404, detail="account not found")
@@ -705,9 +706,13 @@ async def upload_csv(
         result = provider.import_from_bytes(raw, fe, aid, filename=file.filename or "")
         if isinstance(result, dict):
             return result   # needs_mapping preview
+        from ...finance.custodial import emit_refill_events
+        from ...events.store import EventStore
+        emit_refill_events(fe, EventStore(cdb), result.transactions)
         return result.to_dict()
     finally:
         fe.close()
+        cdb.close()
 
 
 @router.post("/api/finance/accounts/{aid}/column-map")
@@ -777,6 +782,7 @@ async def upload_pdf(
     from ...llm import LLMRouter
     from ..deps import _user_key
     fe = _finance_db(user)
+    cdb = _open_collab(user)
     try:
         if fe.get_account(aid) is None:
             raise HTTPException(status_code=404, detail="account not found")
@@ -787,9 +793,13 @@ async def upload_pdf(
             result = provider.import_from_bytes(raw, fe, aid, llm=llm, password=password)
         except PasswordRequired as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+        from ...finance.custodial import emit_refill_events
+        from ...events.store import EventStore
+        emit_refill_events(fe, EventStore(cdb), result.transactions)
         return result.to_dict()
     finally:
         fe.close()
+        cdb.close()
 
 
 # ---------------------------------------------------------------------------
@@ -813,6 +823,7 @@ def sync_gmail(
     from ...llm import LLMRouter
     from ..deps import _user_key, _connector_dir
     fe = _finance_db(user)
+    cdb = _open_collab(user)
     try:
         savings_acc = fe.get_account(aid)
         if savings_acc is None:
@@ -843,9 +854,15 @@ def sync_gmail(
                        since=since, until=until,
                        max_messages=max_messages,
                        cc_account_id=cc_aid)
+
+        from ...finance.custodial import emit_refill_events
+        from ...events.store import EventStore
+        emit_refill_events(fe, EventStore(cdb), result.transactions)
+
         return result.to_dict()
     finally:
         fe.close()
+        cdb.close()
 
 
 @router.post("/api/finance/sync/gmail")
@@ -872,11 +889,14 @@ def sync_gmail_all(
             detail="Google account not linked. Go to Account → Google and connect.")
 
     fe = _finance_db(user)
+    cdb = _open_collab(user)
     try:
-        # Sync every non-CC, non-investment account (savings + current)
+        # Sync every non-CC, non-investment account (savings + current +
+        # custodial — a custodial account gets bank alerts too, just for
+        # money that isn't the user's own; see amy/finance/custodial.py)
         accounts = fe.list_accounts()
         targets = [a for a in accounts
-                   if a.get("account_type") in ("savings", "current", None, "")]
+                   if a.get("account_type") in ("savings", "current", "custodial", None, "")]
 
         if not targets:
             # No savings account yet — use the first account of any type
@@ -932,6 +952,10 @@ def sync_gmail_all(
             all_errors.extend(r.errors)
             all_transactions.extend(r.transactions)
 
+        from ...finance.custodial import emit_refill_events
+        from ...events.store import EventStore
+        emit_refill_events(fe, EventStore(cdb), all_transactions)
+
         return {
             "imported":     total_imported,
             "skipped":      total_skipped,
@@ -940,6 +964,7 @@ def sync_gmail_all(
         }
     finally:
         fe.close()
+        cdb.close()
 
 
 @router.get("/api/finance/gmail/scope-status")
@@ -1074,5 +1099,174 @@ def sync_aa(aid: str, consent_handle: str | None = None,
             raise HTTPException(status_code=503, detail=str(exc))
         except NotImplementedError as exc:
             raise HTTPException(status_code=501, detail=str(exc))
+    finally:
+        fe.close()
+
+
+# ---------------------------------------------------------------------------
+# Custodial accounts (e.g. an SBI account held in-trust, refilled by someone
+# else and forwarded to a fixed set of beneficiaries). Never moves money —
+# only detects refills, prompts, logs a transfer the user already sent, and
+# validates. See amy/finance/custodial.py and custodial_sheets.py.
+# ---------------------------------------------------------------------------
+
+class BeneficiaryBody(BaseModel):
+    name: str
+    split_kind: str = "single"
+    default_parts: list = []
+    sheet_tab: str | None = None
+
+
+class DisburseBody(BaseModel):
+    beneficiary_id: str
+    amount: float
+    date: str | None = None
+    mode: str = "NEFT"
+    category: str = "Custodial Disbursement"
+    notes: str = ""
+
+
+def _require_custodial_account(fe, account_id: str) -> dict:
+    acc = fe.get_account(account_id)
+    if not acc or acc.get("account_type") != "custodial":
+        raise HTTPException(status_code=404, detail="custodial account not found")
+    return acc
+
+
+@router.post("/api/finance/custodial/{account_id}/beneficiaries")
+def add_custodial_beneficiary(account_id: str, body: BeneficiaryBody,
+                              user: User = Depends(current_user)):
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        bid = fe.add_beneficiary(account_id, body.name, body.split_kind,
+                                 body.default_parts, body.sheet_tab)
+        return {"id": bid}
+    finally:
+        fe.close()
+
+
+@router.get("/api/finance/custodial/{account_id}/beneficiaries")
+def list_custodial_beneficiaries(account_id: str, user: User = Depends(current_user)):
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        return {"beneficiaries": fe.list_beneficiaries(account_id)}
+    finally:
+        fe.close()
+
+
+@router.get("/api/finance/custodial/{account_id}/next-cycle-prefill")
+def custodial_next_cycle_prefill(account_id: str, user: User = Depends(current_user)):
+    """Due date + each beneficiary's last logged amount — the editable
+    starting point the UI shows for the month-end nudge — plus current balance."""
+    from ...finance.custodial import next_cycle_prefill
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        prefill = next_cycle_prefill(fe, account_id)
+        prefill["balance"] = fe.custodial_balance(account_id)
+        return prefill
+    finally:
+        fe.close()
+
+
+@router.get("/api/finance/custodial/{account_id}/validate")
+def custodial_validate(account_id: str, user: User = Depends(current_user)):
+    """Split-sum, skipped-beneficiary, and overdue-refill checks — stateless,
+    computed on demand against this user's own data. No second role/persona."""
+    from ...finance.custodial import run_validation
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        return run_validation(fe, account_id)
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/custodial/{account_id}/disburse")
+def custodial_disburse(account_id: str, body: DisburseBody,
+                       user: User = Depends(current_user)):
+    """
+    Records ONE beneficiary/part's transfer that the user already sent
+    themselves (never initiates a transfer). Atomically: inserts the
+    transaction, emits custodial.disbursed, and appends a row to the user's
+    Google Sheet. If the Sheet write fails, the transaction/event are NOT
+    rolled back — the ledger is the source of truth; retry the Sheet write
+    separately via .../disburse/{transaction_id}/retry-sheet.
+    """
+    import datetime as _dt
+    from ...finance.custodial_sheets import append_disbursement_row
+    from ...connectors.google import load_credentials, TOKEN_FILENAME
+    from ...events.store import EventStore
+    from ..deps import _connector_dir
+
+    fe = _finance_db(user)
+    cdb = _open_collab(user)
+    try:
+        acc = _require_custodial_account(fe, account_id)
+        ben = fe.get_beneficiary(body.beneficiary_id)
+        if not ben or ben["account_id"] != account_id:
+            raise HTTPException(status_code=404, detail="beneficiary not found")
+
+        date = body.date or _dt.date.today().isoformat()
+        tid = fe.add_transaction(
+            amount=-abs(body.amount), category=body.category,
+            merchant=ben["name"], date=date, source="custodial_manual",
+            notes=body.notes, account_id=account_id)
+        fe.conn.execute("UPDATE transactions SET beneficiary_id=? WHERE id=?",
+                        (body.beneficiary_id, tid))
+        fe.conn.commit()
+
+        events = EventStore(cdb)
+        eid = events.emit("custodial.disbursed", {
+            "account_id": account_id, "beneficiary_id": body.beneficiary_id,
+            "beneficiary_name": ben["name"], "transaction_id": tid,
+            "amount": body.amount, "date": date, "mode": body.mode,
+        }, source="custodial_disburse_endpoint")
+
+        token_path = str(_connector_dir(user) / TOKEN_FILENAME)
+        creds = load_credentials(token_path)
+        sheet_result = append_disbursement_row(
+            creds, acc, ben, date, body.mode, body.amount, body.category, body.notes)
+
+        return {
+            "transaction_id": tid, "event_id": eid,
+            "sheet_write": sheet_result,
+            "balance": fe.custodial_balance(account_id),
+        }
+    finally:
+        fe.close()
+        cdb.close()
+
+
+@router.post("/api/finance/custodial/{account_id}/disburse/{transaction_id}/retry-sheet")
+def custodial_retry_sheet(account_id: str, transaction_id: str,
+                          user: User = Depends(current_user)):
+    """Re-attempt just the Google Sheet write for a disbursement that was
+    already logged (transaction + event) but whose Sheet append failed."""
+    from ...finance.custodial_sheets import append_disbursement_row
+    from ...connectors.google import load_credentials, TOKEN_FILENAME
+    from ..deps import _connector_dir
+
+    fe = _finance_db(user)
+    try:
+        acc = _require_custodial_account(fe, account_id)
+        row = fe.conn.execute(
+            "SELECT * FROM transactions WHERE id=? AND account_id=?",
+            (transaction_id, account_id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="transaction not found")
+        if not row["beneficiary_id"]:
+            raise HTTPException(status_code=400, detail="transaction has no linked beneficiary")
+        ben = fe.get_beneficiary(row["beneficiary_id"])
+        if not ben:
+            raise HTTPException(status_code=404, detail="beneficiary not found")
+
+        token_path = str(_connector_dir(user) / TOKEN_FILENAME)
+        creds = load_credentials(token_path)
+        return append_disbursement_row(
+            creds, acc, ben, row["date"], "NEFT", abs(row["amount"]),
+            row["category"], row["notes"] or "")
     finally:
         fe.close()

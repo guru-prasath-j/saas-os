@@ -95,6 +95,21 @@ def _run_all_digests():
                                     connector_dir=paths.index_dir(uid) / "connectors")
             except Exception:
                 pass
+            try:
+                if os.path.exists(finance_db_path):
+                    from ..finance.engine import FinanceEngine
+                    from ..finance.custodial import check_custodial_nudges
+                    from ..notifications import NotificationStore
+                    fe = FinanceEngine(finance_db_path)
+                    try:
+                        store = NotificationStore(cdb)
+                        for acc in fe.list_accounts():
+                            if acc.get("account_type") == "custodial":
+                                check_custodial_nudges(fe, store, acc)
+                    finally:
+                        fe.close()
+            except Exception:
+                pass
         except Exception:
             pass
         finally:
@@ -177,41 +192,58 @@ def _run_gmail_poll():
             continue
 
         fe = FinanceEngine(str(finance_path))
+        cdb = None
         try:
             accounts = fe.list_accounts()
-            savings_accounts = [a for a in accounts
-                                if a.get("account_type") in ("savings", "current", None, "")]
-            if not savings_accounts:
-                continue
-
-            primary = savings_accounts[0]
-            aid = primary["id"]
-            bank = primary.get("bank_name", "Bank")
-
-            # Find or create CC account
-            row = fe.conn.execute(
-                "SELECT id FROM accounts WHERE bank_name=? AND account_type='credit_card' LIMIT 1",
-                (bank,)
-            ).fetchone()
-            cc_aid = row[0] if row else fe.add_account(
-                nickname=f"{bank} Credit Card",
-                bank_name=bank,
-                account_type="credit_card",
-            )
-
             try:
                 llm = LLMRouter(use_global_keys=True)
             except Exception:
                 llm = None
 
-            _sync_gmail(creds, fe, aid, llm,
-                        since=since,
-                        max_messages=100,
-                        cc_account_id=cc_aid)
+            savings_accounts = [a for a in accounts
+                                if a.get("account_type") in ("savings", "current", None, "")]
+            if savings_accounts:
+                primary = savings_accounts[0]
+                aid = primary["id"]
+                bank = primary.get("bank_name", "Bank")
+
+                # Find or create CC account
+                row = fe.conn.execute(
+                    "SELECT id FROM accounts WHERE bank_name=? AND account_type='credit_card' LIMIT 1",
+                    (bank,)
+                ).fetchone()
+                cc_aid = row[0] if row else fe.add_account(
+                    nickname=f"{bank} Credit Card",
+                    bank_name=bank,
+                    account_type="credit_card",
+                )
+
+                _sync_gmail(creds, fe, aid, llm,
+                            since=since,
+                            max_messages=100,
+                            cc_account_id=cc_aid)
+
+            # Custodial accounts get bank alerts too — refills just aren't
+            # the user's own income (see amy/finance/custodial.py).
+            custodial_accounts = [a for a in accounts if a.get("account_type") == "custodial"]
+            if custodial_accounts:
+                from ..finance.custodial import emit_refill_events
+                from ..events.store import EventStore
+                from ..collab import CollabDB
+                collab_path = paths.index_dir(uid) / "collab.db"
+                if collab_path.exists():
+                    cdb = CollabDB(str(collab_path))
+                    events = EventStore(cdb)
+                    for acc in custodial_accounts:
+                        result = _sync_gmail(creds, fe, acc["id"], llm,
+                                             since=since, max_messages=100)
+                        emit_refill_events(fe, events, result.transactions)
         except Exception:
             pass
         finally:
             fe.close()
+            if cdb is not None:
+                cdb.close()
 
 
 async def _gmail_poll_loop():
