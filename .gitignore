@@ -1,0 +1,40 @@
+# ---- Python ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# ---- secrets / env (never commit) ----
+.env
+.env.personal
+.env.local
+.env.*.local
+*.key
+*.pem
+.personalos_prefs.json
+
+# ---- per-user data & generated indexes (NOT source) ----
+saas_data/
+.amy_index/
+.os_index/
+.index_public/
+vault_settings.json
+
+# ---- large model assets (download separately) ----
+voices_models/
+
+# ---- editor / tooling ----
+.vscode/
+.qodo/
+.idea/
+
+# ---- flutter build artifacts ----
+flutter_app/build/
+flutter_app/.dart_tool/
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies
+
+# ---- OS noise ----
+.DS_Store
+Thumbs.db

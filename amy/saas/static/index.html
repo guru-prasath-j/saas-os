@@ -1,0 +1,2376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PersonalOS — Amy</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    color-scheme:dark;
+    --bg:#070912; --bg2:#0a0e1c;
+    --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.07);
+    --border:rgba(255,255,255,.09); --border-2:rgba(255,255,255,.16);
+    --text:#E8ECF6; --muted:#9AA6BF; --faint:#6b7690;
+    --cyan:#22D3EE; --violet:#8B5CF6; --pink:#e879f9;
+    --grad:linear-gradient(135deg,#22D3EE 0%,#8B5CF6 100%);
+    --success:#34D399; --danger:#fb7185; --warn:#FBBF24;
+    --r:14px; --r-lg:18px;
+    --sh:0 10px 30px rgba(0,0,0,.45);
+    --font:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    --display:'Space Grotesk',var(--font);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;font-family:var(--font);background:var(--bg);color:var(--text);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  /* aurora backdrop */
+  .bg-aurora{position:fixed;inset:0;z-index:-1;overflow:hidden;background:
+    radial-gradient(60% 50% at 18% 8%,rgba(34,211,238,.16),transparent 60%),
+    radial-gradient(55% 45% at 88% 0%,rgba(139,92,246,.18),transparent 60%),
+    radial-gradient(60% 60% at 70% 100%,rgba(232,121,249,.10),transparent 60%),
+    var(--bg)}
+  .bg-aurora::after{content:"";position:absolute;inset:-30%;background:conic-gradient(from 0deg,transparent,rgba(139,92,246,.06),transparent,rgba(34,211,238,.06),transparent);animation:spin 40s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  a{color:#8fd3ff;text-decoration:none}
+  h1,h2,h3,h4,.brandname{font-family:var(--display);font-weight:600;letter-spacing:-.01em}
+  h3{margin:.1em 0 .5em;font-size:17px}
+  .muted{color:var(--muted);font-size:13.5px}
+  .faint{color:var(--faint)}
+
+  /* layout */
+  .app{display:grid;grid-template-columns:248px 1fr;min-height:100dvh}
+  body:not(.authed) .sidebar{display:none}
+  body:not(.authed) .topbar{display:none}
+  body:not(.authed) .content{display:flex;align-items:center;justify-content:center;min-height:100dvh}
+
+  .sidebar{position:sticky;top:0;height:100dvh;padding:18px 14px;display:flex;flex-direction:column;gap:8px;
+    background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border-right:1px solid var(--border);backdrop-filter:blur(14px)}
+  .brand{display:flex;align-items:center;gap:11px;padding:8px 8px 14px}
+  .orb{width:30px;height:30px;border-radius:50%;background:var(--grad);box-shadow:0 0 18px rgba(34,211,238,.6);position:relative;flex:0 0 auto}
+  .orb::after{content:"";position:absolute;inset:6px;border-radius:50%;background:#0a0e1c}
+  .brandname{font-size:16px;font-weight:700}
+  .brandsub{font-size:11px;color:var(--muted);letter-spacing:.04em}
+  nav#nav{display:flex;flex-direction:column;gap:3px}
+  nav#nav button{display:flex;align-items:center;gap:11px;width:100%;justify-content:flex-start;
+    background:transparent;border:1px solid transparent;color:var(--muted);font-size:14px;font-weight:500;padding:10px 12px;border-radius:11px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+  nav#nav button svg{width:18px;height:18px;flex:0 0 auto;opacity:.85}
+  nav#nav button:hover{background:var(--surface);color:var(--text)}
+  nav#nav button.active{color:#fff;background:linear-gradient(135deg,rgba(34,211,238,.18),rgba(139,92,246,.18));border-color:var(--border-2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+  nav#nav button.active svg{opacity:1;color:var(--cyan)}
+  .side-foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--border)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);flex:0 0 auto}
+
+  .main{display:flex;flex-direction:column;min-width:0}
+  .topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
+    padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(7,9,18,.6);backdrop-filter:blur(12px)}
+  .topbar h1{font-size:19px;margin:0}
+  .status{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);background:var(--surface);border:1px solid var(--border);padding:5px 11px;border-radius:999px}
+  .content{padding:22px 24px 40px;max-width:1000px;width:100%;margin:0 auto}
+
+  /* cards */
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:18px;margin-bottom:16px;backdrop-filter:blur(10px);box-shadow:var(--sh)}
+  .card .card{box-shadow:none;background:var(--surface-2)}
+  .row{display:flex;gap:10px}.row>*{flex:1}
+
+  /* controls */
+  button{font-family:var(--font);background:var(--grad);color:#06121a;border:0;border-radius:11px;padding:10px 16px;cursor:pointer;font-size:14px;font-weight:600;transition:transform .15s,box-shadow .15s,opacity .15s}
+  button:hover{box-shadow:0 6px 22px rgba(34,211,238,.35);transform:translateY(-1px)}
+  button:active{transform:translateY(0)}
+  button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
+  button.ghost{background:var(--surface);color:var(--text);border:1px solid var(--border-2)}
+  button.ghost:hover{background:var(--surface-2);box-shadow:none}
+  button.sm{padding:6px 11px;font-size:12.5px;border-radius:9px}
+  :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+  input,textarea,select{width:100%;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 12px;font-size:14px;font-family:var(--font);transition:border-color .15s,box-shadow .15s}
+  input:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.18);outline:none}
+  label{font-size:13.5px}
+
+  /* chat */
+  #chat{max-height:48vh;overflow:auto;padding:4px 2px 8px;display:flex;flex-direction:column}
+  .msg{padding:11px 14px;border-radius:14px;margin:7px 0;max-width:86%;font-size:14.5px;animation:rise .22s ease-out}
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+  .me{align-self:flex-end;background:var(--grad);color:#06121a;font-weight:500;border-bottom-right-radius:4px}
+  .amy{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:4px}
+  .meta{color:var(--muted);font-size:11.5px;margin-top:7px}
+  .me .meta{color:rgba(6,18,26,.7)}
+  .chip{display:inline-block;background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:3px 10px;font-size:11px;margin:2px}
+  .chip.src{color:#9fd6ff}
+  .amy h1,.amy h2,.amy h3{font-size:15px;margin:.4em 0;font-family:var(--display)}
+  .amy code{background:rgba(0,0,0,.35);padding:1px 6px;border-radius:5px;font-size:13px}
+  .amy ul{margin:.3em 0 .3em 1.1em}
+
+  .bar{height:9px;background:rgba(0,0,0,.35);border-radius:99px;overflow:hidden;border:1px solid var(--border)}
+  .bar>i{display:block;height:100%;background:var(--grad);transition:width .4s ease}
+  .toggle{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
+  .hidden{display:none}
+  #graphBody svg{width:100%;height:380px;background:#04060c;border-radius:14px;border:1px solid var(--border)}
+
+  /* auth */
+  #authCard{max-width:400px;width:100%;text-align:left}
+  .auth-brand{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:6px}
+  .auth-title{font-family:var(--display);font-size:26px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin:2px 0 2px}
+  .auth-sub{text-align:center;color:var(--muted);font-size:13.5px;margin-bottom:18px}
+
+  @media (max-width:820px){
+    .app{grid-template-columns:1fr}
+    .sidebar{position:sticky;flex-direction:row;align-items:center;height:auto;gap:10px;overflow-x:auto;padding:10px 12px;top:0;z-index:6}
+    .brand{padding:0 6px 0 0}.brandsub{display:none}
+    nav#nav{flex-direction:row}
+    nav#nav button .label{display:none}
+    nav#nav button{padding:9px}
+    .side-foot{display:none}
+    .content{padding:16px}
+    .msg{max-width:94%}
+  }
+  @media (prefers-reduced-motion:reduce){
+    *{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+<div class="bg-aurora" aria-hidden="true"></div>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand"><span class="orb" aria-hidden="true"></span>
+      <div><div class="brandname">PersonalOS</div><div class="brandsub">AMY · AI OS</div></div></div>
+    <nav id="nav" class="hidden" aria-label="Primary">
+      <button data-tab="chat" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="label">Chat</span></button>
+      <button data-tab="goals"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.3" fill="currentColor"/></svg><span class="label">Goals</span></button>
+      <button data-tab="reflect"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4" stroke-linecap="round"/><circle cx="12" cy="12" r="3.2"/></svg><span class="label">Reflect</span></button>
+      <button data-tab="learn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 17l6-6 4 4 7-7" stroke-linecap="round" stroke-linejoin="round"/><path d="M17 5h4v4" stroke-linecap="round" stroke-linejoin="round"/></svg><span class="label">Learn</span></button>
+      <button data-tab="finance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg><span class="label">Finance</span></button>
+      <button data-tab="agents"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg><span class="label">Agents</span></button>
+      <button data-tab="portfolio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg><span class="label">Portfolio</span></button>
+      <button data-tab="timeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="2" x2="12" y2="22"/><polyline points="17 7 12 2 7 7"/><line x1="3" y1="10" x2="21" y2="10"/><line x1="3" y1="14" x2="21" y2="14"/></svg><span class="label">Timeline</span></button>
+      <button data-tab="decisions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="label">Decisions</span></button>
+      <button data-tab="intelligence"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="12" r="10"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span class="label">Intel</span></button>
+      <button data-tab="memory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg><span class="label">Memory Lake</span></button>
+      <button data-tab="tags"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span class="label">Tags</span></button>
+      <button data-tab="habits"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><span class="label">Habits</span></button>
+      <button data-tab="srs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg><span class="label">Review</span></button>
+      <button data-tab="entities"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3"/><circle cx="5" cy="18" r="3"/><circle cx="19" cy="18" r="3"/><line x1="12" y1="11" x2="5" y2="15"/><line x1="12" y1="11" x2="19" y2="15"/></svg><span class="label">People</span></button>
+      <button data-tab="import"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 16V4M8 8l4-4 4 4" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 17v2a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-2" stroke-linecap="round"/></svg><span class="label">Import</span></button>
+      <button data-tab="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.6"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0" stroke-linecap="round"/></svg><span class="label">Account</span></button>
+    </nav>
+    <div class="side-foot"><span class="dot"></span><span id="who">connecting…</span></div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <h1 id="pageTitle">Chat</h1>
+      <span class="status"><span class="dot"></span> Amy online</span>
+    </div>
+    <div class="content">
+      <!-- AUTH -->
+      <div class="card" id="authCard">
+        <div class="auth-brand"><span class="orb" aria-hidden="true"></span></div>
+        <div class="auth-title">PersonalOS</div>
+        <div class="auth-sub">Your AI knowledge operating system</div>
+        <input id="email" placeholder="email" autocomplete="username"/>
+        <div style="height:10px"></div>
+        <input id="password" type="password" placeholder="password (min 8)" autocomplete="current-password"/>
+        <div style="height:14px"></div>
+        <div class="row">
+          <button onclick="auth('login')">Sign in</button>
+          <button class="ghost" onclick="auth('signup')">Create account</button>
+        </div>
+        <p class="meta" id="authMsg"></p>
+      </div>
+
+      <!-- ONBOARDING -->
+      <div class="card hidden" id="onboard">
+        <h3>Welcome — let's set you up</h3>
+        <p class="muted">Two quick steps so Amy can actually help.</p>
+        <div id="obKey" class="card">
+          <b>1 · Add your AI key</b>
+          <p class="muted">Your notes are only ever sent to your own key. Without it, answers use a local model.</p>
+          <input id="obKeyInput" type="password" placeholder="sk-… (OpenAI)"/>
+          <div style="height:8px"></div>
+          <button class="sm" onclick="obSaveKey()">Save key</button> <span class="meta" id="obKeyMsg"></span>
+        </div>
+        <div id="obVault" class="card">
+          <b>2 · Import your vault</b>
+          <p class="muted">Upload a .zip of your Obsidian vault.</p>
+          <input type="file" id="obZip" accept=".zip"/>
+          <div style="height:8px"></div>
+          <button class="sm" onclick="obImport()">Upload</button> <span class="meta" id="obVaultMsg"></span>
+        </div>
+        <button class="ghost" onclick="finishOnboard()">Done — go to chat</button>
+      </div>
+
+      <!-- TAB: CHAT -->
+      <div class="tab" id="tab-chat">
+        <div class="card">
+          <h3>Ask Amy <span class="muted">— multi-agent</span></h3>
+          <p class="muted">Routes your question to the right domain agents (finance, career, …) and merges their answers with sources.</p>
+          <div id="chat"></div>
+          <div class="row" style="margin-top:8px">
+            <input id="q" placeholder="e.g. Can I afford a trip while switching careers?" onkeydown="if(event.key==='Enter')ask()"/>
+            <button style="flex:0 0 92px" id="sendBtn" onclick="ask()">Send</button>
+          </div>
+          <p class="muted" id="chatHint"></p>
+        </div>
+      </div>
+
+      <!-- TAB: GOALS -->
+      <div class="tab hidden" id="tab-goals">
+        <div class="card">
+          <h3>Goals</h3>
+          <p class="muted">Set goals, add milestones, track progress. Finishing all milestones marks a goal done.</p>
+          <div class="row">
+            <input id="goalTitle" placeholder="New goal (e.g. Save for Europe)"/>
+            <input id="goalDomain" placeholder="domain" style="flex:0 0 130px"/>
+            <button style="flex:0 0 90px" onclick="createGoal()">Add</button>
+          </div>
+        </div>
+        <div id="goalsList"></div>
+      </div>
+
+      <!-- TAB: REFLECT -->
+      <div class="tab hidden" id="tab-reflect">
+        <div class="card"><h3>Weekly reflection</h3><p class="muted">Your week at a glance: progress, gaps, and suggestions.</p><div id="reflectBody" class="muted">Loading…</div></div>
+      </div>
+
+      <!-- TAB: LEARN -->
+      <div class="tab hidden" id="tab-learn">
+        <div class="card"><h3>Learning trends</h3><p class="muted">Topics trending up or cooling off, with recommendations.</p><div id="learnBody" class="muted">Loading…</div></div>
+      </div>
+
+      <!-- TAB: AGENTS -->
+      <div class="tab hidden" id="tab-agents">
+        <div class="card"><h3>Agent marketplace</h3><p class="muted">Turn domain agents on or off — disabled agents stop answering.</p><div id="agentsBody">Loading…</div></div>
+      </div>
+
+
+      <!-- TAB: PORTFOLIO -->
+      <div class="tab hidden" id="tab-portfolio">
+        <div class="card"><h3>Public portfolio <span class="muted">(safe view)</span></h3><p class="muted">A shareable view — projects, skills, roadmap only. Finance / family / health stay private.</p><div id="portfolioBody" class="muted">Loading…</div></div>
+      </div>
+
+      <!-- TAB: TIMELINE -->
+      <div class="tab hidden" id="tab-timeline">
+        <div class="card">
+          <h3>Timeline <span class="muted">— your life, chronologically</span></h3>
+          <div style="display:flex;gap:8px;margin-bottom:14px">
+            <button class="ghost sm" onclick="loadTimeline('day')" id="tlDay">Day</button>
+            <button class="ghost sm" onclick="loadTimeline('week')" id="tlWeek">Week</button>
+            <button class="ghost sm" onclick="loadTimeline('month')" id="tlMonth">Month</button>
+          </div>
+          <div id="tlBody" class="muted">Loading…</div>
+        </div>
+      </div>
+
+      <!-- TAB: DECISIONS -->
+      <div class="tab hidden" id="tab-decisions">
+        <div class="card">
+          <h3>Decision journal</h3>
+          <p class="muted">Log decisions, track outcomes, spot patterns in how you decide.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+            <input id="decTitle" placeholder="Decision title" style="flex:1;min-width:160px"/>
+            <input id="decReason" placeholder="Reason (optional)" style="flex:1;min-width:120px"/>
+            <select id="decCat" style="flex:0 0 120px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
+              <option>personal</option><option>career</option><option>finance</option>
+              <option>health</option><option>learning</option><option>projects</option>
+            </select>
+            <button style="flex:0 0 80px" onclick="recordDecision()">Log</button>
+          </div>
+          <span class="meta" id="decMsg"></span>
+        </div>
+        <div class="card">
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <button class="ghost sm active" onclick="showDecTab('history',this)">History</button>
+            <button class="ghost sm" onclick="showDecTab('analysis',this)">Analysis</button>
+            <button class="ghost sm" onclick="showDecTab('recs',this)">Recommendations</button>
+          </div>
+          <div id="decHistory"><p class="muted">Loading…</p></div>
+          <div id="decAnalysis" class="hidden"></div>
+          <div id="decRecs" class="hidden"></div>
+        </div>
+      </div>
+
+      <!-- TAB: INTELLIGENCE -->
+      <div class="tab hidden" id="tab-intelligence">
+        <div class="card">
+          <h3>Intelligence <span class="muted">— your digital twin + predictions</span></h3>
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <button class="ghost sm" onclick="loadIntel('twin')">Twin</button>
+            <button class="ghost sm" onclick="loadIntel('personality')">Personality</button>
+            <button class="ghost sm" onclick="loadIntel('predict')">Predictions</button>
+            <button class="ghost sm" onclick="loadIntelFuture()">Future-self check</button>
+            <button class="ghost sm" onclick="runAutopilot()">⚡ Autopilot</button>
+          </div>
+          <span class="meta" id="intelMsg"></span>
+          <div id="intelBody" class="muted">Choose a view above.</div>
+        </div>
+        <div class="card hidden" id="intelFutureCard">
+          <h3>Future-self validator</h3>
+          <p class="muted">Check if a decision aligns with your long-term goals and values.</p>
+          <input id="fsTitle" placeholder="Decision to validate…" style="margin-bottom:8px"/>
+          <select id="fsCat" style="width:auto;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:10px;font-size:14px;margin-bottom:8px">
+            <option>personal</option><option>career</option><option>finance</option><option>health</option>
+          </select>
+          <button onclick="validateFutureSelf()">Validate</button>
+          <div id="fsResult" class="muted" style="margin-top:12px"></div>
+        </div>
+      </div>
+
+      <!-- TAB: MEMORY LAKE (merged: files + graph + folders) -->
+      <div class="tab hidden" id="tab-memory">
+        <!-- header row -->
+        <div class="card" style="padding:14px 18px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div>
+              <h3 style="margin:0">Memory Lake</h3>
+              <span class="faint" id="memLastSync" style="font-size:12px">syncing automatically after every chat</span>
+            </div>
+            <div style="margin-left:auto;display:flex;gap:6px">
+              <button class="ghost sm" onclick="buildKnowledge()">Refresh graph</button>
+              <span class="meta" id="kbMsg"></span>
+            </div>
+          </div>
+          <!-- sub-tab bar -->
+          <div style="display:flex;gap:6px;margin-top:14px;border-bottom:1px solid var(--border);padding-bottom:10px">
+            <button class="ghost sm active" id="mlTab-files" onclick="switchMemView('files',this)">📄 Files</button>
+            <button class="ghost sm" id="mlTab-graph" onclick="switchMemView('graph',this)">🕸 Graph</button>
+            <button class="ghost sm" id="mlTab-folders" onclick="switchMemView('folders',this)">📁 Folders</button>
+          </div>
+        </div>
+
+        <!-- FILE VIEW -->
+        <div id="mlPane-files">
+          <div class="card" id="memFileList"><p class="muted">Loading…</p></div>
+          <div class="card hidden" id="memFileView">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <b id="memFileName" style="flex:1"></b>
+              <button class="ghost sm" onclick="closeMemFile()">✕ close</button>
+            </div>
+            <pre id="memFileContent" style="white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--text);margin:0;max-height:60vh;overflow:auto"></pre>
+          </div>
+        </div>
+
+        <!-- GRAPH VIEW -->
+        <div id="mlPane-graph" class="hidden">
+          <div class="card">
+            <p class="muted" style="margin-bottom:10px">Neural map of your vault — nodes are notes, edges are <code>[[wikilinks]]</code>. Click "Refresh graph" to rebuild after importing.</p>
+            <div id="graphBody" class="muted" style="min-height:400px">Click "Refresh graph" to load.</div>
+          </div>
+        </div>
+
+        <!-- FOLDER VIEW -->
+        <div id="mlPane-folders" class="hidden">
+          <div class="card">
+            <p class="muted" style="margin-bottom:10px">Your vault folder structure.</p>
+            <div id="folderTree" class="muted">Loading…</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: TAGS -->
+      <div class="tab hidden" id="tab-tags">
+        <div class="card">
+          <h3>Tag browser <span class="muted">— click any tag to search</span></h3>
+          <input id="tagFilter" placeholder="Filter tags…" oninput="filterTags()" style="margin-bottom:12px"/>
+          <div id="tagCloud" class="muted">Loading…</div>
+        </div>
+        <div class="card hidden" id="tagSearchResult">
+          <b id="tagSearchTitle"></b>
+          <div id="tagSearchBody" class="muted" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <!-- TAB: HABITS -->
+      <div class="tab hidden" id="tab-habits">
+        <div class="card">
+          <h3>Habit tracker</h3>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <input id="habitTitle" placeholder="New habit (e.g. Read 20 min)" style="flex:1"/>
+            <select id="habitFreq" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:10px;font-size:13px">
+              <option>daily</option><option>weekly</option>
+            </select>
+            <button style="flex:0 0 68px" onclick="addHabit()">Add</button>
+          </div>
+          <span class="meta" id="habitMsg"></span>
+        </div>
+        <div id="habitList"></div>
+      </div>
+
+      <!-- TAB: SRS -->
+      <div class="tab hidden" id="tab-srs">
+        <div class="card">
+          <h3>Spaced repetition <span class="muted">— review cards from your notes</span></h3>
+          <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+            <button class="ghost sm" onclick="buildSRS()">Build cards from vault</button>
+            <span class="meta" id="srsMsg"></span>
+          </div>
+          <div id="srsStats" class="muted"></div>
+        </div>
+        <div id="srsCardArea"></div>
+      </div>
+
+      <!-- TAB: ENTITIES -->
+      <div class="tab hidden" id="tab-entities">
+        <div class="card">
+          <h3>People &amp; entities <span class="muted">— extracted from your vault</span></h3>
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
+            <button class="ghost sm" onclick="buildEntities()">Extract from vault</button>
+            <input id="entitySearch" placeholder="Search…" oninput="searchEntities()" style="flex:1;min-width:120px"/>
+            <span class="meta" id="entMsg"></span>
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+            <button class="ghost sm" onclick="filterEntities(null,this)">All</button>
+            <button class="ghost sm" onclick="filterEntities('person',this)">People</button>
+            <button class="ghost sm" onclick="filterEntities('org',this)">Orgs</button>
+            <button class="ghost sm" onclick="filterEntities('topic',this)">Topics</button>
+            <button class="ghost sm" onclick="filterEntities('wikilink',this)">Links</button>
+          </div>
+          <div id="entBody" class="muted">Extract entities first.</div>
+        </div>
+      </div>
+
+      <!-- TAB: FINANCE -->
+      <div class="tab hidden" id="tab-finance">
+        <!-- header + sub-tab bar -->
+        <div class="card" style="padding:14px 18px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div><h3 style="margin:0">Finance <span class="muted">— CFO mode</span></h3>
+              <span class="faint" style="font-size:12px">your personal balance sheet</span></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:14px;border-bottom:1px solid var(--border);padding-bottom:10px;flex-wrap:wrap">
+            <button class="ghost sm active" id="finTab-overview" onclick="switchFinView('overview',this)">Overview</button>
+            <button class="ghost sm" id="finTab-transactions" onclick="switchFinView('transactions',this)">Transactions</button>
+            <button class="ghost sm" id="finTab-budget" onclick="switchFinView('budget',this)">Budget</button>
+            <button class="ghost sm" id="finTab-subscriptions" onclick="switchFinView('subscriptions',this)">Subscriptions</button>
+            <button class="ghost sm" id="finTab-investments" onclick="switchFinView('investments',this)">Investments</button>
+            <button class="ghost sm" id="finTab-income" onclick="switchFinView('income',this)">Income</button>
+            <button class="ghost sm" id="finTab-import" onclick="switchFinView('import',this)">Import</button>
+          </div>
+        </div>
+
+        <!-- OVERVIEW -->
+        <div id="finPane-overview">
+          <div id="finOverviewCards" class="row" style="flex-wrap:wrap;gap:10px"></div>
+          <div class="card" style="max-width:480px">
+            <h3 style="margin-top:0;font-size:1.15rem">Can I afford this?</h3>
+            <p class="muted" style="margin:0 0 16px;font-size:13px">Amy checks your cashflow, subscriptions, and goals before answering.</p>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <input id="affordAmount" placeholder="Amount  e.g. 5000" type="number" min="0"
+                style="font-size:1.4rem;font-weight:600;padding:10px 14px;border-radius:10px"/>
+              <input id="affordDesc" placeholder="What for?  e.g. Air Fryer to cook without Oil"
+                style="padding:10px 14px;border-radius:10px"/>
+              <button onclick="checkAfford()"
+                style="padding:11px;border-radius:10px;font-size:15px;font-weight:600">
+                Ask Amy
+              </button>
+              <button onclick="document.getElementById('affordResult').innerHTML='';document.getElementById('affordAmount').value='';document.getElementById('affordDesc').value=''"
+                style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px">
+                Not right now?
+              </button>
+            </div>
+            <div id="affordResult" style="margin-top:16px"></div>
+          </div>
+          <div class="card hidden" id="finCashflowCard">
+            <h3 style="margin-top:0">Cashflow forecast</h3>
+            <div id="finCashflowBody" class="muted"></div>
+          </div>
+        </div>
+
+        <!-- TRANSACTIONS -->
+        <div id="finPane-transactions" class="hidden">
+          <div class="card">
+            <h3 style="margin-top:0">Add transaction</h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input id="txAmount" placeholder="Amount (₹)" type="number" min="0" style="flex:0 0 130px"/>
+              <input id="txCategory" placeholder="Category (e.g. Food)" style="flex:1;min-width:110px"/>
+              <input id="txMerchant" placeholder="Merchant (e.g. Swiggy)" style="flex:1;min-width:110px"/>
+              <input id="txDate" type="date" style="flex:0 0 140px"/>
+              <input id="txNotes" placeholder="Notes (optional)" style="flex:2"/>
+              <button style="flex:0 0 68px" onclick="addTransaction()">Add</button>
+            </div>
+            <span class="meta" id="txMsg"></span>
+          </div>
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap">
+              <b style="flex:1">Transactions <span id="txCount" class="faint" style="font-weight:400;font-size:12px"></span></b>
+              <input id="txSearch" placeholder="Search merchant…" oninput="loadFinTransactions()" style="width:140px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px"/>
+              <select id="txAccFilter" onchange="loadFinTransactions()" title="Filter by account" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
+                <option value="">All accounts</option>
+                <option value="savings">Savings / Salary</option>
+                <option value="credit_card">Credit Card</option>
+              </select>
+              <select id="txCatFilter" onchange="loadFinTransactions()" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
+                <option value="">All categories</option>
+                <option>Food</option><option>Transport</option><option>Utilities</option>
+                <option>Entertainment</option><option>Health</option><option>Shopping</option>
+                <option>Investment</option><option>Rent</option><option>Education</option>
+                <option>Travel</option><option>Insurance</option><option>EMI/Loan</option>
+                <option>Transfer</option><option>Income</option><option>Uncategorized</option>
+              </select>
+              <input type="date" id="txSince" onchange="loadFinTransactions()" title="From date" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px"/>
+              <input type="date" id="txUntil" onchange="loadFinTransactions()" title="To date" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px"/>
+              <button class="ghost sm" onclick="autoCategorize()" title="Auto-categorize all uncategorized">✦ Categorize</button>
+              <button class="ghost sm" onclick="['txSearch','txSince','txUntil'].forEach(id=>{document.getElementById(id).value=''});['txCatFilter','txAccFilter'].forEach(id=>{document.getElementById(id).value=''});loadFinTransactions()">Clear</button>
+            </div>
+            <div id="txList" class="muted">Loading…</div>
+          </div>
+        </div>
+
+        <!-- BUDGET -->
+        <div id="finPane-budget" class="hidden">
+          <div class="card">
+            <h3 style="margin-top:0">Set budget</h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input id="budgetCat" placeholder="Category (e.g. Food)" style="flex:1;min-width:140px"/>
+              <input id="budgetLimit" placeholder="Monthly limit (₹)" type="number" min="0" style="flex:0 0 170px"/>
+              <button style="flex:0 0 68px" onclick="addBudget()">Set</button>
+            </div>
+            <span class="meta" id="budgetMsg"></span>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0">Budget status</h3>
+            <div id="budgetList" class="muted">Loading…</div>
+          </div>
+        </div>
+
+        <!-- SUBSCRIPTIONS -->
+        <div id="finPane-subscriptions" class="hidden">
+          <div class="card">
+            <h3 style="margin-top:0">Add subscription</h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input id="subName" placeholder="Name (e.g. Netflix)" style="flex:1;min-width:120px"/>
+              <input id="subCost" placeholder="Monthly cost (₹)" type="number" min="0" step="0.01" style="flex:0 0 160px"/>
+              <input id="subRenewal" type="date" placeholder="Next renewal" style="flex:0 0 140px"/>
+              <button style="flex:0 0 68px" onclick="addSub()">Add</button>
+            </div>
+            <span class="meta" id="subMsg"></span>
+          </div>
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <b style="flex:1">Active subscriptions</b>
+              <span id="subMonthlyTotal" class="chip" style="color:var(--warn)"></span>
+              <button class="ghost sm" onclick="loadSubInsights()">Insights</button>
+            </div>
+            <div id="subList" class="muted">Loading…</div>
+            <div id="subInsights" class="hidden" style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)"></div>
+          </div>
+        </div>
+
+        <!-- INVESTMENTS -->
+        <div id="finPane-investments" class="hidden">
+          <div class="card">
+            <h3 style="margin-top:0">Add investment</h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <select id="invType" style="flex:0 0 130px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
+                <option value="mutual_fund">Mutual Fund</option>
+                <option value="stock">Stock</option>
+                <option value="fd">FD</option>
+                <option value="gold">Gold</option>
+                <option value="ppf">PPF</option>
+                <option value="nps">NPS</option>
+                <option value="crypto">Crypto</option>
+                <option value="other">Other</option>
+              </select>
+              <input id="invName" placeholder="Name (e.g. Axis Bluechip)" style="flex:2;min-width:140px"/>
+              <input id="invValue" placeholder="Current value (₹)" type="number" min="0" step="0.01" style="flex:0 0 170px"/>
+              <input id="invCost" placeholder="Cost basis (₹)" type="number" min="0" step="0.01" style="flex:0 0 150px"/>
+              <button style="flex:0 0 68px" onclick="addInvestment()">Add</button>
+            </div>
+            <span class="meta" id="invMsg"></span>
+          </div>
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <b style="flex:1">Portfolio</b>
+              <span id="invPortfolioTotal" class="chip" style="color:var(--success)"></span>
+            </div>
+            <div id="invList" class="muted">Loading…</div>
+          </div>
+        </div>
+
+        <!-- INCOME -->
+        <div id="finPane-income" class="hidden">
+          <div class="card">
+            <h3 style="margin-top:0">Add income source</h3>
+            <p class="muted" style="font-size:13px;margin-bottom:10px">Add your salary, freelance income, rent, or any recurring income. Amy uses this for affordability checks and cashflow forecasts.</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <input id="incName" placeholder="Source name (e.g. Salary – TCS)" style="flex:2;min-width:160px"/>
+              <select id="incType" style="flex:0 0 120px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
+                <option value="salary">Salary</option>
+                <option value="freelance">Freelance</option>
+                <option value="rental">Rental</option>
+                <option value="business">Business</option>
+                <option value="investment">Investment</option>
+                <option value="other">Other</option>
+              </select>
+              <input id="incAmount" placeholder="Monthly amount (₹)" type="number" min="0" step="1" style="flex:0 0 180px"/>
+              <select id="incRecurrence" style="flex:0 0 110px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
+                <option value="monthly">Monthly</option>
+                <option value="weekly">Weekly</option>
+                <option value="annual">Annual</option>
+                <option value="one-time">One-time</option>
+              </select>
+              <button style="flex:0 0 68px" onclick="addIncome()">Add</button>
+            </div>
+            <span class="meta" id="incMsg"></span>
+          </div>
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+              <b style="flex:1">Income sources</b>
+              <span id="incMonthlyTotal" class="chip" style="color:var(--success)"></span>
+            </div>
+            <div id="incList" class="muted">Loading…</div>
+          </div>
+        </div>
+
+        <!-- IMPORT / ACCOUNTS -->
+        <div id="finPane-import" class="hidden">
+          <!-- Global Gmail sync card -->
+          <div class="card">
+            <h3 style="margin-top:0">Gmail bank alerts</h3>
+            <p class="faint" style="font-size:13px;margin:0 0 12px">AI-powered • bank detection • NVIDIA categorize</p>
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <button class="ghost sm" onclick="syncGmailAll(false)">⟳ Sync Now</button>
+              <button class="ghost sm" id="globalAutoSyncBtn" onclick="toggleGlobalAutoSync()" style="min-width:82px">▶ Auto</button>
+              <span id="globalAutoSyncDot" style="font-size:11px;color:var(--muted);white-space:nowrap">● off</span>
+            </div>
+            <div id="globalGmailMsg" style="margin-top:10px;font-size:13px;color:var(--muted);line-height:1.5"></div>
+          </div>
+          <!-- Accounts list -->
+          <div class="card">
+            <h3 style="margin-top:0">Bank accounts</h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input id="accNickname" placeholder="Nickname (e.g. SBI Savings)" style="flex:1;min-width:120px"/>
+              <input id="accBank" placeholder="Bank name (e.g. State Bank of India)" style="flex:1;min-width:140px"/>
+              <select id="accType" style="flex:0 0 110px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
+                <option value="savings">Savings</option>
+                <option value="current">Current</option>
+                <option value="credit">Credit Card</option>
+                <option value="investment">Investment</option>
+              </select>
+              <button style="flex:0 0 68px" onclick="addAccount()">Add</button>
+            </div>
+            <span class="meta" id="accMsg"></span>
+            <div id="accList" class="muted" style="margin-top:14px">Loading…</div>
+          </div>
+          <!-- Import panels rendered inline per account via JS -->
+          <div id="finImportPanels"></div>
+          <!-- Deduplication -->
+          <div class="card" id="dedupCard">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <div style="flex:1">
+                <b>Deduplication</b>
+                <p class="muted" style="margin:3px 0 0;font-size:12px">Find and remove duplicate transactions across all accounts.</p>
+              </div>
+              <button class="ghost sm" onclick="scanDuplicates()" id="dedupScanBtn">↺ Refresh</button>
+              <button class="ghost sm" id="autoDedupeBtn" onclick="autoRemoveDupes()" style="display:none;color:var(--success)">⚡ Remove exact</button>
+            </div>
+            <div id="dedupMsg" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+            <div id="dedupResults" style="margin-top:4px"></div>
+          </div>
+          <!-- Danger zone -->
+          <div class="card" style="border:1px solid rgba(220,50,50,.25)">
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+              <div style="flex:1">
+                <b style="color:var(--danger)">Reset transaction data</b>
+                <p class="muted" style="margin:3px 0 0;font-size:12px">Permanently delete all imported transactions. Accounts and settings are kept.</p>
+              </div>
+              <button class="ghost sm" onclick="resetAllTransactions()" style="color:var(--danger);border-color:rgba(220,50,50,.4)">✕ Reset all</button>
+            </div>
+            <span id="resetMsg" style="font-size:12px;color:var(--muted)"></span>
+          </div>
+          <!-- Cashflow forecast -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px">
+              <b style="flex:1">Next-week cashflow forecast</b>
+              <button class="ghost sm" onclick="loadForecast()">Refresh</button>
+            </div>
+            <div id="forecastBody" class="muted" style="margin-top:10px">Click refresh to load.</div>
+          </div>
+          <!-- Calendar sync -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="flex:1">
+                <b>Calendar sync</b>
+                <p class="muted" style="margin:2px 0 0;font-size:12.5px">Push bill due-dates and subscription renewals into Google Calendar.</p>
+              </div>
+              <button class="ghost sm" onclick="syncCalendar()">Sync calendar</button>
+            </div>
+            <span class="meta" id="calSyncMsg"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: IMPORT -->
+      <div class="tab hidden" id="tab-import">
+        <div class="card">
+          <h3>Import vault</h3>
+          <p class="muted">Upload a .zip of your Obsidian vault — Amy reads the markdown notes inside it.</p>
+          <input type="file" id="vaultZip" accept=".zip"/>
+          <div style="height:14px"></div>
+          <label style="display:block;margin-bottom:8px"><input type="radio" name="impMode" value="replace" checked style="width:auto"/> &nbsp;Replace — wipe what's there, load this zip fresh</label>
+          <label style="display:block;margin-bottom:10px"><input type="radio" name="impMode" value="add" style="width:auto"/> &nbsp;Add — keep existing notes, add/overwrite from this zip</label>
+          <label style="display:block;margin-bottom:12px"><input type="checkbox" id="impRebuild" checked style="width:auto"/> &nbsp;Rebuild knowledge graph after import</label>
+          <button onclick="importVault()">Upload .zip</button>
+          <div style="height:12px"></div>
+          <div class="bar hidden" id="impBar"><i id="impBarFill" style="width:0%"></i></div>
+          <p class="meta" id="importMsg"></p>
+        </div>
+      </div>
+
+      <!-- TAB: ACCOUNT -->
+      <div class="tab hidden" id="tab-account">
+        <div class="card">
+          <h3>Account</h3>
+          <p class="muted" id="acctEmail"></p>
+          <b>OpenAI key</b>
+          <input id="acctKey" type="password" placeholder="sk-…" style="margin-top:6px"/>
+          <div style="height:8px"></div>
+          <button class="sm" onclick="saveKey()">Save key</button>
+          <div style="height:20px"></div>
+          <b>Privacy — keep sensitive data local</b>
+          <p class="muted">Tick the folders Amy must keep on the <b>local model only</b>. Notes in these are never sent to OpenAI / Nvidia — use this for finance, family, and personal notes.</p>
+          <div id="privList" class="muted">Loading your folders…</div>
+          <div style="height:10px"></div>
+          <button class="sm" onclick="savePrivacy()">Save privacy settings</button>
+          <span class="meta" id="acctMsg"></span>
+
+          <div style="height:24px"></div>
+          <b>Obsidian vault — cloud sync</b>
+          <p class="muted">When <b>on</b>, Amy uses your cloud-synced Obsidian vault folder; when <b>off</b>, it uses a local folder. (Amy can't start/stop Obsidian's own Sync — it switches which folder is the active vault.)</p>
+          <label style="display:flex;align-items:center;gap:10px;margin:8px 0">
+            <input type="checkbox" id="vaultCloud" onchange="vaultToggle()"/>
+            <span id="vaultModeLabel">Use cloud-synced vault</span>
+          </label>
+          <input id="vaultCloudPath" placeholder="Cloud-synced vault folder (e.g. …/Obsidian/MyVault)" style="margin-top:6px"/>
+          <input id="vaultLocalPath" placeholder="Local vault folder" style="margin-top:6px"/>
+          <div style="height:8px"></div>
+          <button class="sm" onclick="saveVault()">Save vault settings</button>
+          <span class="meta" id="vaultMsg"></span>
+
+          <div style="height:24px"></div>
+          <b>Google — Gmail, Calendar &amp; Tasks</b>
+          <p class="muted">Connect your Google account to let Amy read your emails, calendar events, and tasks. Data stays private — never shared in public portfolio mode.</p>
+          <div id="googleStatus" style="margin:10px 0"><span class="faint">Checking…</span></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <button id="googleConnectBtn" onclick="connectGoogle()" style="background:linear-gradient(135deg,#4285F4,#34A853);border:none">
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="white" style="vertical-align:middle;margin-right:6px"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+              Connect Google
+            </button>
+            <button id="googleSyncBtn" class="ghost hidden" onclick="syncGoogle()">Sync now</button>
+            <button id="googleDisconnectBtn" class="ghost hidden" onclick="disconnectGoogle()" style="color:var(--danger)">Disconnect</button>
+          </div>
+          <span class="meta" id="googleMsg"></span>
+
+          <div style="height:24px"></div>
+          <b>Account Aggregator (AA)</b>
+          <p class="muted">When enabled, Amy can fetch bank data automatically via RBI-registered Account Aggregators. Disable this to block all AA data access regardless of whether AA credentials are configured on the server.</p>
+          <label style="display:flex;align-items:center;gap:10px;margin:8px 0">
+            <input type="checkbox" id="aaToggle" onchange="saveAAToggle()"/>
+            <span id="aaToggleLabel">Enable Account Aggregator</span>
+          </label>
+          <span class="meta" id="aaMsg"></span>
+
+          <div style="height:22px"></div>
+          <button class="ghost" onclick="logout()">Log out</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+const API = location.origin;
+let TOKEN = localStorage.getItem('amy_token') || '';
+
+// ---- fetch wrapper with 401 handling ----
+async function api(path, opts={}){
+  const o = {...opts, headers:{...(opts.headers||{})}};
+  if(TOKEN) o.headers['Authorization'] = 'Bearer '+TOKEN;
+  const r = await fetch(API+path, o);
+  if(r.status===401){ logout(); throw new Error('Session expired — please sign in again.'); }
+  return r;
+}
+async function jget(path){ const r=await api(path); return r.json(); }
+async function jpost(path, body){ const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return r.json(); }
+
+// ---- minimal markdown ----
+function md(t){
+  if(!t) return '';
+  let h = t
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/^### (.*)$/gm,'<h3>$1</h3>')
+    .replace(/^## (.*)$/gm,'<h2>$1</h2>')
+    .replace(/^# (.*)$/gm,'<h2>$1</h2>')
+    .replace(/\*\*(.+?)\*\*/g,'<b>$1</b>')
+    .replace(/\*(.+?)\*/g,'<i>$1</i>')
+    .replace(/`(.+?)`/g,'<code>$1</code>')
+    .replace(/^\s*[-*] (.*)$/gm,'<li>$1</li>');
+  h = h.replace(/(<li>[\s\S]*?<\/li>)/g, m=>'<ul>'+m+'</ul>').replace(/<\/ul>\s*<ul>/g,'');
+  return h.replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
+}
+
+// ---- view switching ----
+function show(loggedIn){
+  document.body.classList.toggle('authed', loggedIn);
+  document.getElementById('authCard').classList.toggle('hidden', loggedIn);
+  document.getElementById('nav').classList.toggle('hidden', !loggedIn);
+  document.querySelectorAll('.tab').forEach(t=>t.classList.add('hidden'));
+  if(loggedIn){ onLogin(); } else { document.getElementById('onboard').classList.add('hidden'); }
+}
+document.getElementById('nav').addEventListener('click', e=>{
+  const btn=e.target.closest('[data-tab]'); if(!btn) return;
+  const tab=btn.dataset.tab;
+  document.querySelectorAll('#nav button').forEach(b=>b.classList.toggle('active', b===btn));
+  const pt=document.getElementById('pageTitle'); if(pt) pt.textContent=(btn.querySelector('.label')?btn.querySelector('.label').textContent:tab);
+  document.getElementById('onboard').classList.add('hidden');
+  document.querySelectorAll('.tab').forEach(t=>t.classList.add('hidden'));
+  document.getElementById('tab-'+tab).classList.remove('hidden');
+  if(tab==='goals') loadGoals();
+  if(tab==='finance') loadFinance();
+  if(tab==='reflect') loadReflect();
+  if(tab==='learn') loadLearn();
+  if(tab==='agents') loadAgents();
+  if(tab==='portfolio') loadPortfolio();
+  if(tab==='memory') loadMemoryLake();
+  if(tab==='timeline') loadTimeline('week');
+  if(tab==='decisions') loadDecisions();
+  if(tab==='intelligence') {}
+  if(tab==='tags') loadTags();
+  if(tab==='habits') loadHabits();
+  if(tab==='srs') loadSRS();
+  if(tab==='entities') loadEntities();
+  if(tab==='account') loadAccount();
+});
+
+// ---- auth ----
+async function auth(kind){
+  const msg=document.getElementById('authMsg'); msg.textContent='…';
+  try{
+    const r=await fetch(API+'/auth/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({email:email_.value.trim(),password:password_.value})});
+    const d=await r.json(); if(!r.ok) throw new Error(d.detail||('error '+r.status));
+    TOKEN=d.token; localStorage.setItem('amy_token',TOKEN); show(true);
+  }catch(e){ msg.textContent=e.message; }
+}
+function logout(){ TOKEN=''; localStorage.removeItem('amy_token'); show(false); }
+
+// ---- onboarding ----
+async function onLogin(){
+  let me={}, vault={notes:0};
+  try{ me=await jget('/api/me'); }catch(e){ return; }
+  try{ vault=await jget('/api/vault'); }catch(e){}
+  document.getElementById('who').textContent = me.email||'';
+  const needsKey=!me.has_openai_key, needsVault=!(vault.notes>0);
+  if(needsKey||needsVault){
+    document.getElementById('onboard').classList.remove('hidden');
+    document.getElementById('obKey').classList.toggle('hidden', !needsKey);
+    document.getElementById('obVault').classList.toggle('hidden', !needsVault);
+  } else { document.getElementById('tab-chat').classList.remove('hidden'); }
+}
+async function obSaveKey(){ try{ await jpost('/api/settings/openai-key',{key:document.getElementById('obKeyInput').value.trim()}); document.getElementById('obKeyMsg').textContent='saved ✓'; }catch(e){ document.getElementById('obKeyMsg').textContent=e.message; } }
+async function obImport(){ const f=document.getElementById('obZip').files[0]; if(!f)return; const fd=new FormData(); fd.append('file',f); const r=await api('/api/vault/import',{method:'POST',body:fd}); const d=await r.json(); document.getElementById('obVaultMsg').textContent=r.ok?('importing… job '+d.job_id):(d.detail||'error'); }
+function finishOnboard(){ document.getElementById('onboard').classList.add('hidden'); document.getElementById('tab-chat').classList.remove('hidden'); }
+
+// ---- chat ----
+function bubble(who, html, metaHtml){
+  const c=document.getElementById('chat'); const d=document.createElement('div');
+  d.className='msg '+(who==='you'?'me':'amy'); d.innerHTML=html;
+  if(metaHtml){ const m=document.createElement('div'); m.className='meta'; m.innerHTML=metaHtml; d.appendChild(m); }
+  c.appendChild(d); c.scrollTop=c.scrollHeight; return d;
+}
+function renderMeta(d){
+  const domains=(d.domains||[]).map(x=>'<span class="chip">'+x+'</span>').join(' ');
+  const srcs=(d.sources||[]).map(s=>'<span class="chip src" title="'+s+'">'+s.split('/').pop()+'</span>').join(' ');
+  const conf=(d.confidence!=null)?(' · confidence '+d.confidence+'%'):'';
+  return 'agents: '+domains+conf+(srcs?('<br>sources: '+srcs):'');
+}
+async function ask(){
+  const qi=document.getElementById('q'); const text=qi.value.trim(); if(!text)return;
+  bubble('you', text.replace(/</g,'&lt;')); qi.value='';
+  const pending=bubble('amy','<i>thinking…</i>');
+  document.getElementById('sendBtn').disabled=true;
+  try{
+    const r=await api('/api/collab/ask/stream',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    if(!r.ok||!r.body){
+      const d=await (await api('/api/collab/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})})).json();
+      pending.innerHTML=md(d.answer); pending.innerHTML+='<div class="meta">'+renderMeta(d)+'</div>'; return;
+    }
+    const reader=r.body.getReader(); const dec=new TextDecoder(); let buf='';
+    while(true){
+      const {value,done}=await reader.read(); if(done)break;
+      buf+=dec.decode(value,{stream:true});
+      let idx;
+      while((idx=buf.indexOf('\n\n'))>=0){
+        const line=buf.slice(0,idx).trim(); buf=buf.slice(idx+2);
+        if(!line.startsWith('data:'))continue;
+        const evt=JSON.parse(line.slice(5).trim());
+        if(evt.type==='status'){ pending.innerHTML='<i>'+evt.data+'…</i>'; }
+        else if(evt.type==='done'){ const d=evt.data; pending.innerHTML=md(d.answer); pending.innerHTML+='<div class="meta">'+renderMeta(d)+'</div>'; }
+        else if(evt.type==='error'){ pending.innerHTML='Error: '+evt.data; }
+      }
+    }
+  }catch(e){ pending.innerHTML='Error: '+e.message; }
+  finally{ document.getElementById('sendBtn').disabled=false; }
+}
+
+// ---- import with progress ----
+async function importVault(){
+  const f=document.getElementById('vaultZip').files[0]; const m=document.getElementById('importMsg');
+  if(!f){m.textContent='pick a .zip';return;}
+  const mode=document.querySelector('input[name="impMode"]:checked').value;
+  const rebuild=document.getElementById('impRebuild').checked;
+  const replace=(mode==='replace');
+  const bar=document.getElementById('impBar'); bar.classList.remove('hidden'); document.getElementById('impBarFill').style.width='10%';
+  m.textContent=(replace?'replacing':'adding to')+' your vault…';
+  const fd=new FormData(); fd.append('file',f);
+  const r=await api('/api/vault/import?replace='+replace,{method:'POST',body:fd}); const d=await r.json();
+  if(!r.ok){ m.textContent=d.detail||'error'; return; }
+  let pct=20;
+  const poll=setInterval(async()=>{
+    const j=await jget('/api/vault/import/'+d.job_id);
+    pct=Math.min(90,pct+15); document.getElementById('impBarFill').style.width=pct+'%';
+    m.textContent='status: '+j.status;
+    if(j.status==='done'||j.status==='failed'){
+      clearInterval(poll);
+      if(j.status!=='done'){ document.getElementById('impBarFill').style.width='100%'; m.textContent='failed: '+(j.error||''); return; }
+      if(rebuild){ m.textContent='imported '+j.notes_loaded+' notes · rebuilding knowledge…';
+        try{ await jpost('/api/knowledge/build',{}); }catch(e){} }
+      document.getElementById('impBarFill').style.width='100%';
+      m.textContent='done — '+j.notes_loaded+' notes loaded'+(rebuild?' · knowledge rebuilt':'')+'. Open the Graph or Portfolio tab.';
+    }
+  },1500);
+}
+
+// ---- goals ----
+async function loadGoals(){
+  const d=await jget('/api/goals'); const el=document.getElementById('goalsList'); el.innerHTML='';
+  (d.goals||[]).forEach(g=>{
+    const ms=(g.milestones||[]).map(m=>'<div class="toggle"><span>'+(m.done?'✅':'⬜')+' '+m.title+'</span><button class="ghost sm" onclick="completeMs(\''+m.id+'\','+(m.done?'false':'true')+')">'+(m.done?'undo':'done')+'</button></div>').join('');
+    el.insertAdjacentHTML('beforeend',
+      '<div class="card"><b>'+g.title+'</b> <span class="muted">('+g.domain+' · '+g.status+')</span>'+
+      '<div style="height:8px"></div><div class="bar"><i style="width:'+(g.progress||0)+'%"></i></div>'+
+      '<div class="meta">'+(g.progress||0)+'%</div>'+ms+
+      '<div class="row" style="margin-top:10px"><input placeholder="new milestone" id="ms-'+g.id+'"/><button class="sm" style="flex:0 0 78px" onclick="addMs(\''+g.id+'\')">+ add</button></div></div>');
+  });
+  if(!(d.goals||[]).length) el.innerHTML='<p class="muted">No goals yet.</p>';
+}
+async function createGoal(){ const t=document.getElementById('goalTitle').value.trim(); if(!t)return; await jpost('/api/goals',{title:t,domain:(document.getElementById('goalDomain').value.trim()||'general')}); document.getElementById('goalTitle').value=''; loadGoals(); }
+async function addMs(gid){ const v=document.getElementById('ms-'+gid).value.trim(); if(!v)return; await jpost('/api/goals/'+gid+'/milestones',{title:v}); loadGoals(); }
+async function completeMs(mid,done){ await jpost('/api/milestones/'+mid+'/complete?done='+done,{}); loadGoals(); }
+
+// ---- reflect ----
+async function loadReflect(){
+  const d=await jget('/api/reflect'); const list=(t,a)=>'<b>'+t+'</b><ul>'+(a||[]).map(x=>'<li>'+x+'</li>').join('')+'</ul>';
+  document.getElementById('reflectBody').innerHTML=list('Progress',d.progress)+list('Gaps',d.gaps)+list('Suggestions',d.suggestions);
+}
+// ---- learn ----
+async function loadLearn(){
+  const d=await jget('/api/learn'); const t=d.trends||{};
+  const rows=Object.keys(t).map(k=>'<div class="toggle"><span>'+k+'</span><span class="chip">'+t[k].trend+'</span></div>').join('')||'<p class="muted">Not enough activity yet.</p>';
+  const recs=(d.recommendations||[]).map(r=>'<li>'+r+'</li>').join('');
+  document.getElementById('learnBody').innerHTML=rows+'<b>Recommendations</b><ul>'+recs+'</ul>';
+}
+// ---- agents marketplace ----
+async function loadAgents(){
+  const d=await jget('/api/agents'); const el=document.getElementById('agentsBody'); el.innerHTML='';
+  (d.agents||[]).forEach(a=>{
+    el.insertAdjacentHTML('beforeend','<div class="toggle"><span>'+a.agent+'</span><button class="sm '+(a.enabled?'':'ghost')+'" onclick="toggleAgent(\''+a.agent+'\','+(a.enabled?'false':'true')+')">'+(a.enabled?'enabled':'disabled')+'</button></div>');
+  });
+}
+async function toggleAgent(agent,enable){ await jpost('/api/agents/'+agent+'/'+(enable==='true'||enable===true?'enable':'disable'),{}); loadAgents(); }
+// ---- graph ----
+async function buildKnowledge(){ document.getElementById('kbMsg').textContent='building…'; const d=await jpost('/api/knowledge/build',{}); document.getElementById('kbMsg').textContent='built: '+d.notes+' notes, '+d.relationships+' links'; loadGraph(); }
+const PAL=['#22d3ee','#e879f9','#fbbf24','#34d399','#a78bfa','#f472b6','#60a5fa','#f87171','#2dd4bf','#c084fc'];
+function colorFor(dom){ let h=0; for(const ch of (dom||'general')) h=(h*31+ch.charCodeAt(0))>>>0; return PAL[h%PAL.length]; }
+function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
+async function ensureFG(){ if(window.ForceGraph) return; await loadScript('https://cdn.jsdelivr.net/npm/force-graph/dist/force-graph.min.js'); }
+let _fg=null;
+
+async function loadGraph(){
+  const d=await jget('/api/graph/viz'); const el=document.getElementById('graphBody');
+  const allNodes=d.nodes||[], edges=d.edges||[];
+  if(!allNodes.length){ el.innerHTML='<p class="muted">No graph yet — click "Build / refresh knowledge".</p>'; return; }
+  try{
+    await ensureFG();
+    if(_fg){ try{_fg._destructor&&_fg._destructor();}catch(e){} _fg=null; }
+    el.innerHTML='<div id="fg" style="height:540px;width:100%;border-radius:14px;overflow:hidden;'
+      +'background:radial-gradient(ellipse at 35% 30%,#0b1340 0%,#060823 45%,#020208 100%)"></div>'
+      +'<div class="meta">'+allNodes.length+' neurons · '+edges.length+' synapses · drag · scroll to zoom · click to focus</div>';
+    const maxImp=Math.max(1,...allNodes.map(n=>n.importance||0));
+    const nodes=allNodes.map(n=>({id:n.id,label:n.label||'',domain:n.domain,
+      c:colorFor(n.domain), hub:(n.importance||0)>=maxImp*0.5,
+      r:2.4+6.5*((n.importance||0)/maxImp), ph:Math.random()*2.4}));
+    const ids=new Set(nodes.map(n=>n.id));
+    const links=edges.filter(e=>ids.has(e.source)&&ids.has(e.target))
+                     .map(e=>({source:e.source,target:e.target,w:e.weight||0.3}));
+    const STARS=Array.from({length:520},()=>({x:Math.random(),y:Math.random(),r:Math.random()*1.3+0.2,a:Math.random()*0.6+0.1,tw:Math.random()*6.28}));
+    const NEB=[['#3a1f86',0.20],['#0e3f7a',0.18],['#7a1f64',0.15],['#10484f',0.13],['#241466',0.16]]
+      .map(([col,al])=>({col,al,x:Math.random(),y:Math.random(),rr:0.35+Math.random()*0.4}));
+    const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+    const host=document.getElementById('fg');
+    const G=window.ForceGraph()(host)
+      .backgroundColor('#02030a')
+      .width(host.clientWidth).height(540)
+      .graphData({nodes,links})
+      .nodeId('id').nodeLabel('label')
+      .linkDirectionalParticles(l=> 1+Math.round((l.w||0)*2))
+      .linkDirectionalParticleWidth(2.2)
+      .linkDirectionalParticleSpeed(0.005)
+      .linkDirectionalParticleColor(()=> 'rgba(215,232,255,0.95)')
+      .onRenderFramePre((ctx)=>{
+        const W=ctx.canvas.width, H=ctx.canvas.height, t=Date.now()/1000;
+        ctx.save(); ctx.setTransform(1,0,0,1,0,0);
+        ctx.globalCompositeOperation='lighter';
+        NEB.forEach(b=>{ const R=b.rr*Math.max(W,H), g=ctx.createRadialGradient(b.x*W,b.y*H,0,b.x*W,b.y*H,R);
+          g.addColorStop(0,b.col); g.addColorStop(1,'rgba(0,0,0,0)');
+          ctx.globalAlpha=b.al; ctx.fillStyle=g; ctx.fillRect(0,0,W,H); });
+        STARS.forEach(s=>{ const tw=0.5+0.5*Math.sin(t*1.5+s.tw);
+          ctx.globalAlpha=s.a*tw; ctx.fillStyle='#cfe0ff';
+          ctx.beginPath(); ctx.arc(s.x*W,s.y*H,s.r,0,6.283); ctx.fill(); });
+        ctx.globalAlpha=1; ctx.globalCompositeOperation='source-over'; ctx.restore();
+      })
+      .linkCanvasObjectMode(()=>'replace')
+      .linkCanvasObject((link,ctx,scale)=>{
+        const a=link.source,b=link.target; if(typeof a!=='object'||typeof b!=='object')return;
+        const mx=(a.x+b.x)/2, my=(a.y+b.y)/2 - dist(a,b)*0.12;
+        ctx.save(); ctx.globalCompositeOperation='lighter';
+        ctx.strokeStyle=a.c; ctx.shadowColor=a.c; ctx.shadowBlur=6;
+        ctx.globalAlpha=0.08+0.28*(link.w||0);
+        ctx.lineWidth=Math.max(0.4,(0.5+(link.w||0))/scale);
+        ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.quadraticCurveTo(mx,my,b.x,b.y); ctx.stroke();
+        ctx.restore();
+      })
+      .nodeCanvasObjectMode(()=>'replace')
+      .nodeCanvasObject((node,ctx,scale)=>{
+        const t=Date.now()/1000, pulse=((t+node.ph)%2.4)/2.4, r=node.r;
+        ctx.save(); ctx.globalCompositeOperation='lighter';
+        ctx.shadowColor=node.c; ctx.shadowBlur=node.hub?38:20;
+        ctx.beginPath(); ctx.arc(node.x,node.y,r,0,6.283); ctx.fillStyle=node.c; ctx.fill();
+        ctx.shadowBlur=0;
+        ctx.beginPath(); ctx.arc(node.x,node.y,r*0.4,0,6.283); ctx.fillStyle='#ffffff'; ctx.fill();
+        ctx.beginPath(); ctx.arc(node.x,node.y, r+pulse*r*5, 0,6.283);
+        ctx.strokeStyle=node.c; ctx.globalAlpha=(1-pulse)*0.55; ctx.lineWidth=1/scale; ctx.stroke();
+        ctx.restore();
+        if(node.hub || scale>2.4){ ctx.save(); ctx.globalAlpha=0.9; ctx.fillStyle='#e3ecff';
+          ctx.font=(10/scale)+'px Inter,system-ui'; ctx.fillText((node.label||'').slice(0,20), node.x+r+2/scale, node.y+3/scale); ctx.restore(); }
+      })
+      .onNodeHover(n=>{ host.style.cursor=n?'pointer':'default'; })
+      .onNodeClick(n=>{ G.centerAt(n.x,n.y,700); G.zoom(5,700); });
+    G.d3Force('charge').strength(-130);
+    try{ G.d3Force('link').distance(l=> 30+45*(1-(l.w||0))); }catch(e){}
+    _fg=G;
+    return;
+  }catch(e){ loadGraphSVG(d); }
+}
+
+function loadGraphSVG(d){
+  const el=document.getElementById('graphBody');
+  const allNodes=d.nodes||[], edges=d.edges||[]; const nodes=allNodes.slice(0,40);
+  if(!nodes.length){ el.innerHTML='<p class="muted">No graph yet — click "Build / refresh knowledge".</p>'; return; }
+  const PAL2=['#22d3ee','#e879f9','#fbbf24','#34d399','#a78bfa','#f472b6','#60a5fa','#f87171'];
+  const W=820,H=380,cx=W/2,cy=H/2;
+  let center=nodes[0]; nodes.forEach(n=>{ if((n.importance||0)>(center.importance||0)) center=n; });
+  const sats=nodes.filter(n=>n.id!==center.id);
+  const pos={}; pos[center.id]={x:cx,y:cy,n:center,c:'#ffffff'};
+  const R=Math.min(160, 70+sats.length*3);
+  sats.forEach((n,i)=>{ const a=2*Math.PI*i/Math.max(1,sats.length); pos[n.id]={x:cx+R*Math.cos(a),y:cy+R*Math.sin(a),n,c:PAL2[i%PAL2.length]}; });
+  let s='<svg viewBox="0 0 '+W+' '+H+'">';
+  s+='<defs><filter id="glow" x="-70%" y="-70%" width="240%" height="240%"><feGaussianBlur stdDeviation="3.4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>'
+    +'<radialGradient id="bg" cx="50%" cy="50%" r="70%"><stop offset="0%" stop-color="#0b1426"/><stop offset="100%" stop-color="#04060c"/></radialGradient></defs>';
+  s+='<rect x="0" y="0" width="'+W+'" height="'+H+'" fill="url(#bg)"/>';
+  edges.forEach(e=>{ const a=pos[e.source],b=pos[e.target]; if(a&&b){
+    s+='<line x1="'+a.x+'" y1="'+a.y+'" x2="'+b.x+'" y2="'+b.y+'" stroke="'+(b.c||'#9fb4ff')+'" stroke-width="1" stroke-opacity="0.4"/>'; }});
+  Object.values(pos).forEach((p,i)=>{
+    const c=p.c, isHub=p.n.id===center.id, r=isHub?9:5;
+    s+='<g filter="url(#glow)"><circle cx="'+p.x+'" cy="'+p.y+'" r="'+(r*2.8)+'" fill="'+c+'" opacity="0.16"/>'
+      +'<circle cx="'+p.x+'" cy="'+p.y+'" r="'+r+'" fill="'+c+'"/>'
+      +'<circle cx="'+p.x+'" cy="'+p.y+'" r="'+(r*0.45)+'" fill="#ffffff" opacity="0.9"/>'
+      +'<circle cx="'+p.x+'" cy="'+p.y+'" r="'+r+'" fill="none" stroke="'+c+'" stroke-width="1">'
+      +'<animate attributeName="r" values="'+r+';'+(r*4.5)+'" dur="2.6s" begin="'+(i*0.13).toFixed(2)+'s" repeatCount="indefinite"/>'
+      +'<animate attributeName="opacity" values="0.7;0" dur="2.6s" begin="'+(i*0.13).toFixed(2)+'s" repeatCount="indefinite"/></circle></g>';
+    s+='<text x="'+(p.x+r+5)+'" y="'+(p.y+3)+'" fill="#cdd6e6" font-size="9" opacity="0.85">'+((p.n.label||'').slice(0,16))+'</text>';
+  });
+  s+='</svg>';
+  el.innerHTML=s+'<div class="meta">'+allNodes.length+' nodes · '+edges.length+' links</div>';
+}
+// ---- portfolio ----
+async function loadPortfolio(){
+  const d=await jget('/api/portfolio');
+  const skills=(d.skills||[]).map(s=>'<span class="chip">'+s+'</span>').join(' ');
+  const projs=(d.projects||[]).map(p=>'<li><b>'+p.title+'</b> — '+(p.summary||'')+'</li>').join('');
+  const road=(d.roadmap||[]).map(r=>'<li>'+r+'</li>').join('');
+  document.getElementById('portfolioBody').innerHTML=
+    '<b>Skills</b><div style="margin:6px 0 14px">'+skills+'</div><b>Projects</b><ul>'+projs+'</ul><b>Learning roadmap</b><ul>'+road+'</ul>'+
+    '<p class="muted">Blocked from this view: '+(d.blocked||[]).join(', ')+'</p>';
+}
+// ---- account + privacy controls ----
+async function loadAccount(){
+  const me=await jget('/api/me'); document.getElementById('acctEmail').textContent=me.email+(me.has_openai_key?' · key set':' · no key');
+  let folders=[]; try{ const f=await jget('/api/settings/private-folders'); folders=f.folders||[]; }catch(e){}
+  let agents=[]; try{ const v=await jget('/api/vault'); agents=v.agents||[]; }catch(e){}
+  const el=document.getElementById('privList');
+  if(!agents.length){ el.innerHTML='<p class="muted">Import a vault first, then choose which folders stay local.</p>'; }
+  else{
+    el.innerHTML=agents.map(a=>{
+      const checked=folders.includes(a.folder)?'checked':'';
+      return '<label style="display:flex;align-items:center;gap:9px;padding:7px 0;border-bottom:1px solid var(--border)">'
+        +'<input type="checkbox" value="'+a.folder+'" '+checked+' style="width:auto"/> '
+        +'<span>'+a.name+' <span class="faint">('+a.folder+' · '+(a.count||0)+' notes)</span></span></label>';
+    }).join('');
+  }
+  loadVault();
+  loadGoogleStatus();
+  // AA toggle — me.aa_enabled defaults to true for existing users
+  const aaOn = me.aa_enabled !== false;
+  document.getElementById('aaToggle').checked = aaOn;
+  document.getElementById('aaToggleLabel').textContent = aaOn ? 'Account Aggregator enabled' : 'Account Aggregator disabled';
+}
+async function saveAAToggle(){
+  const enabled = document.getElementById('aaToggle').checked;
+  const m = document.getElementById('aaMsg');
+  try {
+    await jpost('/api/settings/aa-enabled', {enabled});
+    document.getElementById('aaToggleLabel').textContent = enabled ? 'Account Aggregator enabled' : 'Account Aggregator disabled';
+    m.textContent = enabled ? 'AA enabled ✓' : 'AA disabled ✓';
+  } catch(e) { m.textContent = e.message; }
+}
+
+// ---- google connector ----
+async function loadGoogleStatus(){
+  try{
+    const d=await jget('/api/connectors/google/status');
+    const el=document.getElementById('googleStatus');
+    if(d.connected){
+      const badges=(d.services||[]).map(s=>`<span class="chip" style="color:var(--success)">✓ ${s}</span>`).join(' ');
+      el.innerHTML=`<span style="color:var(--success);font-weight:600">Connected</span> ${badges}`;
+      document.getElementById('googleConnectBtn').classList.add('hidden');
+      document.getElementById('googleSyncBtn').classList.remove('hidden');
+      document.getElementById('googleDisconnectBtn').classList.remove('hidden');
+    } else {
+      el.innerHTML='<span class="faint">Not connected</span>';
+      document.getElementById('googleConnectBtn').classList.remove('hidden');
+      document.getElementById('googleSyncBtn').classList.add('hidden');
+      document.getElementById('googleDisconnectBtn').classList.add('hidden');
+    }
+  }catch(e){
+    document.getElementById('googleStatus').innerHTML='<span class="faint">Status unavailable (check GOOGLE_CLIENT_ID env var)</span>';
+  }
+}
+function connectGoogle(){
+  window.location.href='/api/connectors/google/auth?token='+encodeURIComponent(TOKEN);
+}
+async function syncGoogle(){
+  const m=document.getElementById('googleMsg'); m.textContent='syncing…';
+  try{
+    const d=await jpost('/api/connectors/google/sync',{});
+    const parts=Object.entries(d.synced||{}).map(([k,v])=>`${k}: ${v}`).join(', ');
+    m.textContent='synced ✓ — '+parts;
+  }catch(e){ m.textContent='error: '+e.message; }
+}
+async function disconnectGoogle(){
+  if(!confirm('Disconnect Google? Your existing synced data stays in the vault.')) return;
+  const m=document.getElementById('googleMsg');
+  try{
+    await api('/api/connectors/google',{method:'DELETE'});
+    m.textContent='disconnected';
+    loadGoogleStatus();
+  }catch(e){ m.textContent=e.message; }
+}
+async function saveKey(){ await jpost('/api/settings/openai-key',{key:document.getElementById('acctKey').value.trim()}); document.getElementById('acctMsg').textContent='key saved ✓'; }
+async function loadVault(){
+  try{
+    const v=await jget('/api/settings/vault');
+    document.getElementById('vaultCloud').checked=!!v.cloud_sync;
+    document.getElementById('vaultCloudPath').value=v.cloud_path||'';
+    document.getElementById('vaultLocalPath').value=v.local_path||'';
+    vaultToggle();
+    document.getElementById('vaultMsg').textContent='active: '+(v.mode||'')+' → '+(v.active_path||'');
+  }catch(e){}
+}
+function vaultToggle(){
+  const on=document.getElementById('vaultCloud').checked;
+  document.getElementById('vaultModeLabel').textContent=on?'Using cloud-synced vault':'Using local vault';
+}
+async function saveVault(){
+  try{
+    const v=await jpost('/api/settings/vault',{
+      cloud_sync:document.getElementById('vaultCloud').checked,
+      cloud_path:document.getElementById('vaultCloudPath').value.trim(),
+      local_path:document.getElementById('vaultLocalPath').value.trim()});
+    document.getElementById('vaultMsg').textContent='saved ✓ · active: '+(v.mode||'')+' → '+(v.active_path||'');
+  }catch(e){ document.getElementById('vaultMsg').textContent=e.message; }
+}
+async function savePrivacy(){
+  const fs=[...document.querySelectorAll('#privList input:checked')].map(c=>c.value);
+  await api('/api/settings/private-folders',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({folders:fs})});
+  document.getElementById('acctMsg').textContent = fs.length ? ('saved ✓ — kept local: '+fs.join(', ')) : 'saved ✓ — nothing kept local';
+}
+
+// ---- timeline ----
+const TL_COLORS = {activity:'#22d3ee',event:'#8b5cf6',decision:'#fbbf24',note:'#34d399',email:'#f472b6',calendar:'#60a5fa',tasks:'#f87171'};
+async function loadTimeline(period='week'){
+  ['tlDay','tlWeek','tlMonth'].forEach(id=>document.getElementById(id).classList.remove('active'));
+  const btn={day:'tlDay',week:'tlWeek',month:'tlMonth'}[period];
+  if(btn) document.getElementById(btn).classList.add('active');
+  document.getElementById('tlBody').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/timeline/'+period);
+    const groups=d.groups||[];
+    if(!groups.length){document.getElementById('tlBody').innerHTML='<p class="muted">No activity yet — start chatting to build your timeline.</p>';return;}
+    let html='';
+    groups.forEach(g=>{
+      html+=`<div style="margin-bottom:18px"><div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">${g.label||g.period}</div>`;
+      (g.items||[]).forEach(it=>{
+        const col=TL_COLORS[it.source]||'#9aa6bf';
+        html+=`<div style="display:flex;gap:10px;padding:7px 0;border-bottom:1px solid var(--border)">
+          <span style="width:8px;height:8px;border-radius:50%;background:${col};flex:0 0 auto;margin-top:5px"></span>
+          <div style="min-width:0;flex:1">
+            <span style="font-size:13px">${it.text||it.kind}</span>
+            <span class="chip" style="font-size:10px;margin-left:6px">${it.source||''}</span>
+            <div class="faint" style="font-size:11px">${(it.ts||'').slice(0,16).replace('T',' ')}</div>
+          </div></div>`;
+      });
+      html+='</div>';
+    });
+    document.getElementById('tlBody').innerHTML=html;
+  }catch(e){document.getElementById('tlBody').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+// ---- decisions ----
+async function loadDecisions(){
+  await Promise.all([loadDecHistory(), loadDecAnalysis(), loadDecRecs()]);
+}
+async function loadDecHistory(){
+  try{
+    const d=await jget('/api/decisions?limit=100');
+    const list=d.decisions||[];
+    if(!list.length){document.getElementById('decHistory').innerHTML='<p class="muted">No decisions yet.</p>';return;}
+    document.getElementById('decHistory').innerHTML=list.map(d=>`
+      <div class="toggle">
+        <div style="min-width:0;flex:1">
+          <b>${d.title}</b> <span class="chip">${d.category||d.domain||'personal'}</span>
+          ${d.confidence!=null?`<span class="chip" style="color:var(--cyan)">${Math.round(d.confidence*100)}% confident</span>`:''}
+          <div class="faint" style="font-size:11px">${(d.ts||'').slice(0,10)} · ${d.status||'open'}</div>
+          ${d.reason?`<div class="muted" style="font-size:12px;margin-top:3px">${d.reason}</div>`:''}
+        </div>
+        ${d.status==='open'?`<button class="ghost sm" onclick="resolveDecision('${d.id}')">resolve</button>`:''}
+      </div>`).join('');
+  }catch(e){document.getElementById('decHistory').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function loadDecAnalysis(){
+  try{
+    const d=await jget('/api/decisions/analysis');
+    document.getElementById('decAnalysis').innerHTML=`
+      <div class="row">
+        <div class="card"><div class="muted" style="font-size:12px">Total</div><b style="font-size:22px">${d.total||0}</b></div>
+        <div class="card"><div class="muted" style="font-size:12px">Resolved</div><b style="font-size:22px">${d.resolved||0}</b></div>
+        <div class="card"><div class="muted" style="font-size:12px">Avg confidence</div><b style="font-size:22px">${d.avg_confidence!=null?Math.round(d.avg_confidence*100)+'%':'—'}</b></div>
+      </div>
+      <div style="margin-top:10px"><b>By category</b><div style="margin-top:6px">${Object.entries(d.by_category||{}).map(([k,v])=>`<div class="toggle"><span>${k}</span><span class="chip">${v}</span></div>`).join('')||'<p class="muted">—</p>'}</div></div>`;
+  }catch(e){document.getElementById('decAnalysis').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function loadDecRecs(){
+  try{
+    const d=await jget('/api/decisions/recommendations');
+    const recs=d.recommendations||[];
+    document.getElementById('decRecs').innerHTML=recs.length
+      ?'<ul>'+recs.map(r=>`<li style="margin-bottom:8px">${r}</li>`).join('')+'</ul>'
+      :'<p class="muted">Make more decisions to get personalised recommendations.</p>';
+  }catch(e){document.getElementById('decRecs').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+function showDecTab(tab,btn){
+  ['decHistory','decAnalysis','decRecs'].forEach(id=>document.getElementById(id).classList.add('hidden'));
+  document.getElementById('dec'+tab.charAt(0).toUpperCase()+tab.slice(1)).classList.remove('hidden');
+  document.querySelectorAll('#tab-decisions .card button.ghost').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+async function recordDecision(){
+  const t=document.getElementById('decTitle').value.trim();
+  if(!t)return;
+  const m=document.getElementById('decMsg'); m.textContent='saving…';
+  try{
+    await jpost('/api/decisions',{title:t,reason:document.getElementById('decReason').value.trim(),category:document.getElementById('decCat').value});
+    document.getElementById('decTitle').value=''; document.getElementById('decReason').value='';
+    m.textContent='logged ✓'; loadDecHistory();
+  }catch(e){m.textContent=e.message;}
+}
+async function resolveDecision(id){
+  const outcome=prompt('Outcome?'); if(outcome==null)return;
+  await jpost('/api/decisions/'+id+'/outcome',{outcome,status:'resolved'});
+  loadDecHistory();
+}
+
+// ---- intelligence ----
+async function loadIntel(view){
+  document.getElementById('intelMsg').textContent='loading…';
+  document.getElementById('intelFutureCard').classList.add('hidden');
+  try{
+    if(view==='twin'){
+      const d=await jget('/api/twin/full');
+      const prof=d.profile||{}; const traits=d.traits||{};
+      document.getElementById('intelBody').innerHTML=`
+        <div class="row">
+          <div class="card"><div class="muted" style="font-size:12px">Skills</div>${(prof.skills||[]).map(s=>`<span class="chip">${s}</span>`).join('')||'—'}</div>
+          <div class="card"><div class="muted" style="font-size:12px">Focus areas</div>${(traits.focus_areas||[]).slice(0,5).map(s=>`<span class="chip">${s}</span>`).join('')||'—'}</div>
+        </div>
+        <div class="card"><div class="muted" style="font-size:12px">Momentum (trending up)</div>${(traits.momentum||[]).map(s=>`<span class="chip" style="color:var(--success)">${s}</span>`).join('')||'<span class="faint">nothing trending yet</span>'}</div>
+        <div class="row">
+          <div class="card"><div class="muted" style="font-size:12px">Active goals</div><b style="font-size:20px">${traits.active_goal_count||0}</b></div>
+          <div class="card"><div class="muted" style="font-size:12px">Completed</div><b style="font-size:20px">${traits.completed_goal_count||0}</b></div>
+          <div class="card"><div class="muted" style="font-size:12px">Engagement</div><b style="font-size:20px">${traits.engagement||0}</b></div>
+        </div>`;
+    } else if(view==='personality'){
+      const d=await jget('/api/personality');
+      const traits=d.traits||{}; const prios=d.priorities||[];
+      document.getElementById('intelBody').innerHTML=`
+        <div class="card"><div class="muted" style="font-size:12px;margin-bottom:8px">Personality traits</div>
+        ${Object.entries(traits).map(([k,v])=>`<div class="toggle"><span>${k.replace(/_/g,' ')}</span><span class="chip">${v}</span></div>`).join('')||'<p class="muted">Import more notes to detect personality.</p>'}</div>
+        <div class="card"><div class="muted" style="font-size:12px;margin-bottom:8px">Top priorities</div>
+        ${prios.map((p,i)=>`<div class="toggle"><span>${i+1}. ${p.domain||p}</span><span class="chip">${p.score||p.count||''}</span></div>`).join('')||'<p class="muted">—</p>'}</div>`;
+    } else if(view==='predict'){
+      const [goals,learn]=await Promise.all([jget('/api/predict/goals'),jget('/api/predict/learning')]);
+      const gf=goals.forecasts||[]; const lf=learn||{};
+      document.getElementById('intelBody').innerHTML=`
+        <div class="card"><b>Goal forecasts</b><div style="margin-top:8px">
+        ${gf.length?gf.map(f=>`<div class="toggle"><span>${f.title}</span><span class="chip" style="color:${f.on_track?'var(--success)':'var(--danger)'}">${f.on_track?'on track':'at risk'}</span></div>`).join(''):'<p class="muted">No forecasts yet — add goals with target dates.</p>'}</div></div>
+        <div class="card"><b>Learning velocity</b><div style="margin-top:8px">
+        ${Object.entries(lf).map(([k,v])=>`<div class="toggle"><span>${k}</span><span class="chip">${JSON.stringify(v).slice(0,40)}</span></div>`).join('')||'<p class="muted">—</p>'}</div></div>`;
+    }
+    document.getElementById('intelMsg').textContent='';
+  }catch(e){document.getElementById('intelMsg').textContent='error: '+e.message; document.getElementById('intelBody').innerHTML='';}
+}
+function loadIntelFuture(){
+  document.getElementById('intelFutureCard').classList.remove('hidden');
+  document.getElementById('intelBody').innerHTML='';
+  document.getElementById('intelMsg').textContent='';
+}
+async function validateFutureSelf(){
+  const title=document.getElementById('fsTitle').value.trim(); if(!title)return;
+  document.getElementById('fsResult').textContent='checking…';
+  try{
+    const d=await jpost('/api/future-self/validate',{title,category:document.getElementById('fsCat').value,reason:''});
+    const score=d.alignment_score; const col=score>0.6?'var(--success)':score>0.3?'var(--warn)':'var(--danger)';
+    document.getElementById('fsResult').innerHTML=`<b style="color:${col}">Alignment: ${Math.round((score||0)*100)}%</b><br><span class="muted">${d.verdict||d.reason||''}</span>
+    ${(d.conflicts||[]).length?'<br><b style="color:var(--danger)">Conflicts:</b><ul>'+d.conflicts.map(c=>`<li>${c}</li>`).join('')+'</ul>':''}`;
+  }catch(e){document.getElementById('fsResult').textContent='error: '+e.message;}
+}
+async function runAutopilot(){
+  document.getElementById('intelMsg').textContent='running autopilot…';
+  try{
+    const d=await jpost('/api/autopilot/run?dry_run=false',{});
+    document.getElementById('intelBody').innerHTML=`<div class="card"><b>Autopilot results</b><pre style="white-space:pre-wrap;font-size:12px;margin-top:8px">${JSON.stringify(d,null,2)}</pre></div>`;
+    document.getElementById('intelMsg').textContent='done ✓';
+  }catch(e){document.getElementById('intelMsg').textContent='error: '+e.message;}
+}
+
+// ---- tags ----
+let _allTags=[];
+async function loadTags(){
+  document.getElementById('tagCloud').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/tags');
+    _allTags=d.tags||[];
+    renderTagCloud(_allTags);
+  }catch(e){document.getElementById('tagCloud').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+function renderTagCloud(tags){
+  if(!tags.length){document.getElementById('tagCloud').innerHTML='<p class="muted">No tags found in your vault.</p>';return;}
+  const max=tags[0]?.count||1;
+  document.getElementById('tagCloud').innerHTML=tags.map(t=>{
+    const sz=Math.max(11,Math.min(20,11+9*(t.count/max)));
+    return `<span onclick="searchByTag('${t.name.replace(/'/g,"\\'")}')" class="chip" style="cursor:pointer;font-size:${sz}px;margin:3px;padding:5px 12px">#${t.name} <span class="faint">${t.count}</span></span>`;
+  }).join('');
+}
+function filterTags(){
+  const q=document.getElementById('tagFilter').value.toLowerCase();
+  renderTagCloud(q?_allTags.filter(t=>t.name.includes(q)):_allTags);
+}
+async function searchByTag(tag){
+  document.getElementById('tagSearchTitle').textContent='#'+tag;
+  document.getElementById('tagSearchResult').classList.remove('hidden');
+  document.getElementById('tagSearchBody').textContent='Searching…';
+  try{
+    const d=await jpost('/api/search',{query:'#'+tag,limit:20});
+    const items=(d.results||d.hits||[]);
+    document.getElementById('tagSearchBody').innerHTML=items.length
+      ?items.map(r=>`<div class="toggle"><span>${r.title||r.path}</span><span class="faint" style="font-size:11px">${r.path||''}</span></div>`).join('')
+      :'<p class="muted">No results.</p>';
+  }catch(e){document.getElementById('tagSearchBody').textContent=e.message;}
+}
+
+// ---- habits ----
+async function loadHabits(){
+  try{
+    const d=await jget('/api/habits');
+    const habits=d.habits||[];
+    if(!habits.length){document.getElementById('habitList').innerHTML='<div class="card"><p class="muted">No habits yet — add one above to start tracking.</p></div>';return;}
+    document.getElementById('habitList').innerHTML=habits.map(h=>`
+      <div class="card" style="border-left:3px solid ${h.color}">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="sm ${h.checked_today?'':'ghost'}" onclick="habitCheckIn('${h.id}',${!h.checked_today})" style="flex:0 0 auto">
+            ${h.checked_today?'✓ done':'check in'}
+          </button>
+          <div style="flex:1"><b>${h.title}</b> <span class="faint">${h.frequency}</span>
+            <div class="muted" style="font-size:12px">🔥 ${h.streak} day streak</div>
+          </div>
+          <button class="ghost sm" onclick="deleteHabit('${h.id}')" style="color:var(--faint)">✕</button>
+        </div>
+      </div>`).join('');
+  }catch(e){document.getElementById('habitList').innerHTML='<div class="card"><p class="muted">'+e.message+'</p></div>';}
+}
+async function addHabit(){
+  const t=document.getElementById('habitTitle').value.trim(); if(!t)return;
+  const m=document.getElementById('habitMsg'); m.textContent='adding…';
+  try{
+    await jpost('/api/habits',{title:t,frequency:document.getElementById('habitFreq').value});
+    document.getElementById('habitTitle').value=''; m.textContent='added ✓'; loadHabits();
+  }catch(e){m.textContent=e.message;}
+}
+async function habitCheckIn(id,done){
+  await jpost('/api/habits/'+id+'/checkin',{done});
+  loadHabits();
+}
+async function deleteHabit(id){
+  if(!confirm('Archive this habit?'))return;
+  await api('/api/habits/'+id,{method:'DELETE'}); loadHabits();
+}
+
+// ---- spaced repetition ----
+let _srsCards=[], _srsIdx=0;
+async function loadSRS(){
+  const s=await jget('/api/srs/stats').catch(()=>({total:0,due:0}));
+  document.getElementById('srsStats').innerHTML=`<span class="chip">${s.total} cards total</span> <span class="chip" style="color:var(--warn)">${s.due} due today</span> <span class="chip" style="color:var(--success)">${s.mastered||0} mastered</span>`;
+  if(s.due>0) await startSRSSession();
+  else document.getElementById('srsCardArea').innerHTML='<div class="card"><p class="muted">Nothing due — you\'re all caught up! Build more cards from your vault or come back tomorrow.</p></div>';
+}
+async function buildSRS(){
+  const m=document.getElementById('srsMsg'); m.textContent='generating…';
+  try{const d=await jpost('/api/srs/build',{}); m.textContent=`done — ${d.added} new cards (${d.total} total)`; loadSRS();}
+  catch(e){m.textContent=e.message;}
+}
+async function startSRSSession(){
+  const d=await jget('/api/srs/due?limit=20');
+  _srsCards=d.cards||[]; _srsIdx=0;
+  showSRSCard();
+}
+function showSRSCard(){
+  const area=document.getElementById('srsCardArea');
+  if(_srsIdx>=_srsCards.length){area.innerHTML='<div class="card"><p class="muted">Session complete! Come back tomorrow for more.</p></div>';return;}
+  const c=_srsCards[_srsIdx];
+  area.innerHTML=`<div class="card">
+    <div class="muted" style="font-size:11px;margin-bottom:8px">Card ${_srsIdx+1} of ${_srsCards.length} · <span class="faint">${c.note_path||''}</span></div>
+    <div style="font-size:16px;font-weight:600;margin-bottom:14px">${c.front}</div>
+    <div id="srsAnswer" class="hidden" style="background:rgba(0,0,0,.2);border-radius:10px;padding:12px;margin-bottom:14px;font-size:14px">${c.back}</div>
+    <div id="srsShowBtn"><button class="ghost" onclick="revealSRS()">Show answer</button></div>
+    <div id="srsRateArea" class="hidden" style="display:flex;gap:8px;flex-wrap:wrap">
+      <button onclick="rateSRS('${c.id}',1)" style="background:var(--danger)" title="Again">Again</button>
+      <button onclick="rateSRS('${c.id}',3)" style="background:var(--warn)" title="Hard">Hard</button>
+      <button onclick="rateSRS('${c.id}',4)" title="Good">Good</button>
+      <button onclick="rateSRS('${c.id}',5)" style="background:var(--success)" title="Easy">Easy</button>
+    </div></div>`;
+}
+function revealSRS(){
+  document.getElementById('srsAnswer').classList.remove('hidden');
+  document.getElementById('srsShowBtn').classList.add('hidden');
+  document.getElementById('srsRateArea').style.display='flex'; document.getElementById('srsRateArea').classList.remove('hidden');
+}
+async function rateSRS(cardId,quality){
+  await jpost('/api/srs/review',{card_id:cardId,quality});
+  _srsIdx++; showSRSCard();
+}
+
+// ---- entities ----
+let _entType=null;
+async function loadEntities(){
+  await refreshEntities();
+}
+async function refreshEntities(type){
+  _entType=type||null;
+  document.getElementById('entBody').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const qs=_entType?`type=${_entType}&`:'';
+    const d=await jget('/api/entities?'+qs+'limit=150&min_mentions=1');
+    renderEntities(d.entities||[]);
+  }catch(e){document.getElementById('entBody').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+function renderEntities(list){
+  if(!list.length){document.getElementById('entBody').innerHTML='<p class="muted">No entities found. Click "Extract from vault" first.</p>';return;}
+  const COLS={person:'var(--cyan)',org:'var(--violet)',topic:'var(--pink)',wikilink:'var(--success)'};
+  document.getElementById('entBody').innerHTML=list.map(e=>`
+    <div class="toggle">
+      <div><span class="chip" style="color:${COLS[e.type]||'var(--muted)'}">${e.type}</span> <b>${e.name}</b></div>
+      <span class="muted" style="font-size:12px">${e.mentions}×</span>
+    </div>`).join('');
+}
+function filterEntities(type,btn){
+  document.querySelectorAll('#tab-entities .card button.ghost').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  refreshEntities(type);
+}
+async function searchEntities(){
+  const q=document.getElementById('entitySearch').value.trim();
+  if(!q){loadEntities();return;}
+  try{
+    const d=await jget('/api/entities/search?q='+encodeURIComponent(q));
+    renderEntities(d.results||[]);
+  }catch(e){}
+}
+async function buildEntities(){
+  const m=document.getElementById('entMsg'); m.textContent='extracting…';
+  try{const d=await jpost('/api/entities/build',{}); m.textContent=`done — ${d.extracted} entities`; loadEntities();}
+  catch(e){m.textContent=e.message;}
+}
+
+// ---- memory lake (merged: files + graph + folders) ----
+let _memView='files';
+function switchMemView(view, btn){
+  _memView=view;
+  ['files','graph','folders'].forEach(v=>{
+    document.getElementById('mlPane-'+v).classList.toggle('hidden', v!==view);
+    document.getElementById('mlTab-'+v).classList.toggle('active', v===view);
+  });
+  if(view==='files') loadMemoryFiles();
+  if(view==='graph') loadGraph();
+  if(view==='folders') loadFolderTree();
+}
+function loadMemoryLake(){
+  switchMemView(_memView, document.getElementById('mlTab-'+_memView));
+}
+async function loadMemoryFiles(){
+  document.getElementById('memFileList').innerHTML='<p class="muted">Loading…</p>';
+  document.getElementById('memFileView').classList.add('hidden');
+  try{
+    const d=await jget('/api/memory/index');
+    const files=d.files||[];
+    if(!files.length){ document.getElementById('memFileList').innerHTML='<p class="muted">No memory files yet — chat with Amy to create your first daily note.</p>'; return; }
+    const grouped={};
+    files.forEach(f=>{ (grouped[f.folder]=grouped[f.folder]||[]).push(f); });
+    let html='';
+    Object.entries(grouped).forEach(([folder,items])=>{
+      html+='<div style="margin-bottom:14px"><div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">'+folder+'</div>';
+      items.forEach(f=>{
+        html+='<div class="toggle" onclick="openMemFile(\''+f.path.replace(/'/g,"\\'")+'\')" style="cursor:pointer">'
+          +'<span>'+f.name+'</span>'
+          +'<span class="faint" style="font-size:12px">'+Math.round(f.size/1024*10)/10+' KB</span></div>';
+      });
+      html+='</div>';
+    });
+    document.getElementById('memFileList').innerHTML=html;
+  }catch(e){ document.getElementById('memFileList').innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+async function openMemFile(path){
+  document.getElementById('memFileName').textContent=path;
+  document.getElementById('memFileContent').textContent='Loading…';
+  document.getElementById('memFileView').classList.remove('hidden');
+  try{
+    const d=await jget('/api/memory/file?path='+encodeURIComponent(path));
+    document.getElementById('memFileContent').textContent=d.content||'(empty)';
+  }catch(e){ document.getElementById('memFileContent').textContent='Error: '+e.message; }
+}
+function closeMemFile(){ document.getElementById('memFileView').classList.add('hidden'); }
+
+async function loadFolderTree(){
+  document.getElementById('folderTree').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/vault/tree');
+    const tree=d.tree||[];
+    if(!tree.length){document.getElementById('folderTree').innerHTML='<p class="muted">No vault folders yet — import your notes first.</p>';return;}
+    let html='';
+    tree.forEach(f=>{
+      html+=`<div style="margin-bottom:12px">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <span style="font-size:16px">📁</span>
+          <b style="flex:1">${f.name}</b>
+          <span class="chip">${f.count} notes</span>
+        </div>`;
+      (f.children||[]).forEach(c=>{
+        html+=`<div style="display:flex;align-items:center;gap:8px;padding:6px 0 6px 24px;border-bottom:1px solid var(--border)">
+          <span style="font-size:14px">📄</span>
+          <span style="flex:1;color:var(--muted)">${c.name}</span>
+          <span class="faint" style="font-size:12px">${c.count}</span>
+        </div>`;
+      });
+      html+='</div>';
+    });
+    document.getElementById('folderTree').innerHTML=html;
+  }catch(e){document.getElementById('folderTree').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+// ---- finance ----
+let _finView='overview';
+let _finSelectedAccount=null, _finSelectedAccountName='';
+
+function loadFinance(){
+  switchFinView('overview', document.getElementById('finTab-overview'));
+}
+
+function switchFinView(view, btn){
+  _finView=view;
+  ['overview','transactions','budget','subscriptions','investments','income','import'].forEach(v=>{
+    document.getElementById('finPane-'+v).classList.toggle('hidden', v!==view);
+    const tb=document.getElementById('finTab-'+v);
+    if(tb) tb.classList.toggle('active', v===view);
+  });
+  if(view==='overview') loadFinOverview();
+  if(view==='transactions') loadFinTransactions();
+  if(view==='budget') loadFinBudgets();
+  if(view==='subscriptions') loadFinSubs();
+  if(view==='investments') loadFinInvestments();
+  if(view==='income') loadFinIncome();
+  if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
+}
+
+function _fmt(n){ return '₹'+(+(n||0)).toLocaleString('en-IN'); }
+
+async function loadFinOverview(){
+  const el=document.getElementById('finOverviewCards');
+  el.innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const [ov, inc, inv, subs, fc] = await Promise.all([
+      jget('/api/finance/overview'),
+      jget('/api/finance/income'),
+      jget('/api/finance/investments'),
+      jget('/api/finance/subscriptions'),
+      jget('/api/finance/forecast/cashflow').catch(()=>({})),
+    ]);
+    const spending = ov.monthly_spending || 0;
+    const income = inc.monthly_total || 0;
+    const net = income - spending;
+    const subTotal = subs.monthly_total || 0;
+    const portTotal = (inv.portfolio||{}).total_value || 0;
+    const alerts = (ov.alerts||[]).length;
+    el.innerHTML=`
+      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Monthly income</div><b style="font-size:22px;color:var(--success)">${_fmt(income)}</b></div>
+      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Spent this month</div><b style="font-size:22px;color:var(--danger)">${_fmt(spending)}</b></div>
+      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Net cashflow</div><b style="font-size:22px;color:${net>=0?'var(--success)':'var(--danger)'}">${_fmt(net)}</b></div>
+      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Subscriptions/mo</div><b style="font-size:22px;color:var(--warn)">${_fmt(subTotal)}</b></div>
+      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Portfolio value</div><b style="font-size:22px;color:var(--cyan)">${_fmt(portTotal)}</b></div>
+      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Budget alerts</div><b style="font-size:22px;color:${alerts>0?'var(--danger)':'var(--success)'}">${alerts}</b></div>`;
+    // cashflow card
+    const fcard=document.getElementById('finCashflowCard');
+    if(fc && fc.projected_week_spend!=null){
+      fcard.classList.remove('hidden');
+      document.getElementById('finCashflowBody').innerHTML=`
+        <div class="row"><div class="card"><div class="muted" style="font-size:12px">Projected (next 7 days)</div><b>${_fmt(fc.projected_week_spend)}</b></div>
+        <div class="card"><div class="muted" style="font-size:12px">Last 7-day avg</div><b>${_fmt(fc.last_week_avg)}</b></div>
+        <div class="card"><div class="muted" style="font-size:12px">Alert</div><b style="color:${fc.alert?'var(--danger)':'var(--success)'}">${fc.alert?'Over budget':'On track'}</b></div></div>`;
+    }
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+
+async function checkAfford(){
+  const amount=parseFloat(document.getElementById('affordAmount').value);
+  const desc=document.getElementById('affordDesc').value.trim();
+  const el=document.getElementById('affordResult');
+  if(!amount){ el.innerHTML='<p class="muted" style="font-size:13px">Enter an amount first.</p>'; return; }
+  el.innerHTML='<p class="muted" style="font-size:13px">Amy is checking your cashflow…</p>';
+  try{
+    const d=await jpost('/api/finance/afford',{amount, description:desc});
+    const can=d.can_afford;
+    const risk=d.risk_level||'unknown';
+    const riskCol=risk==='low'?'var(--success)':risk==='medium'?'var(--warn)':'var(--danger)';
+    let verdictHtml;
+    if(can===null){
+      verdictHtml=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <span style="font-size:1.5rem">🤔</span>
+        <span style="font-weight:700;font-size:1.05rem;color:var(--muted)">Not enough data</span>
+      </div>`;
+    } else if(can){
+      verdictHtml=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <span style="font-size:1.5rem">✅</span>
+        <span style="font-weight:700;font-size:1.05rem;color:var(--success)">Yes, you can afford it</span>
+        <span style="font-size:12px;background:${riskCol}22;color:${riskCol};padding:2px 8px;border-radius:20px;font-weight:600">${risk} risk</span>
+      </div>`;
+    } else {
+      verdictHtml=`<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+        <span style="font-size:1.5rem">🚫</span>
+        <span style="font-weight:700;font-size:1.05rem;color:var(--danger)">Not right now</span>
+        <span style="font-size:12px;background:${riskCol}22;color:${riskCol};padding:2px 8px;border-radius:20px;font-weight:600">${risk} risk</span>
+      </div>`;
+    }
+    const bullets=(d.reasoning||[]).map(r=>{
+      const icon=r.startsWith('✓')?'✓':r.startsWith('✗')?'✗':r.startsWith('⚠')?'⚠':'•';
+      const col=icon==='✓'?'var(--success)':icon==='✗'?'var(--danger)':icon==='⚠'?'var(--warn)':'var(--muted)';
+      const text=r.replace(/^[✓✗⚠]\s*/,'');
+      return `<li style="display:flex;gap:6px;margin-bottom:5px;font-size:13px">
+        <span style="color:${col};font-weight:700;flex:0 0 14px">${icon}</span>
+        <span>${text}</span>
+      </li>`;
+    }).join('');
+    const goalNote=d.goal_delay_months
+      ? `<p style="font-size:12px;color:var(--warn);margin:8px 0 0">May delay your active goals by ~${d.goal_delay_months} month(s).</p>`
+      : '';
+    el.innerHTML=`${verdictHtml}<ul style="list-style:none;margin:0;padding:0">${bullets}</ul>${goalNote}`;
+  }catch(e){ el.innerHTML='<p class="muted" style="font-size:13px">Error: '+e.message+'</p>'; }
+}
+
+async function loadFinTransactions(){
+  document.getElementById('txList').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const cat    = document.getElementById('txCatFilter').value;
+    const since  = (document.getElementById('txSince')||{}).value||'';
+    const until  = (document.getElementById('txUntil')||{}).value||'';
+    const search = (document.getElementById('txSearch')||{}).value||'';
+    const accF   = (document.getElementById('txAccFilter')||{}).value||'';
+    const params = new URLSearchParams({limit:500});
+    if(cat)   params.set('category', cat);
+    if(since) params.set('since', since);
+    if(until) params.set('until', until);
+    const d=await jget('/api/finance/transactions?'+params.toString());
+    let list=d.transactions||[];
+    // client-side filters
+    if(search){const q=search.toLowerCase(); list=list.filter(t=>(t.merchant||'').toLowerCase().includes(q)||(t.notes||'').toLowerCase().includes(q));}
+    if(accF==='credit_card') list=list.filter(t=>(t.source||'')==='cc_gmail'||(t.notes||'').toLowerCase().includes('credit card')||(t.merchant||'').toLowerCase().includes('credit card'));
+    else if(accF==='savings') list=list.filter(t=>(t.source||'')!=='cc_gmail'&&!(t.notes||'').toLowerCase().includes('credit card'));
+    const countEl=document.getElementById('txCount');
+    if(countEl){
+      const total=list.reduce((s,t)=>s+t.amount,0);
+      const sign=total>=0?'+':'';
+      countEl.textContent=`(${list.length} txns · net ${sign}${_fmt(total)})`;
+    }
+    if(!list.length){document.getElementById('txList').innerHTML='<p class="muted">No transactions match.</p>';return;}
+    document.getElementById('txList').innerHTML=list.map(t=>{
+      const isIncome=t.amount>0;
+      const amtColor=isIncome?'#22c55e':'var(--danger)';
+      const sign=isIncome?'+':'';
+      const srcBadge=t.source==='cc_gmail'?'<span class="chip" style="background:rgba(139,92,246,.25);color:#c4b5fd;font-size:10px">CC</span>':'';
+      return `<div class="toggle">
+        <div style="flex:1;min-width:0">
+          ${srcBadge}<span class="chip">${t.category||'Uncategorized'}</span>
+          <b>${t.merchant||'—'}</b>
+          <span class="faint" style="font-size:11px;margin-left:6px">${(t.date||'').slice(0,10)}</span>
+          ${t.notes?`<div class="muted" style="font-size:12px;margin-top:2px">${t.notes}</div>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <b style="color:${amtColor}">${sign}${_fmt(t.amount)}</b>
+          <button class="ghost sm" onclick="deleteTransaction('${t.id}')" style="color:var(--faint)">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){document.getElementById('txList').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function autoCategorize(){
+  const btn=event.target; btn.textContent='Categorizing…'; btn.disabled=true;
+  try{
+    const d=await jpost('/api/finance/transactions/auto-categorize',{});
+    btn.textContent='✦ Categorize';btn.disabled=false;
+    loadFinTransactions();
+    // flash count
+    const c=document.getElementById('txCount');
+    const orig=c?c.textContent:'';
+    if(c) c.textContent=`✓ ${d.updated} categorized`;
+    setTimeout(()=>{if(c)c.textContent=orig;},3000);
+  }catch(e){btn.textContent='✦ Categorize';btn.disabled=false;alert(e.message);}
+}
+
+async function addTransaction(){
+  const amount=parseFloat(document.getElementById('txAmount').value);
+  if(!amount){document.getElementById('txMsg').textContent='Enter an amount.';return;}
+  const m=document.getElementById('txMsg'); m.textContent='adding…';
+  try{
+    await jpost('/api/finance/transactions',{
+      amount,
+      category:document.getElementById('txCategory').value.trim()||'Uncategorized',
+      merchant:document.getElementById('txMerchant').value.trim(),
+      date:document.getElementById('txDate').value||null,
+      notes:document.getElementById('txNotes').value.trim(),
+    });
+    ['txAmount','txCategory','txMerchant','txNotes'].forEach(id=>document.getElementById(id).value='');
+    m.textContent='added ✓'; loadFinTransactions();
+  }catch(e){m.textContent=e.message;}
+}
+
+async function deleteTransaction(id){
+  if(!confirm('Delete this transaction?'))return;
+  await api('/api/finance/transactions/'+id,{method:'DELETE'});
+  loadFinTransactions();
+}
+
+async function loadFinBudgets(){
+  document.getElementById('budgetList').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/finance/budgets');
+    const status=d.status||[];
+    if(!status.length){document.getElementById('budgetList').innerHTML='<p class="muted">No budgets set yet.</p>';return;}
+    document.getElementById('budgetList').innerHTML=status.map(b=>{
+      const pct=Math.min(100,Math.round((b.spent/b.limit)*100)||0);
+      const over=b.spent>b.limit;
+      return `<div style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px">
+          <span style="flex:1"><b>${b.category}</b></span>
+          <span class="muted" style="font-size:12px">${_fmt(b.spent)} / ${_fmt(b.limit)}</span>
+          <span class="chip" style="color:${over?'var(--danger)':'var(--success)'}">${over?'over budget':'ok'}</span>
+          <button class="ghost sm" onclick="deleteBudget('${b.category}')" style="color:var(--faint)">✕</button>
+        </div>
+        <div class="bar"><i style="width:${pct}%;background:${over?'var(--danger)':'var(--grad)'}"></i></div>
+      </div>`;
+    }).join('');
+  }catch(e){document.getElementById('budgetList').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function addBudget(){
+  const cat=document.getElementById('budgetCat').value.trim();
+  const limit=parseFloat(document.getElementById('budgetLimit').value);
+  if(!cat||!limit){document.getElementById('budgetMsg').textContent='Enter category and limit.';return;}
+  const m=document.getElementById('budgetMsg'); m.textContent='saving…';
+  try{
+    await jpost('/api/finance/budgets',{category:cat,monthly_limit:limit});
+    document.getElementById('budgetCat').value=''; document.getElementById('budgetLimit').value='';
+    m.textContent='saved ✓'; loadFinBudgets();
+  }catch(e){m.textContent=e.message;}
+}
+
+async function deleteBudget(cat){
+  if(!confirm('Remove budget for '+cat+'?'))return;
+  await api('/api/finance/budgets/'+encodeURIComponent(cat),{method:'DELETE'});
+  loadFinBudgets();
+}
+
+async function loadFinSubs(){
+  document.getElementById('subList').innerHTML='<p class="muted">Loading…</p>';
+  document.getElementById('subInsights').classList.add('hidden');
+  try{
+    const d=await jget('/api/finance/subscriptions');
+    const list=d.subscriptions||[];
+    const total=d.monthly_total||0;
+    document.getElementById('subMonthlyTotal').textContent=_fmt(total)+'/mo';
+    if(!list.length){document.getElementById('subList').innerHTML='<p class="muted">No subscriptions yet.</p>';return;}
+    document.getElementById('subList').innerHTML=list.map(s=>`
+      <div class="toggle">
+        <div style="flex:1;min-width:0">
+          <b>${s.name}</b>
+          <span class="muted" style="font-size:12px;margin-left:8px">renews ${s.renewal_date||'—'}</span>
+          ${s.payment_method?`<div class="faint" style="font-size:11px">${s.payment_method}</div>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <b style="color:var(--warn)">${_fmt(s.monthly_cost)}/mo</b>
+          <button class="ghost sm" onclick="deleteSub('${s.id}')" style="color:var(--faint)">✕</button>
+        </div>
+      </div>`).join('');
+  }catch(e){document.getElementById('subList').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function addSub(){
+  const name=document.getElementById('subName').value.trim();
+  const cost=parseFloat(document.getElementById('subCost').value);
+  if(!name){document.getElementById('subMsg').textContent='Enter a name.';return;}
+  const m=document.getElementById('subMsg'); m.textContent='adding…';
+  try{
+    await jpost('/api/finance/subscriptions',{
+      name, monthly_cost:cost||0,
+      renewal_date:document.getElementById('subRenewal').value||null,
+    });
+    ['subName','subCost','subRenewal'].forEach(id=>document.getElementById(id).value='');
+    m.textContent='added ✓'; loadFinSubs();
+  }catch(e){m.textContent=e.message;}
+}
+
+async function deleteSub(id){
+  if(!confirm('Delete this subscription?'))return;
+  await api('/api/finance/subscriptions/'+id,{method:'DELETE'});
+  loadFinSubs();
+}
+
+async function loadSubInsights(){
+  document.getElementById('subInsights').classList.remove('hidden');
+  document.getElementById('subInsights').innerHTML='<p class="muted">Loading insights…</p>';
+  try{
+    const d=await jget('/api/finance/subscriptions/insights');
+    const tips=(d.tips||d.insights||[]);
+    document.getElementById('subInsights').innerHTML=
+      '<b>Subscription insights</b>'+(tips.length?'<ul style="margin-top:8px">'+tips.map(t=>`<li style="margin-bottom:6px">${t}</li>`).join('')+'</ul>':'<p class="muted">No insights yet — add more subscriptions.</p>');
+  }catch(e){document.getElementById('subInsights').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function loadFinInvestments(){
+  document.getElementById('invList').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/finance/investments');
+    const list=d.investments||[];
+    const port=d.portfolio||{};
+    document.getElementById('invPortfolioTotal').textContent=_fmt(port.total_value||0)+' total';
+    if(!list.length){document.getElementById('invList').innerHTML='<p class="muted">No investments yet.</p>';return;}
+    document.getElementById('invList').innerHTML=list.map(i=>{
+      const gl=(i.current_value||0)-(i.cost_basis||0);
+      const glPct=i.cost_basis?((gl/i.cost_basis)*100).toFixed(1):0;
+      return `<div class="toggle">
+        <div style="flex:1;min-width:0">
+          <span class="chip">${(i.type||'').replace(/_/g,' ')}</span>
+          <b>${i.name}</b>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <div style="text-align:right">
+            <b>${_fmt(i.current_value)}</b>
+            <div class="muted" style="font-size:11px;color:${gl>=0?'var(--success)':'var(--danger)'}">${gl>=0?'+':''}${_fmt(gl)} (${glPct}%)</div>
+          </div>
+          <button class="ghost sm" onclick="deleteInvestment('${i.id}')" style="color:var(--faint)">✕</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){document.getElementById('invList').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function addInvestment(){
+  const name=document.getElementById('invName').value.trim();
+  if(!name){document.getElementById('invMsg').textContent='Enter a name.';return;}
+  const m=document.getElementById('invMsg'); m.textContent='adding…';
+  try{
+    await jpost('/api/finance/investments',{
+      type:document.getElementById('invType').value,
+      name,
+      current_value:parseFloat(document.getElementById('invValue').value)||0,
+      cost_basis:parseFloat(document.getElementById('invCost').value)||0,
+    });
+    ['invName','invValue','invCost'].forEach(id=>document.getElementById(id).value='');
+    m.textContent='added ✓'; loadFinInvestments();
+  }catch(e){m.textContent=e.message;}
+}
+
+async function deleteInvestment(id){
+  if(!confirm('Delete this investment?'))return;
+  await api('/api/finance/investments/'+id,{method:'DELETE'});
+  loadFinInvestments();
+}
+
+async function loadFinAccounts(){
+  document.getElementById('accList').innerHTML='<p class="muted">Loading…</p>';
+  document.getElementById('finImportPanels').innerHTML='';
+  try{
+    const d=await jget('/api/finance/accounts');
+    const list=d.accounts||[];
+    if(!list.length){document.getElementById('accList').innerHTML='<p class="muted">No accounts yet. Add one above to start importing.</p>';return;}
+    document.getElementById('accList').innerHTML=list.map(a=>`
+      <div class="toggle" id="accRow-${a.id}">
+        <div style="flex:1;min-width:0">
+          <b>${a.nickname}</b> <span class="chip">${a.bank_name}</span> <span class="faint">${a.account_type}</span>
+        </div>
+        <button class="ghost sm" id="accBtn-${a.id}" onclick="toggleImportPanel('${a.id}','${a.nickname.replace(/'/g,"\\'")}','${a.bank_name.replace(/'/g,"\\'")}')">▸ Import</button>
+        <button class="ghost sm" onclick="deleteAccount('${a.id}','${a.nickname.replace(/'/g,"\\'")}')" style="color:var(--danger);padding:4px 8px;margin-left:4px" title="Remove account">✕</button>
+      </div>
+      <div id="accPanel-${a.id}" class="hidden" style="background:rgba(0,0,0,.18);border-radius:12px;padding:14px;margin-bottom:8px">
+        <div style="display:flex;gap:12px;flex-wrap:wrap">
+          <div style="flex:1;min-width:180px">
+            <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px">CSV / XLS / XLSX statement</label>
+            <input type="file" id="csvFile-${a.id}" accept=".csv,.xls,.xlsx" style="margin-bottom:6px;font-size:12px"
+              onchange="previewImport('${a.id}','csv')"/>
+          </div>
+          <div style="flex:1;min-width:180px">
+            <label style="display:block;font-size:12px;color:var(--muted);margin-bottom:5px">PDF statement</label>
+            <input type="file" id="pdfFile-${a.id}" accept=".pdf" style="margin-bottom:6px;font-size:12px"
+              onchange="previewImport('${a.id}','pdf')"/>
+          </div>
+        </div>
+        <div id="importPreview-${a.id}"></div>
+        <div id="importMsg-${a.id}" style="margin-top:8px;font-size:13px;color:var(--muted);word-break:break-word;white-space:normal;line-height:1.5"></div>
+      </div>`).join('');
+  }catch(e){document.getElementById('accList').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+function toggleImportPanel(id, name, bank){
+  const panel=document.getElementById('accPanel-'+id);
+  const btn=document.getElementById('accBtn-'+id);
+  const open=!panel.classList.contains('hidden');
+  panel.classList.toggle('hidden', open);
+  btn.textContent=open?'▸ Import':'▾ Close';
+  if(!open) panel.scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+
+async function addAccount(){
+  const nickname=document.getElementById('accNickname').value.trim();
+  const bank_name=document.getElementById('accBank').value.trim();
+  if(!nickname||!bank_name){document.getElementById('accMsg').textContent='Enter nickname and bank name.';return;}
+  const m=document.getElementById('accMsg'); m.textContent='adding…';
+  try{
+    await jpost('/api/finance/accounts',{nickname, bank_name, account_type:document.getElementById('accType').value});
+    ['accNickname','accBank'].forEach(id=>document.getElementById(id).value='');
+    m.textContent='added ✓'; loadFinAccounts();
+  }catch(e){m.textContent=e.message;}
+}
+
+async function uploadCSV(aid){
+  const f=document.getElementById('csvFile-'+aid).files[0];
+  const m=document.getElementById('importMsg-'+aid);
+  if(!f){m.textContent='Select a CSV/XLS/XLSX file first.';return;}
+  m.textContent='uploading…';
+  try{
+    const fd=new FormData(); fd.append('file',f);
+    const r=await api('/api/finance/accounts/'+aid+'/upload/csv',{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.needs_mapping){
+      m.innerHTML='<span style="color:var(--warn)">⚠ Column mapping needed.</span><br>Detected headers: <b>'+d.headers.join(', ')+'</b><br><span class="faint">Save a column map via API first, then re-upload.</span>';
+    } else {
+      const errs=d.errors||[]; const errHtml=errs.length===0?'':errs.length<=2?'<br><span style="color:var(--warn);font-size:12px">'+errs.join('<br>')+'</span>':'<br><span style="color:var(--warn);font-size:12px">'+errs.length+' non-transaction rows skipped (footer/summary)</span>';
+      m.innerHTML='<span style="color:var(--success)">✓ Imported '+d.imported+', skipped '+d.skipped+'</span>'+errHtml;
+      loadFinTransactions();
+    }
+  }catch(e){m.textContent='Error: '+e.message;}
+}
+
+async function uploadPDF(aid){
+  const f=document.getElementById('pdfFile-'+aid).files[0];
+  const m=document.getElementById('importMsg-'+aid);
+  if(!f){m.textContent='Select a PDF file first.';return;}
+  m.textContent='uploading (AI parsing)…';
+  try{
+    const fd=new FormData(); fd.append('file',f);
+    const r=await api('/api/finance/accounts/'+aid+'/upload/pdf',{method:'POST',body:fd});
+    const d=await r.json();
+    m.innerHTML='<span style="color:var(--success)">✓ Imported '+d.imported+', skipped '+d.skipped+'</span>';
+    loadFinTransactions();
+  }catch(e){m.textContent='Error: '+e.message;}
+}
+
+/* ── File preview & staged import ────────────────────────────────────── */
+const _stagedFiles={};  // aid → {type, file}
+
+async function previewImport(aid, type){
+  const input=document.getElementById(`${type}File-${aid}`);
+  const file=input.files[0];
+  if(!file) return;
+  _stagedFiles[aid]={type, file};
+
+  const preview=document.getElementById('importPreview-'+aid);
+  const msg=document.getElementById('importMsg-'+aid);
+  preview.innerHTML='';
+  msg.innerHTML='<span style="color:var(--muted)">Extracting transactions…</span>';
+
+  const fd=new FormData();
+  fd.append('file',file);
+  try{
+    const r=await api(`/api/finance/accounts/${aid}/preview/${type}`,{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok){msg.innerHTML=`<span style="color:var(--danger)">${d.detail||'Parse failed'}</span>`;return;}
+    if(d.needs_mapping){
+      msg.innerHTML='<span style="color:var(--warn)">⚠ Could not auto-detect columns. Upload and map manually.</span>';
+      return;
+    }
+    const txns=d.transactions||[];
+    if(!txns.length){msg.innerHTML='<span style="color:var(--muted)">No transactions found in file.</span>';return;}
+    msg.innerHTML='';
+
+    const income=txns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
+    const expense=txns.filter(t=>t.amount<0).reduce((s,t)=>s+t.amount,0);
+    const _f=v=>(v<0?'-':'+')+'₹'+Math.abs(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const _ac=v=>v<0?'color:var(--danger)':'color:var(--success)';
+
+    preview.innerHTML=`
+      <div style="margin-top:12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06)">
+          <span style="flex:1;font-size:13px"><b>${txns.length}</b> transactions extracted from <span style="color:var(--muted)">${file.name}</span></span>
+          <span style="font-size:12px;color:var(--success);margin-right:6px">+₹${income.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+          <span style="font-size:12px;color:var(--danger);margin-right:10px">-₹${Math.abs(expense).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+          <button class="ghost sm" onclick="cancelImport('${aid}','${type}')" style="color:var(--danger)">✕ Cancel</button>
+          <button onclick="confirmImport('${aid}','${type}')" style="padding:5px 14px;font-size:12px">✓ Import</button>
+        </div>
+        <div style="max-height:260px;overflow-y:auto">
+          <table style="width:100%;border-collapse:collapse;font-size:12px">
+            <thead style="position:sticky;top:0;background:rgba(20,20,30,.97)">
+              <tr>
+                <th style="text-align:left;padding:7px 12px;color:var(--muted);font-weight:500;white-space:nowrap">Date</th>
+                <th style="text-align:left;padding:7px 12px;color:var(--muted);font-weight:500">Description</th>
+                <th style="text-align:right;padding:7px 12px;color:var(--muted);font-weight:500;white-space:nowrap">Amount</th>
+                <th style="text-align:left;padding:7px 12px;color:var(--muted);font-weight:500">Category</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${txns.map(t=>`<tr style="border-top:1px solid rgba(255,255,255,.04)">
+                <td style="padding:6px 12px;color:var(--muted);white-space:nowrap;font-family:monospace">${t.date}</td>
+                <td style="padding:6px 12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.description}">${t.description}</td>
+                <td style="padding:6px 12px;text-align:right;${_ac(t.amount)};font-variant-numeric:tabular-nums;white-space:nowrap">${_f(t.amount)}</td>
+                <td style="padding:6px 12px;color:var(--muted)">${t.category}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`;
+  }catch(e){
+    msg.innerHTML=`<span style="color:var(--danger)">${e.message}</span>`;
+  }
+}
+
+function cancelImport(aid,type){
+  const input=document.getElementById(`${type}File-${aid}`);
+  if(input) input.value='';
+  delete _stagedFiles[aid];
+  document.getElementById('importPreview-'+aid).innerHTML='';
+  document.getElementById('importMsg-'+aid).innerHTML='';
+}
+
+async function confirmImport(aid,type){
+  const staged=_stagedFiles[aid];
+  if(!staged) return;
+  document.getElementById('importPreview-'+aid).innerHTML='';
+  document.getElementById('importMsg-'+aid).innerHTML='<span style="color:var(--muted)">Importing…</span>';
+  if(type==='csv') await uploadCSV(aid);
+  else await uploadPDF(aid);
+  delete _stagedFiles[aid];
+  scanDuplicates();
+}
+
+async function resetAllTransactions(){
+  if(!confirm('Delete ALL transactions permanently? Accounts and settings will be kept.')) return;
+  const m=document.getElementById('resetMsg');
+  m.textContent='Deleting…';
+  try{
+    const r=await api('/api/finance/transactions',{method:'DELETE'});
+    const d=await r.json();
+    if(r.ok){
+      m.textContent=`Deleted ${d.deleted} transactions.`;
+      loadFinTransactions();
+    } else {
+      m.textContent=d.detail||'Error';
+    }
+  }catch(e){m.textContent=e.message;}
+}
+
+/* ── Deduplication engine ────────────────────────────────────────────── */
+let _dedupGroups = [];
+
+async function scanDuplicates(){
+  const msg=document.getElementById('dedupMsg');
+  const res=document.getElementById('dedupResults');
+  const autoBtn=document.getElementById('autoDedupeBtn');
+  msg.innerHTML='<span style="color:var(--muted)">Scanning…</span>';
+  res.innerHTML=''; autoBtn.style.display='none';
+  try{
+    const d=await jget('/api/finance/duplicates?date_window=1');
+    _dedupGroups=d.groups||[];
+    if(!_dedupGroups.length){
+      msg.innerHTML='<span style="color:var(--success)">✓ No duplicates found.</span>';
+      return;
+    }
+    const exact=_dedupGroups.filter(g=>g.confidence==='exact').length;
+    const badge=c=>c==='exact'?'rgba(220,50,50,.25)':c==='near'?'rgba(255,160,0,.2)':'rgba(120,120,255,.2)';
+    msg.innerHTML=`Found <b>${d.total_duplicates}</b> extra copy(s) across <b>${_dedupGroups.length}</b> group(s).
+      ${exact?`<span style="color:var(--success)"> ⚡ ${exact} exact group(s) can be auto-removed.</span>`:''}`;
+    if(exact) autoBtn.style.display='';
+    res.innerHTML=_dedupGroups.map((g,gi)=>`
+      <div style="border:1px solid rgba(255,255,255,.08);border-radius:8px;margin-top:8px;overflow:hidden">
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:rgba(255,255,255,.04)">
+          <span style="flex:1;font-size:12px">
+            <span style="display:inline-block;padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:${badge(g.confidence)};text-transform:uppercase">${g.confidence}</span>
+            &nbsp;${g.reason}
+          </span>
+          <button class="ghost sm" style="font-size:11px" onclick="dedupKeep(${gi},'oldest')">Keep oldest</button>
+          <button class="ghost sm" style="font-size:11px" onclick="dedupKeep(${gi},'newest')">Keep newest</button>
+          <button onclick="dedupResolve(${gi})" style="font-size:11px;padding:4px 10px">Delete checked</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
+          <thead>
+            <tr style="background:rgba(0,0,0,.18)">
+              <th style="width:28px;padding:5px 10px"></th>
+              <th style="text-align:left;padding:5px 10px;color:var(--muted);font-weight:500">Date</th>
+              <th style="text-align:left;padding:5px 10px;color:var(--muted);font-weight:500">Description</th>
+              <th style="text-align:right;padding:5px 10px;color:var(--muted);font-weight:500">Amount</th>
+              <th style="text-align:left;padding:5px 10px;color:var(--muted);font-weight:500">Source</th>
+              <th style="text-align:left;padding:5px 10px;color:var(--muted);font-weight:500">Category</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${g.transactions.map((t,ti)=>`
+            <tr style="border-top:1px solid rgba(255,255,255,.04)">
+              <td style="padding:5px 10px;text-align:center">
+                <input type="checkbox" id="dc-${gi}-${ti}" ${ti>0?'checked':''} />
+              </td>
+              <td style="padding:5px 10px;font-family:monospace;color:var(--muted);white-space:nowrap">${t.date}</td>
+              <td style="padding:5px 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.merchant||''}">${t.merchant||'—'}</td>
+              <td style="padding:5px 10px;text-align:right;${t.amount<0?'color:var(--danger)':'color:var(--success)'};white-space:nowrap">${t.amount<0?'-':'+'}₹${Math.abs(t.amount).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+              <td style="padding:5px 10px;color:var(--muted);font-size:11px">${t.source||'manual'}</td>
+              <td style="padding:5px 10px;color:var(--muted);font-size:11px">${t.category||''}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        <div style="padding:6px 10px;font-size:11px;color:var(--muted)">
+          ☑ = will be deleted &nbsp;·&nbsp; ☐ = will be kept
+        </div>
+      </div>`).join('');
+  }catch(e){
+    msg.innerHTML=`<span style="color:var(--danger)">${e.message}</span>`;
+  }
+}
+
+function dedupKeep(gi, which){
+  const grp=_dedupGroups[gi];
+  if(!grp) return;
+  const keepIdx=which==='oldest'?0:grp.transactions.length-1;
+  grp.transactions.forEach((_,ti)=>{
+    const el=document.getElementById(`dc-${gi}-${ti}`);
+    if(el) el.checked=(ti!==keepIdx);
+  });
+}
+
+async function dedupResolve(gi){
+  const grp=_dedupGroups[gi];
+  if(!grp) return;
+  const deleteIds=grp.transactions
+    .filter((_,ti)=>{const el=document.getElementById(`dc-${gi}-${ti}`);return el&&el.checked;})
+    .map(t=>t.id);
+  if(!deleteIds.length){alert('No transactions checked for deletion.');return;}
+  if(!confirm(`Delete ${deleteIds.length} transaction(s)?`)) return;
+  try{
+    const r=await api('/api/finance/duplicates/resolve',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({delete_ids:deleteIds})
+    });
+    const d=await r.json();
+    document.getElementById('dedupMsg').innerHTML=
+      `<span style="color:var(--success)">✓ Deleted ${d.deleted} transaction(s).</span>`;
+    loadFinTransactions();
+    await scanDuplicates();
+  }catch(e){alert(e.message);}
+}
+
+async function autoRemoveDupes(){
+  if(!confirm('Auto-delete all exact duplicates? The oldest import of each group is kept.')) return;
+  const msg=document.getElementById('dedupMsg');
+  try{
+    const r=await api('/api/finance/duplicates/auto',{method:'DELETE'});
+    const d=await r.json();
+    msg.innerHTML=`<span style="color:var(--success)">✓ Removed ${d.deleted} exact duplicate(s).</span>`;
+    document.getElementById('dedupResults').innerHTML='';
+    document.getElementById('autoDedupeBtn').style.display='none';
+    loadFinTransactions();
+  }catch(e){msg.innerHTML=`<span style="color:var(--danger)">${e.message}</span>`;}
+}
+
+/* ── Global Gmail auto-sync ───────────────────────────────────────────── */
+let _globalSyncTimer=null;
+let _globalSyncBusy=false;
+
+function toggleGlobalAutoSync(){
+  const btn=document.getElementById('globalAutoSyncBtn');
+  const dot=document.getElementById('globalAutoSyncDot');
+  if(_globalSyncTimer){
+    clearInterval(_globalSyncTimer);
+    _globalSyncTimer=null;
+    btn.textContent='▶ Auto'; btn.style.borderColor=''; btn.style.color='';
+    dot.textContent='● off'; dot.style.color='var(--muted)';
+  } else {
+    btn.textContent='⏹ Stop'; btn.style.borderColor='var(--success)'; btn.style.color='var(--success)';
+    dot.textContent='● live'; dot.style.color='var(--success)';
+    syncGmailAll(true);
+    _globalSyncTimer=setInterval(()=>syncGmailAll(true),30000);
+  }
+}
+
+async function syncGmailAll(auto=false){
+  if(_globalSyncBusy) return;
+  _globalSyncBusy=true;
+  const m=document.getElementById('globalGmailMsg');
+  /* Manual (Sync Now): last 30 days, up to 500 messages — full history import.
+     Auto-poll (every 30 s): today only, 30 messages — lightweight live feed. */
+  const today=new Date().toISOString().split('T')[0];
+  const monthAgo=new Date(Date.now()-30*86400000).toISOString().split('T')[0];
+  const since=auto?today:monthAgo;
+  const maxMsg=auto?30:500;
+  if(!auto) m.innerHTML='<span style="color:var(--muted)">🔍 Scanning last 30 days · NVIDIA enriching…</span>';
+  try{
+    const r=await api(`/api/finance/sync/gmail?since=${since}&max_messages=${maxMsg}`,
+      {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    const time=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+    if(!r.ok){
+      if(r.status===403)
+        m.innerHTML='<span style="color:var(--warn)">⚠ Google not connected — go to <b>Account → Google</b> and reconnect.</span>';
+      else
+        m.innerHTML='<span style="color:var(--danger)">'+(d.detail||'Error '+r.status)+'</span>';
+      return;
+    }
+    const errs=d.errors||[];
+    const errHtml=errs.length===0?'':
+      errs.length<=2?'<br><span style="color:var(--warn);font-size:11px">'+errs.join('<br>')+'</span>':
+      '<br><span style="color:var(--warn);font-size:11px">'+errs.length+' rows had issues</span>';
+    const badge=d.imported>0
+      ?`<span style="color:var(--success)">✓ +${d.imported} new</span>`
+      :`<span style="color:var(--muted)">✓ up to date</span>`;
+    m.innerHTML=`${badge} <span style="color:var(--muted);font-size:11px">· ${d.skipped} dup · ${time}</span>${errHtml}`;
+    if(d.imported>0){ loadFinTransactions(); scanDuplicates(); }
+  }catch(e){
+    m.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';
+  }finally{
+    _globalSyncBusy=false;
+  }
+}
+
+async function deleteAccount(aid,name){
+  if(!confirm(`Remove "${name}" and all its transactions? This cannot be undone.`)) return;
+  try{
+    const r=await api('/api/finance/accounts/'+aid,{method:'DELETE'});
+    if(!r.ok){const d=await r.json();alert(d.detail||'Delete failed');return;}
+    loadFinAccounts();
+    loadFinTransactions();
+  }catch(e){alert(e.message);}
+}
+
+async function loadFinIncome(){
+  document.getElementById('incList').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/finance/income');
+    const sources=d.income_sources||[];
+    document.getElementById('incMonthlyTotal').textContent=_fmt(d.monthly_total||0)+' / mo';
+    if(!sources.length){document.getElementById('incList').innerHTML='<p class="muted">No income sources yet — add your salary above.</p>';return;}
+    document.getElementById('incList').innerHTML=sources.map(s=>`
+      <div class="toggle">
+        <div style="flex:1">
+          <b>${s.name}</b> <span class="chip">${s.type}</span> <span class="faint">${s.recurrence}</span>
+          <div style="color:var(--success);font-size:13px;margin-top:2px">${_fmt(s.amount)} / ${s.recurrence==='annual'?'yr':'mo'}</div>
+        </div>
+        <button class="ghost sm" onclick="deleteIncome('${s.id}')" style="color:var(--danger)">✕</button>
+      </div>`).join('');
+  }catch(e){document.getElementById('incList').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function addIncome(){
+  const name=document.getElementById('incName').value.trim();
+  const amount=parseFloat(document.getElementById('incAmount').value);
+  const m=document.getElementById('incMsg');
+  if(!name||!amount){m.textContent='Enter name and amount.';return;}
+  m.textContent='saving…';
+  try{
+    await jpost('/api/finance/income',{name,type:document.getElementById('incType').value,amount,recurrence:document.getElementById('incRecurrence').value});
+    document.getElementById('incName').value=''; document.getElementById('incAmount').value='';
+    m.textContent='added ✓'; loadFinIncome(); loadFinOverview();
+  }catch(e){m.textContent=e.message;}
+}
+async function deleteIncome(id){
+  if(!confirm('Remove this income source?'))return;
+  await api('/api/finance/income/'+id,{method:'DELETE'}); loadFinIncome(); loadFinOverview();
+}
+
+async function syncCalendar(){
+  const m=document.getElementById('calSyncMsg'); m.innerHTML='syncing…';
+  try{
+    const d=await jpost('/api/finance/calendar/sync',{});
+    let txt='done — '+d.created+' events created, '+d.skipped+' skipped';
+    if(d.errors&&d.errors.length){
+      txt+='<br><span style="color:var(--danger);font-size:12px">Errors:<br>'
+        +d.errors.map(e=>'• '+e).join('<br>')+'</span>';
+    }
+    m.innerHTML=txt;
+  }catch(e){m.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+}
+
+async function loadForecast(){
+  document.getElementById('forecastBody').innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/finance/forecast/cashflow');
+    if(d.projected_week_spend!=null){
+      document.getElementById('forecastBody').innerHTML=`
+        <div class="row">
+          <div class="card"><div class="muted" style="font-size:12px">Projected next 7 days</div><b style="font-size:20px">${_fmt(d.projected_week_spend)}</b></div>
+          <div class="card"><div class="muted" style="font-size:12px">Last 7-day average</div><b style="font-size:20px">${_fmt(d.last_week_avg)}</b></div>
+          <div class="card"><div class="muted" style="font-size:12px">Status</div><b style="font-size:20px;color:${d.alert?'var(--danger)':'var(--success)'}">${d.alert?'Alert':'On track'}</b></div>
+        </div>
+        ${d.note?`<p class="muted" style="margin-top:8px">${d.note}</p>`:''}`;
+    } else {
+      document.getElementById('forecastBody').innerHTML='<p class="muted">Not enough transaction history to forecast. Add transactions first.</p>';
+    }
+  }catch(e){document.getElementById('forecastBody').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+const email_=document.getElementById('email'), password_=document.getElementById('password');
+show(!!TOKEN);
+</script>
+</body>
+</html>
