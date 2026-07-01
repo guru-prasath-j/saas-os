@@ -305,7 +305,8 @@ def preview_csv(raw: bytes, max_rows: int = 3) -> dict:
     return {"headers": list(headers), "sample_rows": rows, "needs_mapping": True}
 
 
-def parse_csv_preview_only(raw: bytes, column_map: dict, filename: str = "") -> list[dict]:
+def parse_csv_preview_only(raw: bytes, column_map: dict, filename: str = "",
+                           account_type: str = "") -> list[dict]:
     """Parse CSV and return transaction dicts WITHOUT writing to the DB."""
     from ..categorizer import categorize as _cat
 
@@ -363,7 +364,7 @@ def parse_csv_preview_only(raw: bytes, column_map: dict, filename: str = "") -> 
             "date": iso_date,
             "description": description,
             "amount": round(amount, 2),
-            "category": _cat(description, amount),
+            "category": _cat(description, amount, account_type=account_type),
         })
     return txns
 
@@ -376,6 +377,8 @@ def parse_and_import(
     category: str = "Uncategorized",
 ) -> SyncResult:
     """Parse CSV bytes using column_map and write transactions into finance.db."""
+    acc = engine.get_account(account_id)
+    account_type = (acc or {}).get("account_type", "")
     text = _skip_to_header_row(_decode(raw))
     reader = csv.DictReader(io.StringIO(text))
 
@@ -468,7 +471,8 @@ def parse_and_import(
             continue
 
         from ..categorizer import categorize as _cat
-        effective_cat = _cat(description, amount) if category == "Uncategorized" else category
+        effective_cat = (_cat(description, amount, account_type=account_type)
+                         if category == "Uncategorized" else category)
         tid = engine.add_transaction(
             amount=amount,
             category=effective_cat,

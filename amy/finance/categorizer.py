@@ -4,6 +4,7 @@ Keyword matching runs first (instant, no API cost).
 LLM is used only for merchants that don't match any rule.
 """
 from __future__ import annotations
+import json
 import re
 
 # ---------------------------------------------------------------------------
@@ -158,7 +159,7 @@ _FUEL_RE = re.compile(
 _RETAIL_RE = re.compile(
     r"\b(mart|supermark|hypermark|general.?store|provision|traders|wholesale|"
     r"agencies|enterprises|stationery|hardware|book.?shop|vyapar|"
-    r"xerox|print.?shop|textiles|garment|cloth)\b", re.IGNORECASE
+    r"xerox|print.?shop|textiles|garments?|cloth|fashion)\b", re.IGNORECASE
 )
 # BharatPe / PoS / QR terminal (small merchant → Shopping)
 _BHARATPE_RE = re.compile(r"bharatpe|paytmqr|wlpos\.|bhqr\.", re.IGNORECASE)
@@ -176,13 +177,34 @@ _TECH_RE = re.compile(
 # SBI MOPS / government payment gateway
 _GOVT_PAY_RE = re.compile(r"\b(sbimops|mopsup|sbipay|krishnanagar|municipality|"
                            r"municipal|corporation|govt|revenue.?dept)\b", re.IGNORECASE)
+# Bank/card-levied fees and tax components on those fees — not a purchase the
+# user chose to make, so they don't fit a spending category, but they
+# shouldn't sit Uncategorized forever either. Grouped with EMI/Loan (the
+# existing bucket for money the bank/card issuer itself charges you).
+_BANK_FEE_TAX_RE = re.compile(
+    r"\b(finance.?charges?|late.?(payment.?)?fee|overlimit.?fee|annual.?fee|"
+    r"renewal.?fee|joining.?fee|service.?charge)\b"
+    # No trailing \b on these two — "SGST-VPS2622..." has digits glued
+    # directly onto "vps" with no word boundary between them.
+    r"|\b[sci]gst-vps"
+    r"|\b[sci]gst.?(reversal|adjustment)\b",
+    re.IGNORECASE
+)
 
 
-def categorize(merchant: str, amount: float = 0.0, notes: str = "") -> str:
-    """Return a category for one transaction using rules. Never raises."""
+def categorize(merchant: str, amount: float = 0.0, notes: str = "",
+               account_type: str = "") -> str:
+    """Return a category for one transaction using rules. Never raises.
+
+    account_type matters for the positive-amount fallback: a credit on a
+    savings/current account is usually real income, but a credit on a
+    credit_card account is a bill payment reducing the balance — not income.
+    """
     text = f"{merchant} {notes}".strip()
     if not text:
-        return "Income" if amount > 0 else "Uncategorized"
+        if amount > 0:
+            return "EMI/Loan" if account_type == "credit_card" else "Income"
+        return "Uncategorized"
 
     # 1. Keyword rules (fast path)
     for pattern, cat in _COMPILED:
@@ -245,27 +267,107 @@ def categorize(merchant: str, amount: float = 0.0, notes: str = "") -> str:
     if _BHARATPE_RE.search(text):
         return "Shopping"
 
-    # 14. Unmatched positive amount → Income
+    # 13b. Bank/card-levied fees and tax components on them
+    if _BANK_FEE_TAX_RE.search(text):
+        return "EMI/Loan"
+
+    # 14. Unmatched positive amount → Income (or a bill payment on a card)
     if amount > 0:
-        return "Income"
+        return "EMI/Loan" if account_type == "credit_card" else "Income"
 
     return "Uncategorized"
 
 
-def auto_categorize_all(engine) -> int:
-    """Categorize every 'Uncategorized' transaction in the DB. Returns count updated."""
+# ---------------------------------------------------------------------------
+# LLM batch fallback — only for rows the rule-based pass leaves Uncategorized.
+# One call for the whole batch (not one call per transaction), matching the
+# same cheap-prefilter-then-single-call pattern used for Gmail enrichment.
+# ---------------------------------------------------------------------------
+
+_CATEGORY_LIST = [
+    "Food", "Transport", "Utilities", "Entertainment", "Health", "Shopping",
+    "Investment", "Rent", "Education", "Travel", "Insurance", "EMI/Loan",
+    "Transfer", "Income",
+]
+
+_LLM_CATEGORIZE_SYSTEM = (
+    "You categorize Indian bank/credit-card transactions. For each one, pick "
+    "the single best category from this exact list: "
+    + ", ".join(_CATEGORY_LIST) + ". Use the merchant name, amount sign, and "
+    "account_type as context (a positive amount on a credit_card account is a "
+    "bill payment, not income). If genuinely unclear, use \"Uncategorized\" — "
+    "do not guess. Return ONLY a JSON array: "
+    '[{"idx":0,"category":"Shopping"}, ...], no explanation.'
+)
+
+
+def categorize_batch_llm(candidates: list[dict], llm) -> dict[int, str]:
+    """
+    candidates: [{"merchant": str, "amount": float, "account_type": str}, ...]
+    Returns {position_in_candidates: category} for rows the LLM could classify.
+    """
+    if not candidates or llm is None:
+        return {}
+    lines = "\n".join(
+        f'{i}. "{c.get("merchant", "")}" amount={c.get("amount", 0):+.2f} '
+        f'account_type={c.get("account_type") or "unknown"}'
+        for i, c in enumerate(candidates)
+    )
+    try:
+        raw, _ = llm.generate(_LLM_CATEGORIZE_SYSTEM, f"Transactions:\n{lines}", sensitive=False)
+        raw = re.sub(r"```(?:json)?", "", raw).strip()
+        start, end = raw.find("["), raw.rfind("]")
+        if start == -1 or end == -1:
+            return {}
+        items = json.loads(raw[start:end + 1])
+        result: dict[int, str] = {}
+        for item in items:
+            idx = item.get("idx")
+            cat = item.get("category")
+            if isinstance(idx, int) and 0 <= idx < len(candidates) and cat in _CATEGORY_LIST:
+                result[idx] = cat
+        return result
+    except Exception:
+        return {}
+
+
+def auto_categorize_all(engine, llm=None) -> int:
+    """
+    Categorize every 'Uncategorized' transaction, and re-check 'Income'-tagged
+    transactions on credit-card accounts (a credit there is a bill payment,
+    not real income — see categorize()'s account_type handling). Whatever the
+    rule-based pass still can't resolve gets one batched LLM call if an llm is
+    given. Returns count updated.
+    """
     rows = engine.conn.execute(
-        "SELECT id, merchant, amount, notes FROM transactions"
-        " WHERE category IS NULL OR category='Uncategorized'"
+        "SELECT t.id, t.merchant, t.amount, t.notes, t.category, a.account_type"
+        " FROM transactions t LEFT JOIN accounts a ON t.account_id = a.id"
+        " WHERE t.category IS NULL OR t.category='Uncategorized'"
+        "    OR (t.category='Income' AND a.account_type='credit_card')"
     ).fetchall()
     updated = 0
+    still_uncategorized: list[dict] = []
     for row in rows:
-        tid, merchant, amount, notes = row
-        cat = categorize(merchant or "", float(amount or 0), notes or "")
-        if cat != "Uncategorized":
+        tid, merchant, amount, notes, cur_cat, account_type = row
+        cat = categorize(merchant or "", float(amount or 0), notes or "", account_type or "")
+        if cat == "Uncategorized":
+            still_uncategorized.append({
+                "tid": tid, "merchant": merchant or "",
+                "amount": float(amount or 0), "account_type": account_type or "",
+            })
+            continue
+        if cat != cur_cat:
+            engine.conn.execute("UPDATE transactions SET category=? WHERE id=?", (cat, tid))
+            updated += 1
+
+    if still_uncategorized and llm is not None:
+        results = categorize_batch_llm(still_uncategorized, llm)
+        for i, cat in results.items():
             engine.conn.execute(
-                "UPDATE transactions SET category=? WHERE id=?", (cat, tid)
+                "UPDATE transactions SET category=? WHERE id=?",
+                (cat, still_uncategorized[i]["tid"]),
             )
             updated += 1
+
     engine.conn.commit()
     return updated

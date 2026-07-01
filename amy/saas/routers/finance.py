@@ -140,10 +140,11 @@ def add_transaction(body: TransactionBody, user: User = Depends(current_user)):
 @router.get("/api/finance/transactions")
 def list_transactions(limit: int = 500, category: str | None = None,
                       since: str | None = None, until: str | None = None,
+                      account_id: str | None = None,
                       user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
-        return {"transactions": fe.list_transactions(limit, category, since, until)}
+        return {"transactions": fe.list_transactions(limit, category, since, until, account_id)}
     finally:
         fe.close()
 
@@ -224,11 +225,19 @@ def delete_transaction(tid: str, user: User = Depends(current_user)):
 
 @router.post("/api/finance/transactions/auto-categorize")
 def auto_categorize(user: User = Depends(current_user)):
-    """Run rule-based categorization on all Uncategorized transactions."""
+    """
+    Run rule-based categorization on all Uncategorized transactions (also
+    re-checks 'Income'-tagged transactions on credit-card accounts, since a
+    credit there is a bill payment, not income). Whatever rules can't resolve
+    gets one batched LLM call.
+    """
     from ...finance.categorizer import auto_categorize_all
+    from ...llm import LLMRouter
+    from ..deps import _user_key
     fe = _finance_db(user)
     try:
-        updated = auto_categorize_all(fe)
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        updated = auto_categorize_all(fe, llm=llm)
         return {"updated": updated}
     finally:
         fe.close()
@@ -266,6 +275,24 @@ def list_budgets(user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         return {"budgets": fe.list_budgets(), "status": fe.budget_status()}
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/budgets/suggestions")
+def suggest_budgets(user: User = Depends(current_user)):
+    """
+    Propose monthly budget caps per category from income + this month's spend
+    + the user's profile location (cost-of-living context). Re-runs fresh on
+    every call — no persistence; accept or edit each suggestion in the UI.
+    """
+    from ...finance.budget_suggest import suggest_budgets as _suggest
+    from ...llm import LLMRouter
+    from ..deps import _user_key
+    fe = _finance_db(user)
+    try:
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        return _suggest(fe, user.location, llm)
     finally:
         fe.close()
 
@@ -314,6 +341,25 @@ def subscription_insights(user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         return fe.subscription_insights()
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/subscriptions/suggestions")
+def suggest_subscriptions(user: User = Depends(current_user)):
+    """
+    Scan transaction history for likely recurring charges not yet tracked as
+    subscriptions. Re-runs fresh on every call (no persistence) so the review
+    list always reflects current transaction data — accept or dismiss each
+    suggestion from the UI.
+    """
+    from ...finance.subscription_detect import detect_subscriptions
+    from ...llm import LLMRouter
+    from ..deps import _user_key
+    fe = _finance_db(user)
+    try:
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        return {"suggestions": detect_subscriptions(fe, llm)}
     finally:
         fe.close()
 
@@ -598,7 +644,8 @@ async def preview_csv_upload(
             column_map = preset.column_map if preset else _auto_detect_columns(pv["headers"], pv["sample_rows"])
         if column_map is None:
             return {"needs_mapping": True, "headers": pv["headers"], "sample_rows": pv["sample_rows"]}
-        txns = parse_csv_preview_only(raw, column_map, filename)
+        txns = parse_csv_preview_only(raw, column_map, filename,
+                                      account_type=account.get("account_type", ""))
         return {"transactions": txns, "count": len(txns)}
     finally:
         fe.close()
@@ -618,12 +665,14 @@ async def preview_pdf_upload(
 
     fe = _finance_db(user)
     try:
-        if fe.get_account(aid) is None:
+        acc = fe.get_account(aid)
+        if acc is None:
             raise HTTPException(status_code=404, detail="account not found")
         raw = await file.read()
         llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
         try:
-            txns = parse_pdf_preview_only(raw, password=password, llm=llm)
+            txns = parse_pdf_preview_only(raw, password=password, llm=llm,
+                                          account_type=acc.get("account_type", ""))
         except PasswordRequired as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         return {"transactions": txns, "count": len(txns)}
@@ -838,6 +887,10 @@ def sync_gmail_all(
 
         llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
 
+        from datetime import date, timedelta
+        today_str = date.today().isoformat()
+        default_since = (date.today() - timedelta(days=30)).isoformat()
+
         # Accumulate results across all accounts
         total_imported = total_skipped = 0
         all_errors: list = []
@@ -858,9 +911,21 @@ def sync_gmail_all(
                 account_type="credit_card",
             )
 
+            # If the caller (auto-poll) didn't pin a since date, resume from this
+            # account's last successful sync instead of assuming "today" — closes
+            # the gap left by any downtime (server restart, closed tab, etc).
+            # Dedup on insert is content-based (date+amount+merchant), so widening
+            # the window here never re-imports anything already recorded.
+            if since:
+                acc_since, acc_max = since, max_messages
+            else:
+                last = acc.get("last_synced_at")
+                acc_since = last[:10] if last else default_since
+                acc_max = max_messages if acc_since >= today_str else max(max_messages, 300)
+
             r = _sync(creds, fe, aid, llm,
-                      since=since, until=until,
-                      max_messages=max_messages,
+                      since=acc_since, until=until,
+                      max_messages=acc_max,
                       cc_account_id=cc_aid)
             total_imported += r.imported
             total_skipped  += r.skipped

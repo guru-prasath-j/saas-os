@@ -16,6 +16,11 @@ router = APIRouter()
 class Credentials(BaseModel):
     email: str
     password: str
+    location: str | None = None  # optional, only used on signup
+
+
+class LocationBody(BaseModel):
+    location: str
 
 
 class OpenAIKey(BaseModel):
@@ -42,7 +47,8 @@ def signup(c: Credentials, db: Session = Depends(get_db)):
         raise HTTPException(status_code=409, detail="email already registered")
     if len(c.password) < 8:
         raise HTTPException(status_code=400, detail="password must be at least 8 characters")
-    user = User(email=c.email, password_hash=security.hash_password(c.password))
+    user = User(email=c.email, password_hash=security.hash_password(c.password),
+                location=(c.location.strip() if c.location else None) or None)
     db.add(user)
     db.commit()
     tenancy.ensure_dirs(user.id)
@@ -64,6 +70,7 @@ def me(user: User = Depends(current_user)):
         "email": user.email,
         "has_openai_key": bool(user.openai_key_enc),
         "aa_enabled": bool(user.aa_enabled if user.aa_enabled is not None else True),
+        "location": user.location,
     }
 
 
@@ -132,3 +139,15 @@ def set_aa_enabled(body: AAToggle, user: User = Depends(current_user),
     db.add(user)
     db.commit()
     return {"ok": True, "aa_enabled": user.aa_enabled}
+
+
+@router.post("/api/settings/location")
+def set_location(body: LocationBody, user: User = Depends(current_user),
+                 db: Session = Depends(get_db)):
+    loc = body.location.strip()
+    if not loc:
+        raise HTTPException(status_code=400, detail="location cannot be empty")
+    user.location = loc
+    db.add(user)
+    db.commit()
+    return {"ok": True, "location": user.location}

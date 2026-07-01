@@ -78,6 +78,17 @@ _PLB_DEBIT_WORDS = {"debit", "withdrawal", "dr", "withdrawals", "debit amount",
 _PLB_CREDIT_WORDS= {"credit", "deposit", "cr", "deposits", "credit amount",
                      "deposit amount", "paid in", "money in", "credits",
                      "credit(inr)", "deposit(inr)"}
+# Some CC statements (e.g. HDFC) use one combined amount column with a
+# trailing "Cr" marker on credit rows instead of separate debit/credit columns.
+_PLB_AMOUNT_WORDS = {"amount", "amount (in rs.)", "amount(in rs.)", "amount in rs.",
+                      "amount in rs", "amt", "transaction amount"}
+_CR_DR_SUFFIX_RE = re.compile(r"(?i)(?:cr|dr)\.?\s*$")
+_CR_SUFFIX_RE = re.compile(r"(?i)cr\.?\s*$")
+
+
+def _split_combined_amount(raw: str) -> float | None:
+    """Strip a trailing Cr/Dr marker so _to_float can parse the number."""
+    return _to_float(_CR_DR_SUFFIX_RE.sub("", str(raw or "")).strip())
 
 _FOOTER_RE = re.compile(
     r"opening balance|closing balance|end of statement|generated on|"
@@ -182,10 +193,17 @@ def _parse_pdf_pdfplumber(raw: bytes, password: str | None = None) -> list[dict]
                 fallback_text += (page.extract_text() or "") + "\n"
 
         # ── Locate the header row ────────────────────────────────────────────
+        # Some bank templates (e.g. HDFC "duplicate statement") render a whole
+        # section as one bordered box with no internal grid lines, so
+        # pdfplumber returns it as a single giant multi-line cell. Reject those
+        # — a real header cell is a short single-line label — otherwise its
+        # embedded "date"/"description" substrings get mistaken for a header.
         header_idx: int | None = None
         header_cells: list[str] = []
         for i, row in enumerate(all_rows):
             cells = [str(c or "").lower().strip() for c in row]
+            if any(len(c) > 40 or "\n" in c for c in cells):
+                continue
             has_date = any(c in _PLB_DATE_WORDS or "date" in c for c in cells)
             has_desc = any(c in _PLB_DESC_WORDS or "narr" in c or "desc" in c
                            or "particular" in c for c in cells)
@@ -199,10 +217,14 @@ def _parse_pdf_pdfplumber(raw: bytes, password: str | None = None) -> list[dict]
             return _read_pdf_as_text(fallback_text)
 
         # ── Map columns ──────────────────────────────────────────────────────
+        # Word-boundary matching, not raw substring — otherwise short tokens
+        # like "cr"/"dr" spuriously match inside unrelated words (e.g. "cr"
+        # inside "description"), misassigning the credit/debit column.
         def _col(*names: str) -> int | None:
             for name in names:
+                pattern = re.compile(r"\b" + re.escape(name) + r"\b")
                 for ci, h in enumerate(header_cells):
-                    if h == name or name in h:
+                    if h == name or pattern.search(h):
                         return ci
             return None
 
@@ -210,6 +232,11 @@ def _parse_pdf_pdfplumber(raw: bytes, password: str | None = None) -> list[dict]
         desc_i   = _col(*_PLB_DESC_WORDS)
         debit_i  = _col(*_PLB_DEBIT_WORDS)
         credit_i = _col(*_PLB_CREDIT_WORDS)
+        # Combined amount column (e.g. HDFC CC: "Amount (in Rs.)" with a
+        # trailing "Cr" marker on credit rows) — only relevant if there's no
+        # separate debit/credit column.
+        amount_i = (_col(*_PLB_AMOUNT_WORDS)
+                    if debit_i is None and credit_i is None else None)
 
         if date_i is None or desc_i is None:
             return _read_pdf_as_text(fallback_text)
@@ -226,7 +253,12 @@ def _parse_pdf_pdfplumber(raw: bytes, password: str | None = None) -> list[dict]
                 continue
             row_str = " ".join(str(c or "") for c in row)
             if _FOOTER_RE.search(row_str):
-                break
+                # Skip, don't stop — a footer/branding row can repeat at each
+                # page boundary (e.g. HDFC's GSTIN strip), and real
+                # transactions can continue on the next page. The date/
+                # description checks below already reject genuine summary
+                # rows, so this doesn't reopen the door to misparsing those.
+                continue
 
             date_raw = _cell(row, date_i)
             desc_raw = _cell(row, desc_i)
@@ -237,8 +269,15 @@ def _parse_pdf_pdfplumber(raw: bytes, password: str | None = None) -> list[dict]
             if not iso:
                 continue
 
-            debit  = _to_float(_cell(row, debit_i))  if debit_i  is not None else None
-            credit = _to_float(_cell(row, credit_i)) if credit_i is not None else None
+            if amount_i is not None:
+                amt_raw = _cell(row, amount_i)
+                amt = _split_combined_amount(amt_raw)
+                is_credit = bool(_CR_SUFFIX_RE.search(amt_raw))
+                debit  = None if is_credit else amt
+                credit = amt if is_credit else None
+            else:
+                debit  = _to_float(_cell(row, debit_i))  if debit_i  is not None else None
+                credit = _to_float(_cell(row, credit_i)) if credit_i is not None else None
 
             if (not debit or debit == 0) and (not credit or credit == 0):
                 continue
@@ -250,7 +289,17 @@ def _parse_pdf_pdfplumber(raw: bytes, password: str | None = None) -> list[dict]
                 "credit": credit if credit and credit > 0 else None,
             })
 
-        return _merge_split_rows(txns)
+        txns = _merge_split_rows(txns)
+        # Safety net: a header row can be legitimately found on a page whose
+        # own table is nearly empty, while the real transactions live in an
+        # unstructured block elsewhere (see the header-detection comment
+        # above). If the table parse looks suspiciously thin, prefer whichever
+        # extraction actually found more transactions.
+        if len(txns) <= 1:
+            text_txns = _read_pdf_as_text(fallback_text)
+            if len(text_txns) > len(txns):
+                return text_txns
+        return txns
 
     except Exception:
         return []
@@ -332,6 +381,12 @@ _GENERIC_WORDS = frozenset({
     'debited','amount','remitted','your','account','bank','upi','payment',
     'to','from','by','at','in','the','a','an','is','are','via','of','for',
     'sent','into','beneficiary','name','inr','rs','towards','successfully',
+    # Structural/boilerplate tokens shared across many unrelated statement
+    # lines (e.g. HDFC's own internal voucher-ID prefix, or "RATE"/"REF" on
+    # every tax line) — without excluding these, distinct entries like an
+    # SGST and CGST split of the same reference number get treated as near-
+    # duplicates of each other and one silently gets dropped on import.
+    'vps','rate','ref',
 })
 
 
@@ -339,6 +394,14 @@ def _desc_tokens(desc: str):
     words = {w.lower() for w in re.findall(r'[A-Z]{3,}', desc.upper())} - _GENERIC_WORDS
     nums  = set(re.findall(r'\d{8,}', desc))
     return words, nums
+
+
+def _norm_desc(desc: str) -> str:
+    """Alphanumeric-only, uppercased — collapses spacing/wording variants like
+    'Life Style International' vs 'Lifestyle', which commonly happens when the
+    same real purchase is described differently across sources (e.g. two
+    different bank alert emails, or a PDF vs an email, for one transaction)."""
+    return re.sub(r'[^A-Z0-9]', '', desc.upper())
 
 
 def _is_near_duplicate(engine, date, amount, account_id, new_desc):
@@ -351,6 +414,7 @@ def _is_near_duplicate(engine, date, amount, account_id, new_desc):
     if not rows:
         return False
     new_words, new_nums = _desc_tokens(new_desc)
+    new_norm = _norm_desc(new_desc)
     for (existing_desc,) in rows:
         ex_words, ex_nums = _desc_tokens(existing_desc)
         if new_nums and (new_nums - ex_nums):
@@ -359,6 +423,11 @@ def _is_near_duplicate(engine, date, amount, account_id, new_desc):
             return True
         if new_words & ex_words:
             return True
+        ex_norm = _norm_desc(existing_desc)
+        if len(new_norm) >= 5 and len(ex_norm) >= 5 and (
+            new_norm in ex_norm or ex_norm in new_norm
+        ):
+            return True
     return False
 
 
@@ -366,6 +435,7 @@ def parse_pdf_preview_only(
     raw: bytes,
     password: str | None = None,
     llm=None,
+    account_type: str = "",
 ) -> list[dict]:
     """Parse PDF and return transaction dicts WITHOUT writing to the DB."""
     from ..categorizer import categorize as _cat
@@ -398,7 +468,7 @@ def parse_pdf_preview_only(
             "date": iso_date,
             "description": description,
             "amount": round(amount, 2),
-            "category": _cat(description, amount),
+            "category": _cat(description, amount, account_type=account_type),
         })
     return txns
 
@@ -410,6 +480,8 @@ def parse_and_import_pdf(
     category: str = "Uncategorized",
 ) -> SyncResult:
     result = SyncResult()
+    acc = engine.get_account(account_id)
+    account_type = (acc or {}).get("account_type", "")
 
     for row in raw_transactions:
         iso_date = _parse_iso_date(row.get("date"))
@@ -455,7 +527,7 @@ def parse_and_import_pdf(
         elif category != "Uncategorized":
             effective_cat = category
         else:
-            effective_cat = _cat(description, amount)
+            effective_cat = _cat(description, amount, account_type=account_type)
         tid = engine.add_transaction(
             amount=amount,
             category=effective_cat,

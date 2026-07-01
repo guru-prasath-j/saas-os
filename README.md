@@ -1,49 +1,61 @@
-# Amy — Multi-Agent Voice Assistant over the Obsidian Second Brain
+# PersonalOS / Amy
 
-A master agent (orchestrator) routes your questions to specialized sub-agents, each
-scoped to part of the `personal` Obsidian vault, retrieves with a vector index, and
-answers via a hybrid LLM — **Groq / OpenAI** for general queries, **local Ollama** for
-sensitive finance data (cloud never sees it). Voice + a live dashboard sit on top.
+A self-hosted personal AI operating system — a FastAPI SaaS app + single-page frontend.
+Multi-tenant codebase (JWT auth, SQLite-per-user data), but currently run for one user.
 
-> The vault is the brain (data). This app is the engine (agents + voice + dashboard).
+> See `CLAUDE.md` for the full technical map of this repo (architecture, DB schema,
+> API routes, known quirks) and `SAAS.md` for the multi-tenant design.
 
-## Agents
-- **Master** (`agents/master.py`) — intent routing + guardrails. The only agent the user talks to.
-- **Finance / Payout** — `02_Family/Sathish Appa/SBI Account`, `03_Finances` 🔒
-- **Family / Business** — `02_Family` (Farm House, MJVR Investo, KMD Production)
-- **Career / Job-Search** — `01_Profile`, `04_Career`, `06_Job_Search`
-- **Knowledge** — `00_Home`, `07_Knowledge`
+## Primary active feature: Finance CFO mode
 
-## Guardrails (enforced by the master)
-- Never moves money / performs irreversible actions — refuses and defers to you.
-- Sensitive (SBI / Sathish Appa) data → **local Ollama only**, never the cloud.
-- Voice channel redacts account numbers & UPI ids — shown on screen, never spoken.
+Import bank statements (CSV/XLS/PDF), sync transaction emails from Gmail, get
+automatic categorization, and track budgets, subscriptions, and investments —
+all from one dashboard.
+
+- **Import**: CSV/XLS/XLSX and PDF bank statements, with a preview step before
+  anything is saved. Falls back to an LLM (NVIDIA Nemotron) for PDFs that don't
+  parse via table extraction.
+- **Gmail sync**: reads bank-alert emails, extracts transactions, and can
+  auto-poll in the background — resumable per account, so closing the app
+  doesn't create a gap in your history.
+- **Categorization**: rule-based first (instant, free), with a batched LLM
+  fallback for merchants no rule recognizes. Account-type aware (a credit-card
+  payment isn't income).
+- **Budgets & subscriptions**: set limits manually, or let Amy suggest them —
+  subscriptions detected from recurring charges in your transaction history,
+  budgets suggested from your income, location, and current spend.
+- **"Can I afford this?"**: checks a proposed purchase against your cashflow,
+  budget headroom, and active savings goals before answering.
 
 ## Run
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt          # optional — runs offline without them too
-cp .env.example .env                      # add ANTHROPIC_API_KEY, start Ollama (optional)
 
-./run_cli.sh                              # terminal chat
-./run_api.sh                              # http://127.0.0.1:8848  (dashboard + REST + /ws)
-python3 -m tests.test_smoke               # offline smoke test
+```bash
+pip install -r requirements.txt -r requirements-saas.txt
+cp .env.example .env               # fill in NVIDIA_API_KEY / GOOGLE_CLIENT_ID etc.
+python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
 ```
 
-## Graceful degradation
-- No `chromadb` → keyword (TF-IDF) retrieval.
-- General: Groq → OpenAI → Ollama → template (first available wins).
-- Sensitive: local Ollama only; never a cloud API.
-So it boots and answers even with zero optional dependencies installed.
+Open `http://localhost:8849`, sign up, and connect Google (for Gmail sync) from
+the Account tab. See `.env.example` for all supported keys — everything
+degrades gracefully if a given provider's key is missing (LLM calls fall back
+down the provider chain: NVIDIA → OpenAI → Groq → local Ollama → a
+deterministic template).
 
-See `ROADMAP.md` for the phased plan.
+## Tests
 
-## Deploy (Phase 9)
 ```bash
-cp .env.example .env            # set ANTHROPIC_API_KEY / AMY_AUTH_TOKEN if desired
-docker compose up --build       # starts Amy + Ollama; vault mounted at /vault
-./scripts/setup_models.sh       # pull local model + prebuild index
+pytest tests/ -v
 ```
-- `GET /api/health` shows live providers (groq/openai/ollama), index backend, auth on/off.
-- Set `AMY_AUTH_TOKEN` to require `Authorization: Bearer <token>` on `/api/*`; the
-  websocket then expects `{ "token": "<token>" }` as its first message.
+
+Includes tenant-isolation tests (one user can never see another's data) — these
+must pass before touching the multi-tenant `saas/` layer.
+
+## More docs
+
+| Doc | Covers |
+|---|---|
+| `CLAUDE.md` | Full technical reference — architecture, schema, routes, known quirks |
+| `SAAS.md` | Multi-tenant design, phases, what to harden before a real launch |
+| `API_ENDPOINTS.md` | Full endpoint list across all routers |
+| `OPERATIONS.md` | Deployment / ops runbook |
+| `PRIVACY.md` | Private-folder / sensitive-data handling |

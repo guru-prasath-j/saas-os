@@ -572,6 +572,13 @@ def sync_gmail(
                     combined_result.errors.append(
                         f"Message {msg_ref['id']}: LLM error — {llm_exc}")
                     continue
+                # extract_transactions_llm is shared with the PDF importer and
+                # doesn't know it's parsing an email — tag source here, else
+                # it silently defaults to "pdf" in the shared insert pipeline,
+                # and CC detection below (source == "cc_gmail") never fires.
+                is_cc_msg = bool(re.search(r"credit card", context_text, re.IGNORECASE))
+                for t in raw_txns:
+                    t.setdefault("source", "cc_gmail" if is_cc_msg else "gmail")
 
             if not raw_txns:
                 combined_result.skipped += 1

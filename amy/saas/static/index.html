@@ -44,7 +44,7 @@
   .app{display:grid;grid-template-columns:248px 1fr;min-height:100dvh}
   body:not(.authed) .sidebar{display:none}
   body:not(.authed) .topbar{display:none}
-  body:not(.authed) .content{display:flex;align-items:center;justify-content:center;min-height:100dvh}
+  body:not(.authed) .content{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:16px;max-width:none}
 
   .sidebar{position:sticky;top:0;height:100dvh;padding:18px 14px;display:flex;flex-direction:column;gap:8px;
     background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border-right:1px solid var(--border);backdrop-filter:blur(14px)}
@@ -231,6 +231,8 @@
         <input id="email" placeholder="email" autocomplete="username"/>
         <div style="height:10px"></div>
         <input id="password" type="password" placeholder="password (min 8)" autocomplete="current-password"/>
+        <div style="height:10px"></div>
+        <input id="signupLocation" placeholder="country / city (optional — new accounts only, for budget suggestions)"/>
         <div style="height:14px"></div>
         <div class="row">
           <button onclick="auth('login')">Sign in</button>
@@ -556,8 +558,6 @@
               <input id="txSearch" placeholder="Search merchant…" oninput="loadFinTransactions()" style="width:140px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px"/>
               <select id="txAccFilter" onchange="loadFinTransactions()" title="Filter by account" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
                 <option value="">All accounts</option>
-                <option value="savings">Savings / Salary</option>
-                <option value="credit_card">Credit Card</option>
               </select>
               <select id="txCatFilter" onchange="loadFinTransactions()" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
                 <option value="">All categories</option>
@@ -578,6 +578,14 @@
 
         <!-- BUDGET -->
         <div id="finPane-budget" class="hidden">
+          <div class="card" id="budgetSuggestCard">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Suggested budgets</b>
+              <button class="ghost sm" onclick="loadBudgetSuggestions()">Rescan</button>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Based on your income and this month's spend, localized to your profile location.</p>
+            <div id="budgetSuggestList" class="muted">Loading…</div>
+          </div>
           <div class="card">
             <h3 style="margin-top:0">Set budget</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
@@ -595,6 +603,14 @@
 
         <!-- SUBSCRIPTIONS -->
         <div id="finPane-subscriptions" class="hidden">
+          <div class="card" id="subSuggestCard">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Suggested from your transactions</b>
+              <button class="ghost sm" onclick="loadSubSuggestions()">Rescan</button>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Detected from recurring charges — review each, then add or dismiss.</p>
+            <div id="subSuggestList" class="muted">Scanning…</div>
+          </div>
           <div class="card">
             <h3 style="margin-top:0">Add subscription</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
@@ -676,9 +692,19 @@
           <div class="card">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
               <b style="flex:1">Income sources</b>
+              <span class="faint" style="font-size:11px">manually entered</span>
               <span id="incMonthlyTotal" class="chip" style="color:var(--success)"></span>
             </div>
             <div id="incList" class="muted">Loading…</div>
+          </div>
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Detected from transactions</b>
+              <span class="faint" style="font-size:11px">this month</span>
+              <span id="incTxnTotal" class="chip" style="color:var(--success)"></span>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Credits imported/synced this month, categorized as Income. Re-categorize or delete if wrong — this list isn't double-counted against your income sources above.</p>
+            <div id="incTxnList" class="muted">Loading…</div>
           </div>
         </div>
 
@@ -753,7 +779,7 @@
                 <b>Calendar sync</b>
                 <p class="muted" style="margin:2px 0 0;font-size:12.5px">Push bill due-dates and subscription renewals into Google Calendar.</p>
               </div>
-              <button class="ghost sm" onclick="syncCalendar()">Sync calendar</button>
+              <button class="ghost sm" id="calSyncBtn" onclick="syncCalendar()">Sync calendar</button>
             </div>
             <span class="meta" id="calSyncMsg"></span>
           </div>
@@ -829,6 +855,15 @@
             <span id="aaToggleLabel">Enable Account Aggregator</span>
           </label>
           <span class="meta" id="aaMsg"></span>
+
+          <div style="height:24px"></div>
+          <b>Location</b>
+          <p class="muted">Used to localize budget suggestions to your cost-of-living (e.g. "India" or "Bengaluru, India").</p>
+          <div class="row" style="margin:8px 0">
+            <input id="profileLocation" placeholder="country / city"/>
+            <button style="flex:0 0 68px" onclick="saveLocation()">Save</button>
+          </div>
+          <span class="meta" id="locationMsg"></span>
 
           <div style="height:22px"></div>
           <button class="ghost" onclick="logout()">Log out</button>
@@ -906,8 +941,10 @@ document.getElementById('nav').addEventListener('click', e=>{
 async function auth(kind){
   const msg=document.getElementById('authMsg'); msg.textContent='…';
   try{
+    const body={email:email_.value.trim(),password:password_.value};
+    if(kind==='signup') body.location=signupLocation_.value.trim();
     const r=await fetch(API+'/auth/'+kind,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email:email_.value.trim(),password:password_.value})});
+      body:JSON.stringify(body)});
     const d=await r.json(); if(!r.ok) throw new Error(d.detail||('error '+r.status));
     TOKEN=d.token; localStorage.setItem('amy_token',TOKEN); show(true);
   }catch(e){ msg.textContent=e.message; }
@@ -926,6 +963,7 @@ async function onLogin(){
     document.getElementById('obKey').classList.toggle('hidden', !needsKey);
     document.getElementById('obVault').classList.toggle('hidden', !needsVault);
   } else { document.getElementById('tab-chat').classList.remove('hidden'); }
+  maybeAutoStartGmailSync();
 }
 async function obSaveKey(){ try{ await jpost('/api/settings/openai-key',{key:document.getElementById('obKeyInput').value.trim()}); document.getElementById('obKeyMsg').textContent='saved ✓'; }catch(e){ document.getElementById('obKeyMsg').textContent=e.message; } }
 async function obImport(){ const f=document.getElementById('obZip').files[0]; if(!f)return; const fd=new FormData(); fd.append('file',f); const r=await api('/api/vault/import',{method:'POST',body:fd}); const d=await r.json(); document.getElementById('obVaultMsg').textContent=r.ok?('importing… job '+d.job_id):(d.detail||'error'); }
@@ -1184,6 +1222,17 @@ async function loadAccount(){
   const aaOn = me.aa_enabled !== false;
   document.getElementById('aaToggle').checked = aaOn;
   document.getElementById('aaToggleLabel').textContent = aaOn ? 'Account Aggregator enabled' : 'Account Aggregator disabled';
+  document.getElementById('profileLocation').value = me.location || '';
+}
+async function saveLocation(){
+  const loc=document.getElementById('profileLocation').value.trim();
+  const m=document.getElementById('locationMsg');
+  if(!loc){ m.textContent='Enter a location.'; return; }
+  m.textContent='saving…';
+  try{
+    await jpost('/api/settings/location',{location:loc});
+    m.textContent='saved ✓';
+  }catch(e){ m.textContent=e.message; }
 }
 async function saveAAToggle(){
   const enabled = document.getElementById('aaToggle').checked;
@@ -1673,10 +1722,10 @@ function switchFinView(view, btn){
   });
   if(view==='overview') loadFinOverview();
   if(view==='transactions') loadFinTransactions();
-  if(view==='budget') loadFinBudgets();
-  if(view==='subscriptions') loadFinSubs();
+  if(view==='budget'){ loadFinBudgets(); loadBudgetSuggestions(); }
+  if(view==='subscriptions'){ loadFinSubs(); loadSubSuggestions(); }
   if(view==='investments') loadFinInvestments();
-  if(view==='income') loadFinIncome();
+  if(view==='income'){ loadFinIncome(); loadIncomeTxns(); }
   if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
 }
 
@@ -1764,8 +1813,24 @@ async function checkAfford(){
   }catch(e){ el.innerHTML='<p class="muted" style="font-size:13px">Error: '+e.message+'</p>'; }
 }
 
+let _txAccFilterLoaded=false;
+async function _populateTxAccFilter(){
+  if(_txAccFilterLoaded) return;
+  try{
+    const d=await jget('/api/finance/accounts');
+    const sel=document.getElementById('txAccFilter');
+    (d.accounts||[]).forEach(a=>{
+      const opt=document.createElement('option');
+      opt.value=a.id; opt.textContent=`${a.nickname} (${a.account_type})`;
+      sel.appendChild(opt);
+    });
+    _txAccFilterLoaded=true;
+  }catch(e){}
+}
+
 async function loadFinTransactions(){
   document.getElementById('txList').innerHTML='<p class="muted">Loading…</p>';
+  await _populateTxAccFilter();
   try{
     const cat    = document.getElementById('txCatFilter').value;
     const since  = (document.getElementById('txSince')||{}).value||'';
@@ -1776,12 +1841,11 @@ async function loadFinTransactions(){
     if(cat)   params.set('category', cat);
     if(since) params.set('since', since);
     if(until) params.set('until', until);
+    if(accF)  params.set('account_id', accF);
     const d=await jget('/api/finance/transactions?'+params.toString());
     let list=d.transactions||[];
-    // client-side filters
+    // client-side text search only — account filtering now happens server-side by real account_id
     if(search){const q=search.toLowerCase(); list=list.filter(t=>(t.merchant||'').toLowerCase().includes(q)||(t.notes||'').toLowerCase().includes(q));}
-    if(accF==='credit_card') list=list.filter(t=>(t.source||'')==='cc_gmail'||(t.notes||'').toLowerCase().includes('credit card')||(t.merchant||'').toLowerCase().includes('credit card'));
-    else if(accF==='savings') list=list.filter(t=>(t.source||'')!=='cc_gmail'&&!(t.notes||'').toLowerCase().includes('credit card'));
     const countEl=document.getElementById('txCount');
     if(countEl){
       const total=list.reduce((s,t)=>s+t.amount,0);
@@ -1887,6 +1951,51 @@ async function deleteBudget(cat){
   loadFinBudgets();
 }
 
+/* ── Suggested budgets (income + spend + location, LLM-localized) ──────── */
+let _budgetSuggestions=[];
+async function loadBudgetSuggestions(){
+  const el=document.getElementById('budgetSuggestList');
+  el.innerHTML='<p class="muted">Analyzing income and spend…</p>';
+  try{
+    const d=await jpost('/api/finance/budgets/suggestions',{});
+    if(d.reason){ el.innerHTML='<p class="muted">'+d.reason+'</p>'; _budgetSuggestions=[]; return; }
+    _budgetSuggestions=d.suggestions||[];
+    renderBudgetSuggestions();
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+function renderBudgetSuggestions(){
+  const el=document.getElementById('budgetSuggestList');
+  if(!_budgetSuggestions.length){ el.innerHTML='<p class="muted">No new categories to suggest — all covered by existing budgets.</p>'; return; }
+  el.innerHTML=_budgetSuggestions.map((s,i)=>`
+    <div class="toggle" id="budgetSuggest-${i}" style="flex-wrap:wrap;gap:8px">
+      <div class="row" style="flex:1;min-width:220px;gap:8px">
+        <input id="bg-cat-${i}" value="${s.category.replace(/"/g,'&quot;')}" style="flex:1;min-width:100px"/>
+        <input id="bg-limit-${i}" type="number" min="0" step="1" value="${s.limit}" style="flex:0 0 130px"/>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        ${s.current_spend?`<span class="faint" style="font-size:11px">spent ${_fmt(s.current_spend)} so far</span>`:''}
+        <button class="sm" onclick="acceptBudgetSuggestion(${i})">✓ Set</button>
+        <button class="ghost sm" onclick="dismissBudgetSuggestion(${i})" style="color:var(--faint)">✕</button>
+      </div>
+    </div>`).join('');
+}
+async function acceptBudgetSuggestion(i){
+  const cat=document.getElementById('bg-cat-'+i).value.trim();
+  const limit=parseFloat(document.getElementById('bg-limit-'+i).value);
+  if(!cat||!limit) return;
+  await jpost('/api/finance/budgets',{category:cat,monthly_limit:limit});
+  dismissBudgetSuggestion(i);
+  loadFinBudgets();
+}
+function dismissBudgetSuggestion(i){
+  _budgetSuggestions[i]=null;
+  const row=document.getElementById('budgetSuggest-'+i);
+  if(row) row.remove();
+  if(_budgetSuggestions.every(s=>!s)){
+    document.getElementById('budgetSuggestList').innerHTML='<p class="muted">No new categories to suggest — all covered by existing budgets.</p>';
+  }
+}
+
 async function loadFinSubs(){
   document.getElementById('subList').innerHTML='<p class="muted">Loading…</p>';
   document.getElementById('subInsights').classList.add('hidden');
@@ -1930,6 +2039,61 @@ async function deleteSub(id){
   if(!confirm('Delete this subscription?'))return;
   await api('/api/finance/subscriptions/'+id,{method:'DELETE'});
   loadFinSubs();
+}
+
+/* ── Suggested subscriptions (LLM + rule detection over transactions) ──── */
+let _subSuggestions=[];
+async function loadSubSuggestions(){
+  const el=document.getElementById('subSuggestList');
+  el.innerHTML='<p class="muted">Scanning transactions…</p>';
+  try{
+    const d=await jpost('/api/finance/subscriptions/suggestions',{});
+    _subSuggestions=d.suggestions||[];
+    renderSubSuggestions();
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+function renderSubSuggestions(){
+  const el=document.getElementById('subSuggestList');
+  if(!_subSuggestions.length){ el.innerHTML='<p class="muted">No new recurring charges detected.</p>'; return; }
+  el.innerHTML=_subSuggestions.map((s,i)=>`
+    <div class="toggle" id="subSuggest-${i}" style="flex-wrap:wrap;gap:8px">
+      <div class="row" style="flex:1;min-width:220px;gap:8px">
+        <input id="sg-name-${i}" value="${s.name.replace(/"/g,'&quot;')}" style="flex:1;min-width:100px"/>
+        <input id="sg-cost-${i}" type="number" min="0" step="0.01" value="${s.amount}" style="flex:0 0 100px"/>
+        <select id="sg-cycle-${i}" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+          <option value="monthly" ${s.billing_cycle==='monthly'?'selected':''}>Monthly</option>
+          <option value="yearly" ${s.billing_cycle==='yearly'?'selected':''}>Yearly</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="faint" style="font-size:11px">seen ${s.occurrences}x · last ${s.last_date}</span>
+        <button class="sm" onclick="acceptSubSuggestion(${i})">✓ Add</button>
+        <button class="ghost sm" onclick="dismissSubSuggestion(${i})" style="color:var(--faint)">✕</button>
+      </div>
+    </div>`).join('');
+}
+async function acceptSubSuggestion(i){
+  const s=_subSuggestions[i];
+  const name=document.getElementById('sg-name-'+i).value.trim();
+  const cost=parseFloat(document.getElementById('sg-cost-'+i).value);
+  const cycle=document.getElementById('sg-cycle-'+i).value;
+  if(!name) return;
+  await jpost('/api/finance/subscriptions',{
+    name,
+    monthly_cost: cycle==='monthly' ? (cost||0) : 0,
+    annual_cost: cycle==='yearly' ? (cost||0) : 0,
+    renewal_date: s.next_due||null,
+  });
+  dismissSubSuggestion(i);
+  loadFinSubs();
+}
+function dismissSubSuggestion(i){
+  _subSuggestions[i]=null;
+  const row=document.getElementById('subSuggest-'+i);
+  if(row) row.remove();
+  if(_subSuggestions.every(s=>!s)){
+    document.getElementById('subSuggestList').innerHTML='<p class="muted">No new recurring charges detected.</p>';
+  }
 }
 
 async function loadSubInsights(){
@@ -2298,35 +2462,59 @@ async function autoRemoveDupes(){
 let _globalSyncTimer=null;
 let _globalSyncBusy=false;
 
-function toggleGlobalAutoSync(){
+function _setAutoSyncUI(on){
   const btn=document.getElementById('globalAutoSyncBtn');
   const dot=document.getElementById('globalAutoSyncDot');
-  if(_globalSyncTimer){
-    clearInterval(_globalSyncTimer);
-    _globalSyncTimer=null;
-    btn.textContent='▶ Auto'; btn.style.borderColor=''; btn.style.color='';
-    dot.textContent='● off'; dot.style.color='var(--muted)';
-  } else {
+  if(!btn||!dot) return;
+  if(on){
     btn.textContent='⏹ Stop'; btn.style.borderColor='var(--success)'; btn.style.color='var(--success)';
     dot.textContent='● live'; dot.style.color='var(--success)';
-    syncGmailAll(true);
-    _globalSyncTimer=setInterval(()=>syncGmailAll(true),30000);
+  } else {
+    btn.textContent='▶ Auto'; btn.style.borderColor=''; btn.style.color='';
+    dot.textContent='● off'; dot.style.color='var(--muted)';
   }
+}
+function startGlobalAutoSync(){
+  if(_globalSyncTimer) return;
+  _setAutoSyncUI(true);
+  syncGmailAll(true);
+  _globalSyncTimer=setInterval(()=>syncGmailAll(true),30000);
+}
+function stopGlobalAutoSync(){
+  if(_globalSyncTimer){ clearInterval(_globalSyncTimer); _globalSyncTimer=null; }
+  _setAutoSyncUI(false);
+}
+function toggleGlobalAutoSync(){
+  if(_globalSyncTimer){
+    stopGlobalAutoSync();
+    localStorage.setItem('amy_auto_sync','off');
+  } else {
+    startGlobalAutoSync();
+    localStorage.setItem('amy_auto_sync','on');
+  }
+}
+// Resume auto-sync on load unless the user explicitly turned it off last time.
+async function maybeAutoStartGmailSync(){
+  if(localStorage.getItem('amy_auto_sync')==='off') return;
+  try{
+    const g=await jget('/api/connectors/google/status');
+    if(g.connected) startGlobalAutoSync();
+  }catch(e){}
 }
 
 async function syncGmailAll(auto=false){
   if(_globalSyncBusy) return;
   _globalSyncBusy=true;
   const m=document.getElementById('globalGmailMsg');
-  /* Manual (Sync Now): last 30 days, up to 500 messages — full history import.
-     Auto-poll (every 30 s): today only, 30 messages — lightweight live feed. */
-  const today=new Date().toISOString().split('T')[0];
+  /* Manual (Sync Now): pinned 30-day / 500-message full rescan.
+     Auto-poll (every 30 s): no since= — server resumes from each account's
+     last_synced_at, so any downtime gets caught up automatically instead of
+     only checking "today". */
   const monthAgo=new Date(Date.now()-30*86400000).toISOString().split('T')[0];
-  const since=auto?today:monthAgo;
-  const maxMsg=auto?30:500;
+  const qs=auto?'max_messages=30':`since=${monthAgo}&max_messages=500`;
   if(!auto) m.innerHTML='<span style="color:var(--muted)">🔍 Scanning last 30 days · NVIDIA enriching…</span>';
   try{
-    const r=await api(`/api/finance/sync/gmail?since=${since}&max_messages=${maxMsg}`,
+    const r=await api(`/api/finance/sync/gmail?${qs}`,
       {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
     const d=await r.json();
     const time=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
@@ -2397,17 +2585,65 @@ async function deleteIncome(id){
   await api('/api/finance/income/'+id,{method:'DELETE'}); loadFinIncome(); loadFinOverview();
 }
 
+/* ── Income detected from transactions (this month, category=Income) ───── */
+async function loadIncomeTxns(){
+  const el=document.getElementById('incTxnList');
+  el.innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const now=new Date(); const since=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+    const d=await jget('/api/finance/transactions?category=Income&since='+since+'&limit=200');
+    const list=(d.transactions||[]).filter(t=>t.amount>0);
+    const total=list.reduce((s,t)=>s+t.amount,0);
+    document.getElementById('incTxnTotal').textContent=_fmt(total)+' this month';
+    if(!list.length){el.innerHTML='<p class="muted">No income transactions detected this month yet.</p>';return;}
+    el.innerHTML=list.map(t=>`
+      <div class="toggle">
+        <div style="flex:1;min-width:0">
+          <b>${t.merchant||'—'}</b>
+          <span class="faint" style="font-size:11px;margin-left:6px">${(t.date||'').slice(0,10)}</span>
+          ${t.source?`<span class="chip" style="font-size:10px">${t.source}</span>`:''}
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <b style="color:#22c55e">+${_fmt(t.amount)}</b>
+          <input id="itx-cat-${t.id}" value="${(t.category||'').replace(/"/g,'&quot;')}" style="flex:0 0 110px;padding:6px 8px;font-size:12px" title="Re-categorize"/>
+          <button class="ghost sm" onclick="recategorizeIncomeTxn('${t.id}')">✎</button>
+          <button class="ghost sm" onclick="deleteIncomeTxn('${t.id}')" style="color:var(--faint)">✕</button>
+        </div>
+      </div>`).join('');
+  }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function recategorizeIncomeTxn(id){
+  const cat=document.getElementById('itx-cat-'+id).value.trim();
+  if(!cat) return;
+  await api('/api/finance/transactions/'+id+'/category',{method:'PATCH',
+    headers:{'Content-Type':'application/json'}, body:JSON.stringify({category:cat})});
+  loadIncomeTxns(); loadFinOverview();
+}
+async function deleteIncomeTxn(id){
+  if(!confirm('Delete this transaction?'))return;
+  await api('/api/finance/transactions/'+id,{method:'DELETE'});
+  loadIncomeTxns(); loadFinOverview();
+}
+
 async function syncCalendar(){
-  const m=document.getElementById('calSyncMsg'); m.innerHTML='syncing…';
+  const btn=document.getElementById('calSyncBtn');
+  const m=document.getElementById('calSyncMsg');
+  btn.disabled=true; btn.textContent='Syncing…';
+  m.innerHTML='<span style="color:var(--muted)">🔄 syncing…</span>';
   try{
     const d=await jpost('/api/finance/calendar/sync',{});
-    let txt='done — '+d.created+' events created, '+d.skipped+' skipped';
-    if(d.errors&&d.errors.length){
-      txt+='<br><span style="color:var(--danger);font-size:12px">Errors:<br>'
-        +d.errors.map(e=>'• '+e).join('<br>')+'</span>';
+    const hasErr=d.errors&&d.errors.length;
+    if(hasErr && !d.created && !d.skipped){
+      m.innerHTML='<span style="color:var(--warn)">⚠ '+d.errors.map(e=>e).join('<br>⚠ ')+'</span>';
+    } else if(!d.created && !d.skipped && !hasErr){
+      m.innerHTML='<span style="color:var(--muted)">No upcoming bills to sync — add a subscription with a renewal date first.</span>';
+    } else {
+      let txt='<span style="color:var(--success)">✓ '+d.created+' event(s) created, '+d.skipped+' skipped</span>';
+      if(hasErr) txt+='<br><span style="color:var(--danger);font-size:12px">'+d.errors.map(e=>'• '+e).join('<br>')+'</span>';
+      m.innerHTML=txt;
     }
-    m.innerHTML=txt;
   }catch(e){m.innerHTML='<span style="color:var(--danger)">'+e.message+'</span>';}
+  finally{ btn.disabled=false; btn.textContent='Sync calendar'; }
 }
 
 async function loadForecast(){
@@ -2428,7 +2664,8 @@ async function loadForecast(){
   }catch(e){document.getElementById('forecastBody').innerHTML='<p class="muted">'+e.message+'</p>';}
 }
 
-const email_=document.getElementById('email'), password_=document.getElementById('password');
+const email_=document.getElementById('email'), password_=document.getElementById('password'),
+      signupLocation_=document.getElementById('signupLocation');
 show(!!TOKEN);
 </script>
 </body>

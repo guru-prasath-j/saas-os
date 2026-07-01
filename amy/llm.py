@@ -25,7 +25,7 @@ class GroqLLM:
         from groq import Groq
         if not config.GROQ_API_KEY:
             raise RuntimeError("no GROQ_API_KEY")
-        self._c = Groq(api_key=config.GROQ_API_KEY)
+        self._c = Groq(api_key=config.GROQ_API_KEY, timeout=45.0)
         self._model = config.GROQ_MODEL
 
     def generate(self, system, prompt, context=""):
@@ -43,7 +43,7 @@ class OpenAILLM:
         key = api_key or config.OPENAI_API_KEY
         if not key:
             raise RuntimeError("no OPENAI_API_KEY")
-        self._c = OpenAI(api_key=key)
+        self._c = OpenAI(api_key=key, timeout=45.0)
         self._model = config.OPENAI_MODEL
 
     def generate(self, system, prompt, context=""):
@@ -79,7 +79,10 @@ class NvidiaLLM:
         key = api_key or config.NVIDIA_API_KEY
         if not key:
             raise RuntimeError("no NVIDIA_API_KEY")
-        self._c = OpenAI(base_url=config.NVIDIA_BASE_URL, api_key=key)
+        # Thinking mode + a 4096-token reasoning budget can legitimately take a
+        # while, but must still have a ceiling — otherwise a slow/overloaded
+        # endpoint hangs the whole request (openai SDK default is 10 minutes).
+        self._c = OpenAI(base_url=config.NVIDIA_BASE_URL, api_key=key, timeout=75.0)
 
     def generate(self, system: str, prompt: str, context: str = "") -> str:
         user_msg = f"{prompt}\n\n# Context\n{context}" if context.strip() else prompt

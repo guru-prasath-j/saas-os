@@ -45,6 +45,9 @@ class User(Base):
     sensitive_folders: Mapped[str | None] = mapped_column(Text, nullable=True)
     # kill-switch for Account Aggregator — can disable regardless of env config.
     aa_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+    # free-text country/city, set at signup or later in profile — powers
+    # locale-aware budget suggestions (cost-of-living norms differ by country).
+    location: Mapped[str | None] = mapped_column(String(120), nullable=True)
     created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=lambda: _dt.datetime.now(_dt.timezone.utc))
 
 
@@ -68,6 +71,10 @@ def _migrate_users_table() -> None:
         if "aa_enabled" not in existing:
             conn.exec_driver_sql(
                 "ALTER TABLE users ADD COLUMN aa_enabled INTEGER NOT NULL DEFAULT 1")
+            conn.commit()
+        if "location" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN location VARCHAR(120)")
             conn.commit()
 
 

@@ -20,6 +20,16 @@ def _uuid() -> str:
     return uuid.uuid4().hex
 
 
+def _to_monthly_amount(amount: float, recurrence: str) -> float:
+    if recurrence == "monthly":
+        return amount
+    if recurrence == "annual":
+        return amount / 12
+    if recurrence == "weekly":
+        return amount * 52 / 12
+    return amount
+
+
 def _today() -> str:
     return _dt.date.today().isoformat()
 
@@ -436,19 +446,8 @@ class FinanceEngine:
     # =========================================================================
 
     def monthly_income(self) -> float:
-        total = 0.0
-        for r in self.list_income_sources():
-            rec = r["recurrence"]
-            amt = r["amount"]
-            if rec == "monthly":
-                total += amt
-            elif rec == "annual":
-                total += amt / 12
-            elif rec == "weekly":
-                total += amt * 52 / 12
-            else:
-                total += amt
-        return total
+        return sum(_to_monthly_amount(r["amount"], r["recurrence"])
+                   for r in self.list_income_sources())
 
     def this_month_spend(self) -> dict[str, float]:
         start, end = _this_month_range()
@@ -465,9 +464,35 @@ class FinanceEngine:
             " WHERE date>=? AND date<=? AND amount>0", (start, end)).fetchone()
         return row["total"]
 
+    def effective_monthly_income(self, tolerance: float = 0.05) -> float:
+        """
+        This month's real credited amount (any positive transaction) plus any
+        manually-entered income source whose expected monthly amount isn't
+        already reflected among those transactions — avoids double-counting
+        salary that's both entered manually and imported/synced from the bank.
+        """
+        start, end = _this_month_range()
+        rows = self.conn.execute(
+            "SELECT amount FROM transactions"
+            " WHERE date>=? AND date<=? AND amount>0", (start, end)).fetchall()
+        remaining = [r["amount"] for r in rows]
+        txn_total = sum(remaining)
+
+        unmatched = 0.0
+        for src in self.list_income_sources():
+            monthly_amt = _to_monthly_amount(src["amount"], src["recurrence"])
+            match_idx = next(
+                (i for i, t in enumerate(remaining)
+                 if monthly_amt > 0 and abs(t - monthly_amt) / monthly_amt < tolerance),
+                None)
+            if match_idx is not None:
+                remaining.pop(match_idx)
+            else:
+                unmatched += monthly_amt
+        return round(txn_total + unmatched, 2)
+
     def balance_estimate(self) -> float:
-        return (self.monthly_income()
-                + self.this_month_income_txn()
+        return (self.effective_monthly_income()
                 - sum(self.this_month_spend().values()))
 
     def budget_status(self) -> list[dict]:
@@ -505,7 +530,7 @@ class FinanceEngine:
     def overview(self) -> dict:
         return {
             "balance_estimate": round(self.balance_estimate(), 2),
-            "monthly_income": round(self.monthly_income(), 2),
+            "monthly_income": round(self.effective_monthly_income(), 2),
             "this_month_spend": {k: round(v, 2) for k, v in self.this_month_spend().items()},
             "budget_status": self.budget_status(),
             "upcoming_bills": self.upcoming_bills(30),

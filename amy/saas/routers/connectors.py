@@ -164,6 +164,15 @@ def google_disconnect(user: User = Depends(current_user)):
     return {"disconnected": True}
 
 
+def _friendly_google_error(kind: str, exc: Exception) -> str:
+    msg = str(exc)
+    if "accessNotConfigured" in msg or "has not been used in project" in msg:
+        return f"{kind.capitalize()} API not enabled for this Google Cloud project — enable it in Google Cloud Console, then retry."
+    if "HttpError 403" in msg:
+        return f"{kind.capitalize()} access denied (403) — check API is enabled and scopes were granted."
+    return f"error: {msg[:200]}"
+
+
 @router.post("/api/connectors/google/sync")
 def google_sync_now(user: User = Depends(current_user)):
     from ...connectors.google import build_google_providers
@@ -176,7 +185,7 @@ def google_sync_now(user: User = Depends(current_user)):
             items = prov.list(limit=50)
             results[kind] = len(items)
         except Exception as e:
-            results[kind] = f"error: {e}"
+            results[kind] = _friendly_google_error(kind, e)
     _journal_user(user)
     return {"synced": results}
 
