@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: personalos-demo
+    runtime: python
+    buildCommand: pip install -r requirements-public.txt
+    startCommand: uvicorn amy.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PERSONALOS_MODE
+        value: public
+      - key: AMY_PROVIDER_ORDER
+        value: openai
+      - key: OPENAI_API_KEY
+        sync: false

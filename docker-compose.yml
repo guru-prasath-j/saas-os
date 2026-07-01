@@ -1,0 +1,20 @@
+services:
+  amy:
+    build: .
+    ports: ["8848:8848"]
+    environment:
+      AMY_VAULT: /vault
+      OLLAMA_HOST: http://ollama:11434
+      AMY_OLLAMA_MODEL: ${AMY_OLLAMA_MODEL:-llama3.2}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AMY_PROVIDER_ORDER: ${AMY_PROVIDER_ORDER:-openai,ollama}
+      AMY_AUTH_TOKEN: ${AMY_AUTH_TOKEN:-}
+    volumes:
+      - ../:/vault
+    depends_on: [ollama]
+  ollama:
+    image: ollama/ollama:latest
+    ports: ["11434:11434"]
+    volumes: [ollama:/root/.ollama]
+volumes:
+  ollama:

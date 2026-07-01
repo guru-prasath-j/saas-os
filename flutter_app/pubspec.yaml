@@ -1,0 +1,25 @@
+name: amy_app
+description: Amy (PersonalOS) — voice + chat client for the Obsidian second brain.
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.2.0
+  web_socket_channel: ^3.0.0
+  speech_to_text: ^7.0.0     # STT (on-device on Android/iOS)
+  flutter_tts: ^4.2.0        # TTS
+  image_picker: ^1.1.2       # in-app camera + gallery pick (capture mode B)
+  geolocator: ^12.0.0        # GPS for each capture
+  shared_preferences: ^2.3.2 # persist server URL + auth token
+  intl: ^0.19.0              # date formatting
+  flutter_markdown: ^0.7.3   # render Amy's markdown answers
+  receive_sharing_intent: ^1.8.1  # share-to-Amy (capture mode C)
+  photo_manager: ^3.6.1      # gallery auto-watch / sync (capture mode A, Android)
+
+flutter:
+  uses-material-design: true

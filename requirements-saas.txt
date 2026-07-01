@@ -1,0 +1,9 @@
+# SaaS / multi-tenant mode (Phase 1) — install on top of requirements.txt
+SQLAlchemy>=2.0
+PyJWT>=2.8
+cryptography>=42.0
+python-multipart>=0.0.9
+# pytest for the isolation test
+pytest>=8.0
+# Production DB driver (only if you set DATABASE_URL to Postgres):
+# psycopg[binary]>=3.1

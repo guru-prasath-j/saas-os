@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.amy_index/
+.index_public/
+flutter_app/

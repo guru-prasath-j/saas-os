@@ -1,0 +1,10 @@
+FROM python:3.11-slim
+WORKDIR /app
+ENV PERSONALOS_MODE=public AMY_PROVIDER_ORDER=openai PYTHONUNBUFFERED=1
+COPY requirements-public.txt .
+RUN pip install --no-cache-dir -r requirements-public.txt
+COPY amy/ ./amy/
+COPY demo_vault/ ./demo_vault/
+COPY voices.json main.py ./
+EXPOSE 8848
+CMD ["sh","-c","uvicorn amy.app:app --host 0.0.0.0 --port ${PORT:-8848}"]

@@ -1,0 +1,9 @@
+{
+  "default": "amy",
+  "voices": [
+    {"id":"amy","name":"Amy","desc":"Friendly female (default)","gender":"female","slot":0,"piper":"en_US-amy-medium","rate":1.06,"pitch":1.08},
+    {"id":"selene","name":"Selene","desc":"Elegant female","gender":"female","slot":1,"piper":"en_GB-jenny_dioco-medium","rate":0.95,"pitch":0.9},
+    {"id":"atlas","name":"Atlas","desc":"Professional male","gender":"male","slot":0,"piper":"en_US-ryan-high","rate":1.0,"pitch":0.92},
+    {"id":"sage","name":"Sage","desc":"Calm male","gender":"male","slot":1,"piper":"en_GB-alan-medium","rate":1.04,"pitch":1.06}
+  ]
+}

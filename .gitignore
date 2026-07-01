@@ -38,3 +38,10 @@ flutter_app/.flutter-plugins-dependencies
 # ---- OS noise ----
 .DS_Store
 Thumbs.db
+
+# ---- logs & bundles ----
+*.log
+*.bundle
+
+# ---- Claude Code local config ----
+.claude/

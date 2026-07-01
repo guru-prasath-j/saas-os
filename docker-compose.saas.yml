@@ -1,0 +1,35 @@
+# Local/prod-like run of the PersonalOS SaaS backend with a persistent volume.
+#   docker compose -f docker-compose.saas.yml up --build
+services:
+  amy-saas:
+    build:
+      context: .
+      dockerfile: Dockerfile.saas
+    ports:
+      - "8849:8849"
+    environment:
+      # REQUIRED in production — set real secrets here or via an env file
+      AMY_JWT_SECRET: "change-me-to-a-long-random-string"
+      AMY_ENC_SECRET: "change-me-to-a-different-long-random-string"
+      AMY_DYNAMIC_AGENTS: "1"
+      AMY_SAAS_DATA: "/data"
+      # Use Postgres in real production instead of the bundled SQLite:
+      # DATABASE_URL: "postgresql+psycopg://amy:pass@db:5432/amy"
+    volumes:
+      - amy_data:/data
+    restart: unless-stopped
+
+  # Uncomment for Postgres in production:
+  # db:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: amy
+  #     POSTGRES_PASSWORD: pass
+  #     POSTGRES_DB: amy
+  #   volumes:
+  #     - amy_pg:/var/lib/postgresql/data
+  #   restart: unless-stopped
+
+volumes:
+  amy_data:
+  # amy_pg:
