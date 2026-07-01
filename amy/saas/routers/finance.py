@@ -26,6 +26,19 @@ def _open_collab(user: "User"):
     return CollabDB(_collab_db_path(user))
 
 
+def _emit_fin(user: "User", event_type: str, payload: dict) -> None:
+    """Fire-and-forget finance event. Never raises — bad event must not break the route."""
+    try:
+        from ...events.store import EventStore
+        cdb = _open_collab(user)
+        try:
+            EventStore(cdb).emit(event_type, payload, source="finance")
+        finally:
+            cdb.close()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Pydantic schemas
 # ---------------------------------------------------------------------------
@@ -132,6 +145,10 @@ def add_transaction(body: TransactionBody, user: User = Depends(current_user)):
         tid = fe.add_transaction(
             body.amount, body.category, body.merchant,
             body.date, body.source, body.notes)
+        _emit_fin(user, "finance.transaction_added", {
+            "id": tid, "amount": body.amount, "category": body.category,
+            "merchant": body.merchant, "source": body.source,
+        })
         return {"id": tid}
     finally:
         fe.close()
@@ -265,6 +282,10 @@ def set_budget(body: BudgetBody, user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         fe.set_budget(body.category, body.monthly_limit)
+        _emit_fin(user, "finance.budget_set", {
+            "category": body.category,
+            "monthly_limit": body.monthly_limit,
+        })
         return {"ok": True, "category": body.category, "monthly_limit": body.monthly_limit}
     finally:
         fe.close()
@@ -319,6 +340,11 @@ def add_subscription(body: SubscriptionBody, user: User = Depends(current_user))
         sid = fe.add_subscription(
             body.name, body.monthly_cost, body.annual_cost,
             body.renewal_date, body.auto_renew, body.payment_method, body.status)
+        _emit_fin(user, "finance.subscription_added", {
+            "id": sid,
+            "name": body.name,
+            "monthly_cost": body.monthly_cost,
+        })
         return {"id": sid}
     finally:
         fe.close()
@@ -397,6 +423,12 @@ def add_investment(body: InvestmentBody, user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         iid = fe.add_investment(body.type, body.name, body.current_value, body.cost_basis)
+        _emit_fin(user, "finance.investment_added", {
+            "id": iid,
+            "name": body.name,
+            "type": body.type,
+            "current_value": body.current_value,
+        })
         return {"id": iid}
     finally:
         fe.close()
@@ -446,6 +478,12 @@ def add_income(body: IncomeBody, user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         sid = fe.add_income_source(body.name, body.type, body.amount, body.recurrence)
+        _emit_fin(user, "finance.income_added", {
+            "id": sid,
+            "name": body.name,
+            "type": body.type,
+            "amount": body.amount,
+        })
         return {"id": sid}
     finally:
         fe.close()
@@ -699,7 +737,8 @@ async def upload_csv(
     fe = _finance_db(user)
     cdb = _open_collab(user)
     try:
-        if fe.get_account(aid) is None:
+        acc = fe.get_account(aid)
+        if acc is None:
             raise HTTPException(status_code=404, detail="account not found")
         raw = await file.read()
         provider = CSVImportProvider()
@@ -709,7 +748,15 @@ async def upload_csv(
         from ...finance.custodial import emit_refill_events
         from ...events.store import EventStore
         emit_refill_events(fe, EventStore(cdb), result.transactions)
-        return result.to_dict()
+        d = result.to_dict()
+        _emit_fin(user, "finance.csv_imported", {
+            "account_id": aid,
+            "bank_name": acc.get("bank_name", ""),
+            "filename": file.filename or "",
+            "imported": d.get("imported", 0),
+            "skipped": d.get("skipped", 0),
+        })
+        return d
     finally:
         fe.close()
         cdb.close()
@@ -784,7 +831,8 @@ async def upload_pdf(
     fe = _finance_db(user)
     cdb = _open_collab(user)
     try:
-        if fe.get_account(aid) is None:
+        acc = fe.get_account(aid)
+        if acc is None:
             raise HTTPException(status_code=404, detail="account not found")
         raw = await file.read()
         llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=False)
@@ -796,7 +844,15 @@ async def upload_pdf(
         from ...finance.custodial import emit_refill_events
         from ...events.store import EventStore
         emit_refill_events(fe, EventStore(cdb), result.transactions)
-        return result.to_dict()
+        d = result.to_dict()
+        _emit_fin(user, "finance.pdf_imported", {
+            "account_id": aid,
+            "bank_name": acc.get("bank_name", ""),
+            "filename": file.filename or "",
+            "imported": d.get("imported", 0),
+            "skipped": d.get("skipped", 0),
+        })
+        return d
     finally:
         fe.close()
         cdb.close()
@@ -859,7 +915,14 @@ def sync_gmail(
         from ...events.store import EventStore
         emit_refill_events(fe, EventStore(cdb), result.transactions)
 
-        return result.to_dict()
+        d = result.to_dict()
+        if d.get("imported", 0) > 0:
+            _emit_fin(user, "finance.gmail_synced", {
+                "imported": d["imported"],
+                "skipped": d.get("skipped", 0),
+                "accounts_synced": 1,
+            })
+        return d
     finally:
         fe.close()
         cdb.close()
@@ -956,12 +1019,19 @@ def sync_gmail_all(
         from ...events.store import EventStore
         emit_refill_events(fe, EventStore(cdb), all_transactions)
 
-        return {
+        result = {
             "imported":     total_imported,
             "skipped":      total_skipped,
             "errors":       all_errors,
             "transactions": all_transactions,
         }
+        if total_imported > 0:
+            _emit_fin(user, "finance.gmail_synced", {
+                "imported": total_imported,
+                "skipped": total_skipped,
+                "accounts_synced": len(targets),
+            })
+        return result
     finally:
         fe.close()
         cdb.close()
