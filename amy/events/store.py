@@ -30,6 +30,12 @@ FINANCE_SUBSCRIPTION_ADDED = "finance.subscription_added"
 FINANCE_INVESTMENT_ADDED = "finance.investment_added"
 FINANCE_INCOME_ADDED = "finance.income_added"
 
+# Business entity events
+BUSINESS_ENTITY_CREATED = "business.entity_created"
+FINANCE_LEDGER_ENTRY_POSTED = "finance.ledger_entry_posted"
+FINANCE_LEDGER_AUDITED = "finance.ledger_audited"
+FINANCE_COMPLIANCE_SUGGESTED = "finance.compliance_suggested"
+
 
 def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()

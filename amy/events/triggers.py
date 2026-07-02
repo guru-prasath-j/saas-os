@@ -59,6 +59,13 @@ def register_default_triggers(events, memory):
             f"({p.get('type', '?')}, ₹{p.get('current_value', 0):,.0f})."
         )
 
+    def on_ledger_entry_posted(ev):
+        p = ev["payload"]
+        memory.add_summary(
+            f"Ledger entry posted for {p.get('entity_name', '?')}: "
+            f"₹{p.get('amount', 0):,.0f}."
+        )
+
     events.subscribe(store.GOAL_COMPLETED, on_goal_completed)
     events.subscribe(store.VAULT_IMPORTED, on_vault_imported)
     events.subscribe(store.FINANCE_GMAIL_SYNCED, on_gmail_synced)
@@ -67,6 +74,7 @@ def register_default_triggers(events, memory):
     events.subscribe(store.FINANCE_BUDGET_SET, on_budget_set)
     events.subscribe(store.FINANCE_SUBSCRIPTION_ADDED, on_subscription_added)
     events.subscribe(store.FINANCE_INVESTMENT_ADDED, on_investment_added)
+    events.subscribe(store.FINANCE_LEDGER_ENTRY_POSTED, on_ledger_entry_posted)
 
 
 def build_digest(reflection, learning, planner, suggestions_fn, days: int = 7) -> dict:

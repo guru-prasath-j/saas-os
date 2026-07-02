@@ -173,6 +173,9 @@
       <button data-tab="finance">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         <span class="label">Finance CFO</span></button>
+      <button data-tab="business">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="3" y1="13" x2="21" y2="13"/></svg>
+        <span class="label">Business Entities</span></button>
 
       <!-- ── GROWTH ── -->
       <div class="nav-sector">Growth</div>
@@ -203,6 +206,12 @@
       <button data-tab="portfolio">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
         <span class="label">Portfolio</span></button>
+
+      <!-- ── MCP ── -->
+      <div class="nav-sector">MCP</div>
+      <button data-tab="mcp">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 2v4M15 2v4M6 8h12l-1 6a5 5 0 0 1-10 0z" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 18v4" stroke-linecap="round"/></svg>
+        <span class="label">MCP</span></button>
 
       <!-- ── SYSTEM ── -->
       <div class="nav-sector">System</div>
@@ -835,6 +844,94 @@
         </div>
       </div>
 
+      <!-- TAB: BUSINESS ENTITIES -->
+      <div class="tab hidden" id="tab-business">
+        <div class="card" style="padding:14px 18px">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <div><h3 style="margin:0">Business Entities</h3>
+              <span class="faint" style="font-size:12px">register any side business — Ledger + Compliance suggestions, no code required per business</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <b>Add a business</b>
+          <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px">
+            <input id="bizName" placeholder="Legal name (e.g. KMD Production)" style="flex:1;min-width:180px"/>
+            <input id="bizPan" placeholder="PAN (optional)" style="flex:0 0 140px"/>
+            <input id="bizGstin" placeholder="GSTIN (optional)" style="flex:0 0 160px"/>
+          </div>
+          <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px">
+            <select id="bizConstitution" style="flex:0 0 160px">
+              <option value="proprietorship">Proprietorship</option>
+              <option value="partnership">Partnership</option>
+              <option value="llp">LLP</option>
+              <option value="company">Company</option>
+            </select>
+            <input id="bizState" placeholder="Registration state" style="flex:1;min-width:140px"/>
+            <input id="bizFY" placeholder="Financial year (e.g. 2025-26)" style="flex:0 0 160px"/>
+            <input id="bizTaxRegime" placeholder="Tax regime (optional)" style="flex:0 0 140px"/>
+          </div>
+          <div class="row" style="flex-wrap:wrap;gap:14px;margin-top:10px;align-items:center">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+              <input type="checkbox" id="bizDepreciable"/> Holds depreciable assets
+            </label>
+            <div style="display:flex;align-items:center;gap:8px">
+              <span class="faint" style="font-size:12px">Tracking closeness:</span>
+              <select id="bizTrackingCloseness" style="flex:0 0 200px">
+                <option value="loose">Mostly recording-only</option>
+                <option value="close">Closely-managed</option>
+              </select>
+            </div>
+            <button style="flex:0 0 auto" onclick="addBizEntity()">Add business</button>
+          </div>
+          <span class="faint" style="font-size:12px;display:block;margin-top:6px">Tracking closeness gates whether the Auditor runs on this business's Ledger, and how much the Accountant auto-posts vs. holds for review.</span>
+          <span class="meta" id="bizMsg"></span>
+        </div>
+
+        <div class="card">
+          <b>Your businesses</b>
+          <div id="bizList" class="muted" style="margin-top:10px">Loading…</div>
+        </div>
+
+        <div class="card hidden" id="bizDetail">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+            <h3 style="margin:0" id="bizDetailName"></h3>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:14px;border-bottom:1px solid var(--border);padding-bottom:10px">
+            <button class="ghost sm active" id="bizTab-ledger" onclick="switchBizView('ledger',this)">Ledger</button>
+            <button class="ghost sm" id="bizTab-compliance" onclick="switchBizView('compliance',this)">Compliance</button>
+          </div>
+
+          <!-- LEDGER -->
+          <div id="bizPane-ledger">
+            <div class="card">
+              <b>Upload a document</b>
+              <p class="muted" style="margin:4px 0 8px;font-size:12.5px">Screenshot, spreadsheet, or PDF log — Amy extracts entries with an LLM and posts them. Image uploads aren't supported yet; convert to PDF/CSV first.</p>
+              <input type="file" id="bizLedgerFile" accept=".csv,.xls,.xlsx,.pdf" style="font-size:12px"/>
+              <button class="ghost sm" onclick="uploadBizLedger()" style="margin-left:8px">Upload &amp; post</button>
+              <button class="ghost sm" id="bizAuditBtn" onclick="runBizAudit()" style="margin-left:8px">Run Audit</button>
+              <div id="bizLedgerMsg" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+            </div>
+            <div class="card">
+              <b>Posted entries</b>
+              <div id="bizLedgerList" class="muted" style="margin-top:10px">Loading…</div>
+            </div>
+          </div>
+
+          <!-- COMPLIANCE -->
+          <div id="bizPane-compliance" class="hidden">
+            <div class="card">
+              <div style="display:flex;align-items:center;gap:10px">
+                <p class="muted" style="margin:0;flex:1;font-size:12.5px">Reuses Ledger entries automatically — no second upload. GSTIN/PAN-bearing entries route through the local-only model.</p>
+                <button class="ghost sm" onclick="runBizCompliance()">Run Compliance Pass</button>
+              </div>
+              <div id="bizComplianceMsg" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+            </div>
+            <div id="bizComplianceList" class="muted">Loading…</div>
+          </div>
+        </div>
+      </div>
+
       <!-- TAB: IMPORT -->
       <div class="tab hidden" id="tab-import">
         <div class="card">
@@ -849,6 +946,15 @@
           <div style="height:12px"></div>
           <div class="bar hidden" id="impBar"><i id="impBarFill" style="width:0%"></i></div>
           <p class="meta" id="importMsg"></p>
+        </div>
+      </div>
+
+      <!-- TAB: MCP -->
+      <div class="tab hidden" id="tab-mcp">
+        <div class="card">
+          <h3>MCP</h3>
+          <p class="muted">Every connected MCP source, with its core actions runnable directly — no chat round-trip. Register/disconnect sources from <a href="#" onclick="document.querySelector('[data-tab=account]').click();return false">Account → MCP Sources</a>.</p>
+          <div id="mcpDashboard"><span class="faint">Loading…</span></div>
         </div>
       </div>
 
@@ -895,6 +1001,53 @@
             <button id="googleDisconnectBtn" class="ghost hidden" onclick="disconnectGoogle()" style="color:var(--danger)">Disconnect</button>
           </div>
           <span class="meta" id="googleMsg"></span>
+
+          <div style="height:24px"></div>
+          <b>MCP Sources</b>
+          <p class="muted">Connect any MCP-compatible source (GitHub, Plane, KITE, …) with a name, server URL, and auth. Connecting only makes it queryable by the AI agent — flip "Also sync to vault" per source to start writing it into your daily notes.</p>
+          <div id="mcpList" style="margin:10px 0"><span class="faint">Loading…</span></div>
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <span class="meta">Quick add:</span>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('github')">GitHub</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('plane')">Plane</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('kite')">KITE (Zerodha)</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('jobspy')">Job Search</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('telegram')">Telegram Bot</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('outlook')">Outlook</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('teams')">Teams</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('reddit')">Reddit</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('gmeet')">Google Meet</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('gsheets')">Google Sheets</button>
+          </div>
+          <div id="mcpPresetSteps" class="hidden" style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)"></div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+            <input id="mcpName" placeholder="Name (e.g. GitHub)" style="flex:1;min-width:110px"/>
+            <input id="mcpUrl" placeholder="Server URL (e.g. https://api.githubcopilot.com/mcp/x/all)" style="flex:2;min-width:220px"/>
+            <select id="mcpAuthType" style="flex:0 0 110px">
+              <option value="api_key" selected>API key</option>
+              <option value="oauth">OAuth token</option>
+              <option value="none">No auth</option>
+            </select>
+            <input id="mcpAuthValue" type="password" placeholder="API key / token" style="flex:1;min-width:140px"/>
+            <input id="mcpAuthExtra" placeholder="Workspace/tenant (only if the server needs one)" style="flex:1;min-width:180px"/>
+            <select id="mcpRiskTier" onchange="mcpRiskTierChanged()" style="flex:0 0 150px">
+              <option value="official">official</option>
+              <option value="platform_api">platform_api</option>
+              <option value="scraping_backed">scraping_backed</option>
+              <option value="unofficial_risky">unofficial_risky</option>
+            </select>
+          </div>
+          <div id="mcpPlatformApiNote" class="hidden" style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)">
+            <span class="chip" style="color:var(--cyan)">platform API</span>
+            <span class="meta">Sources like Outlook/Teams (Microsoft Graph) need an <b>Azure app registration</b> you set up yourself first — this form only stores the token once you have one, it can't create the app registration or do the OAuth device-code sign-in for you. Teams also needs a work/school account (<code>--org-mode</code>); a personal Microsoft account will see limited or no Teams data.</span>
+          </div>
+          <div id="mcpUnofficialRiskyNote" class="hidden" style="margin-top:8px;padding:10px 12px;border:1px solid var(--danger);border-radius:8px;background:var(--surface-2)">
+            <span class="chip" style="color:var(--danger)">unofficial · risky</span>
+            <span class="meta">Reserved for sources with real account/ToS risk — e.g. a personal-account (non-bot-API) messaging connector. <b>Telegram: only Bot API-based MCP servers should be tagged "official"</b> — personal-account (MTProto) access isn't supported here and risks account suspension per Telegram's own terms. You'll be asked to confirm before adding a source at this tier.</span>
+          </div>
+          <div style="height:8px"></div>
+          <button class="sm" onclick="addMcpConnector()">+ Add source</button>
+          <span class="meta" id="mcpMsg"></span>
 
           <div style="height:24px"></div>
           <b>Account Aggregator (AA)</b>
@@ -971,6 +1124,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   document.getElementById('tab-'+tab).classList.remove('hidden');
   if(tab==='goals') loadGoals();
   if(tab==='finance') loadFinance();
+  if(tab==='business') loadBizEntities();
   if(tab==='reflect') loadReflect();
   if(tab==='learn') loadLearn();
   if(tab==='agents') loadAgents();
@@ -984,6 +1138,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='srs') loadSRS();
   if(tab==='entities') loadEntities();
   if(tab==='account') loadAccount();
+  if(tab==='mcp') loadMcpDashboard();
 });
 
 // ---- auth ----
@@ -1267,6 +1422,7 @@ async function loadAccount(){
   }
   loadVault();
   loadGoogleStatus();
+  loadMcpConnectors();
   // AA toggle — me.aa_enabled defaults to true for existing users
   const aaOn = me.aa_enabled !== false;
   document.getElementById('aaToggle').checked = aaOn;
@@ -1334,6 +1490,524 @@ async function disconnectGoogle(){
     loadGoogleStatus();
   }catch(e){ m.textContent=e.message; }
 }
+
+// ---- generic MCP connectors (Layer 1 connect/query, Layer 2 vault-sync toggle) ----
+const _RISK_LABEL={official:'official',platform_api:'platform API',scraping_backed:'unofficial data source',unofficial_risky:'unofficial · risky'};
+const _RISK_COLOR={official:'var(--success)',platform_api:'var(--cyan)',scraping_backed:'var(--warn)',unofficial_risky:'var(--danger)'};
+function mcpRiskTierChanged(){
+  const tier=document.getElementById('mcpRiskTier').value;
+  document.getElementById('mcpPlatformApiNote').classList.toggle('hidden',tier!=='platform_api');
+  document.getElementById('mcpUnofficialRiskyNote').classList.toggle('hidden',tier!=='unofficial_risky');
+}
+const _MCP_PRESETS={
+  github:{name:'GitHub',server_url:'https://api.githubcopilot.com/mcp/x/all',auth_type:'api_key',risk_tier:'official',
+    steps:['Go to <b>github.com/settings/tokens</b>','Click "Generate new token" → "Generate new token (classic)"',
+      'Select the <b>repo</b> scope (read access to your repos)',
+      'Click "Generate token" and copy it immediately — GitHub only shows it once',
+      'Paste it into "API key / token" below']},
+  plane:{name:'Plane',server_url:'https://mcp.plane.so/http/api-key/mcp',auth_type:'api_key',risk_tier:'official',
+    steps:['Click your avatar (top-right) → <b>Profile Settings → API Tokens</b> (or Workspace Settings → Access Tokens)',
+      'Click "Add access token", name it, generate it — copy it immediately, it only shows once',
+      'Paste the token into "API key / token" below',
+      'Find your <b>workspace slug</b> in your Plane URL — app.plane.so/<b>your-slug</b>/ — and paste it into "Workspace/tenant" below (required, Plane won\'t authenticate without it)']},
+  kite:{name:'KITE (Zerodha)',server_url:'https://mcp.kite.trade',auth_type:'api_key',risk_tier:'official',
+    steps:['Create a Kite Connect app at <b>developers.kite.trade</b>','Note your API key + API secret',
+      'Complete Zerodha\'s login flow to generate today\'s <b>access token</b> — this expires daily, you\'ll repeat this step each day you test',
+      'Paste that access token into "API key / token" below']},
+  jobspy:{name:'Job Search (jobspy)',server_url:'',auth_type:'none',risk_tier:'scraping_backed',
+    steps:['Covers Indeed, LinkedIn jobs, Naukri, Bayt, ZipRecruiter, Glassdoor — one server, not a separate one per site',
+      'This is scraper-based, not an official API — there\'s no single public server to point at',
+      'Deploy/run a <b>jobspy-mcp-server</b> instance yourself (see its GitHub repo for setup)',
+      'Paste your instance\'s URL into "Server URL" below',
+      'No token needed unless you added auth to your own deployment']},
+  telegram:{name:'Telegram Bot',server_url:'',auth_type:'api_key',risk_tier:'official',
+    steps:['Message <b>@BotFather</b> on Telegram, send <code>/newbot</code>, follow the prompts',
+      'Copy the bot token @BotFather gives you',
+      'Run/host a Bot-API-based Telegram MCP server pointed at that bot (not a personal-account/MTProto one)',
+      'Paste your server\'s URL into "Server URL", and the bot token into "API key / token"']},
+  outlook:{name:'Outlook',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
+    steps:['Register an Azure app at <b>portal.azure.com → App registrations</b> (Microsoft Graph, Mail.Read scope)',
+      'Deploy/run <b>ms-365-mcp-server</b> (or similar) yourself, configured with that app\'s client ID',
+      'Complete its device-code sign-in flow to get an access token',
+      'Paste your server\'s URL into "Server URL", and the access token into "API key / token"']},
+  teams:{name:'Teams',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
+    steps:['Same Azure app registration as Outlook (Microsoft Graph)',
+      'Personal Microsoft accounts see limited/no Teams data — needs a work/school account (<code>--org-mode</code>)',
+      'Deploy/run <b>ms-365-mcp-server</b> in org-mode, get an access token via its device-code flow',
+      'Paste your server\'s URL into "Server URL", and the access token into "API key / token"']},
+  reddit:{name:'Reddit',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
+    steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
+      'Register an app at <b>reddit.com/prefs/apps</b> for OAuth API access',
+      'Deploy/run a Reddit MCP server configured with that app\'s credentials',
+      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"']},
+  gmeet:{name:'Google Meet',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
+    steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
+      'Create an OAuth client in <b>Google Cloud Console</b> with Meet/Calendar API access',
+      'Deploy/run a Google Meet MCP server configured with that client',
+      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"',
+      'Note: Gmail/Calendar already work today via the separate "Connect Google" button above — this preset is only for Meet-specific data']},
+  gsheets:{name:'Google Sheets',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
+    steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
+      'Create an OAuth client in <b>Google Cloud Console</b> with Sheets API access',
+      'Deploy/run a Google Sheets MCP server configured with that client',
+      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"']},
+};
+function mcpApplyPreset(key){
+  const p=_MCP_PRESETS[key];
+  if(!p) return;
+  document.getElementById('mcpName').value=p.name;
+  document.getElementById('mcpUrl').value=p.server_url;
+  document.getElementById('mcpAuthType').value=p.auth_type;
+  document.getElementById('mcpAuthExtra').value='';
+  document.getElementById('mcpRiskTier').value=p.risk_tier;
+  mcpRiskTierChanged();
+  const el=document.getElementById('mcpPresetSteps');
+  el.classList.remove('hidden');
+  el.innerHTML='<b>Get a token for '+p.name+':</b><ol style="margin:6px 0 0 18px;padding:0">'
+    +p.steps.map(s=>'<li style="margin:3px 0">'+s+'</li>').join('')+'</ol>';
+  document.getElementById('mcpAuthValue').focus();
+}
+async function loadMcpConnectors(){
+  const el=document.getElementById('mcpList');
+  try{
+    const d=await jget('/api/mcp/connectors');
+    const rows=d.connectors||[];
+    if(!rows.length){ el.innerHTML='<span class="faint">No MCP sources connected yet.</span>'; return; }
+    el.innerHTML=rows.map(c=>{
+      const riskChip=`<span class="chip" style="color:${_RISK_COLOR[c.risk_tier]||'var(--muted)'}">${_RISK_LABEL[c.risk_tier]||c.risk_tier}</span>`;
+      let noteHtml='';
+      if(c.risk_tier==='platform_api'){
+        if(/teams/i.test(c.name)){
+          noteHtml='<div class="meta" style="margin-top:2px">Personal Microsoft accounts see limited/no Teams data — needs a work/school account (--org-mode).</div>';
+        } else if(/outlook/i.test(c.name)){
+          noteHtml='<div class="meta" style="margin-top:2px">Auth must come from your own Azure app registration (Microsoft Graph).</div>';
+        } else if(/google|meet|sheet/i.test(c.name)){
+          noteHtml='<div class="meta" style="margin-top:2px">Auth must come from your own Google Cloud OAuth client.</div>';
+        } else {
+          noteHtml='<div class="meta" style="margin-top:2px">Auth must come from your own OAuth app registration with this provider.</div>';
+        }
+      } else if(/telegram/i.test(c.name) && c.risk_tier!=='official'){
+        noteHtml='<div class="meta" style="margin-top:2px;color:var(--danger)">Tagged non-official — make sure this is a Bot API server, not personal-account (MTProto) access.</div>';
+      }
+      return `<div class="toggle" style="align-items:center">
+        <div>
+          <b>${c.name}</b> ${riskChip}
+          <div class="faint" style="font-size:11px">${c.server_url}</div>
+          ${noteHtml}
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12px">
+            <input type="checkbox" ${c.promoted_to_sensor?'checked':''} onchange="mcpTogglePromote('${c.id}',this.checked)"/>
+            Also sync to vault
+          </label>
+          <button class="ghost sm" onclick="mcpListTools('${c.id}')">List tools</button>
+          ${c.promoted_to_sensor?`<button class="ghost sm" onclick="mcpPollNow('${c.id}')">Poll now</button>`:''}
+          <button class="ghost sm" onclick="mcpDisconnect('${c.id}')" style="color:var(--danger)">Disconnect</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    el.innerHTML='<span class="faint">Could not load MCP sources.</span>';
+  }
+}
+async function addMcpConnector(){
+  const m=document.getElementById('mcpMsg');
+  const name=document.getElementById('mcpName').value.trim();
+  const server_url=document.getElementById('mcpUrl').value.trim();
+  const auth_type=document.getElementById('mcpAuthType').value;
+  const auth_value=document.getElementById('mcpAuthValue').value.trim();
+  const auth_extra=document.getElementById('mcpAuthExtra').value.trim();
+  const risk_tier=document.getElementById('mcpRiskTier').value;
+  if(!name||!server_url){ m.textContent='Name and server URL are required.'; return; }
+  if(risk_tier==='unofficial_risky'){
+    const ok=confirm('This source is tagged "unofficial · risky" — data quality and Terms-of-Service compliance are unverified (e.g. personal-account/scraping access). Add it anyway?');
+    if(!ok){ m.textContent='cancelled'; return; }
+  }
+  m.textContent='adding…';
+  try{
+    await jpost('/api/mcp/connectors',{name,server_url,auth_type,auth_value:auth_value||null,risk_tier,auth_extra:auth_extra||null});
+    document.getElementById('mcpName').value='';
+    document.getElementById('mcpUrl').value='';
+    document.getElementById('mcpAuthValue').value='';
+    document.getElementById('mcpAuthExtra').value='';
+    m.textContent='added ✓';
+    loadMcpConnectors();
+  }catch(e){ m.textContent=e.message; }
+}
+async function mcpListTools(id){
+  const m=document.getElementById('mcpMsg');
+  m.textContent='listing tools…';
+  try{
+    const r=await api('/api/mcp/connectors/'+id+'/tools',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok){ m.textContent='error: '+(d.detail||r.status); return; }
+    const names=(d.tools||[]).map(t=>t.name).join(', ');
+    m.textContent=(d.tools||[]).length+' tools: '+names;
+  }catch(e){ m.textContent=e.message; }
+}
+async function mcpTogglePromote(id,checked){
+  const m=document.getElementById('mcpMsg');
+  try{
+    await api('/api/mcp/connectors/'+id+'/promote?promoted='+checked,{method:'PATCH'});
+    m.textContent=checked?'now syncing to vault ✓':'vault sync stopped';
+    loadMcpConnectors();
+  }catch(e){ m.textContent=e.message; loadMcpConnectors(); }
+}
+async function mcpPollNow(id){
+  const m=document.getElementById('mcpMsg');
+  const saved=_mcpGetDefaultParam(id);
+  let repos=saved;
+  if(!repos){
+    // nothing saved yet anywhere (Account or MCP tab) — this is the only time we ask
+    repos=prompt('GitHub repos to poll (comma-separated owner/repo):');
+    if(!repos) return;
+  }
+  const github_repos=repos.split(',').map(r=>r.trim()).filter(Boolean);
+  if(!github_repos.length){ m.textContent='no repos entered'; return; }
+  if(github_repos.length===1 && !saved){
+    // remember it — the MCP tab's "Default repo" and this button now share one saved value
+    localStorage.setItem(_mcpDefaultParamKey(id), github_repos[0]);
+  }
+  m.textContent='polling '+repos+'…';
+  try{
+    const r=await api('/api/mcp/connectors/'+id+'/poll',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({github_repos})});
+    const d=await r.json();
+    if(!r.ok){ m.textContent='error: '+(d.detail||r.status); return; }
+    m.textContent='polled ✓ — '+d.events_published+' event(s) published, journal caught up ('+(d.journal&&d.journal.written||0)+' written to 00_Daily/)';
+  }catch(e){ m.textContent=e.message; }
+}
+async function mcpDisconnect(id){
+  if(!confirm('Disconnect this MCP source?')) return;
+  const m=document.getElementById('mcpMsg');
+  try{
+    await api('/api/mcp/connectors/'+id,{method:'DELETE'});
+    m.textContent='disconnected';
+    loadMcpConnectors();
+  }catch(e){ m.textContent=e.message; }
+}
+
+// ---- MCP dashboard (core actions + generic schema-driven tool runner) ----
+const _MCP_TOOLS_CACHE={}; // connector id -> [{name,description,input_schema}]
+const _MCP_CORE_ACTIONS={
+  github:[
+    {tool:'get_file_contents',label:'Read file / README',defaults:{path:'README.md'}},
+    {tool:'get_repository_tree',label:'Browse repo'},
+    {tool:'list_pull_requests',label:'List PRs'},
+    {tool:'pull_request_review_write',label:'Review PR'},
+    {tool:'merge_pull_request',label:'Merge PR'},
+    {tool:'list_issues',label:'List issues'},
+    {tool:'issue_write',label:'Create/update issue'},
+    {tool:'list_repository_collaborators',label:'List collaborators'},
+  ],
+  // Real tool names verified against developers.plane.so/dev-tools/mcp-server-tools.
+  // "Edit item" and "edit item status" are the SAME tool (update_work_item takes
+  // an optional state_id among other fields) — there's no separate status-only
+  // endpoint, so this is one action, not two.
+  plane:[
+    {tool:'list_projects',label:'List projects'},
+    {tool:'create_project',label:'Create project'},
+    {tool:'update_project',label:'Edit project'},
+    {tool:'list_states',label:'List states'},
+    {tool:'create_work_item',label:'Create item'},
+    {tool:'update_work_item',label:'Edit item (incl. status)'},
+  ],
+};
+function _mcpCoreActionsFor(name){
+  if(/github/i.test(name)) return _MCP_CORE_ACTIONS.github;
+  if(/plane/i.test(name)) return _MCP_CORE_ACTIONS.plane;
+  return null;
+}
+// Generalizes the old GitHub-only "default repo" mechanism to any source with
+// a recurring primary-key parameter (owner/repo for GitHub, project_id for
+// Plane, ...). Each config: how to render/parse one saved string into the
+// tool-argument object, and (optionally) how to auto-detect it — GitHub can
+// (get_me + search_repositories, both real verified tools); Plane can't yet,
+// since list_projects' real response shape hasn't been confirmed against a
+// live account, so it stays manual-entry-only rather than risk parsing a
+// guessed shape (same caution that avoided a repeat of the get_file_contents
+// EmbeddedResource surprise).
+const _MCP_DEFAULT_PARAM_CONFIG={
+  github:{
+    label:'Repo', placeholder:'owner/repo',
+    parse(saved){
+      if(!saved||!saved.includes('/')) return {};
+      const [owner,repo]=saved.split('/').map(s=>s.trim());
+      const out={};
+      if(owner) out.owner=owner;
+      if(repo){ out.repo=repo; out.repository=repo; }
+      return out;
+    },
+    autoDiscover:(c)=>_mcpAutoDiscoverGithubRepo(c),
+  },
+  plane:{
+    label:'Project', placeholder:'project_id (UUID) — click "List projects" below to find it',
+    parse(saved){ return saved ? {project_id:saved} : {}; },
+  },
+};
+function _mcpDefaultParamConfigFor(name){
+  if(/github/i.test(name)) return _MCP_DEFAULT_PARAM_CONFIG.github;
+  if(/plane/i.test(name)) return _MCP_DEFAULT_PARAM_CONFIG.plane;
+  return null;
+}
+const _MCP_CONNECTOR_NAME_CACHE={}; // connector id -> name, so render/save/open helpers below know which config applies
+async function loadMcpDashboard(){
+  const el=document.getElementById('mcpDashboard');
+  el.innerHTML='<span class="faint">Loading…</span>';
+  try{
+    const d=await jget('/api/mcp/connectors');
+    const rows=d.connectors||[];
+    if(!rows.length){
+      el.innerHTML='<p class="muted">No MCP sources connected yet. Add one from <a href="#" onclick="document.querySelector(\'[data-tab=account]\').click();return false">Account → MCP Sources</a>.</p>';
+      return;
+    }
+    el.innerHTML=rows.map(c=>{
+      _MCP_CONNECTOR_NAME_CACHE[c.id]=c.name;
+      const riskChip=`<span class="chip" style="color:${_RISK_COLOR[c.risk_tier]||'var(--muted)'}">${_RISK_LABEL[c.risk_tier]||c.risk_tier}</span>`;
+      const core=_mcpCoreActionsFor(c.name);
+      const repoPickerHtml=core?`<div id="mcpRepoBlock-${c.id}" style="margin-bottom:10px"></div>`:'';
+      return `<div class="card" style="margin:10px 0" id="mcpCard-${c.id}">
+        <b>${c.name}</b> ${riskChip}
+        <div class="faint" style="font-size:11px;margin-bottom:8px">${c.server_url}</div>
+        ${repoPickerHtml}
+        <div id="mcpActions-${c.id}"><span class="faint">Loading tools…</span></div>
+      </div>`;
+    }).join('');
+    for(const c of rows){
+      const cfg=_mcpCoreActionsFor(c.name) && _mcpDefaultParamConfigFor(c.name);
+      if(cfg) _mcpRenderRepoBlock(c.id, cfg.autoDiscover?'detecting':undefined);
+      _mcpLoadToolsFor(c);
+    }
+  }catch(e){
+    el.innerHTML='<span class="faint">Could not load MCP dashboard.</span>';
+  }
+}
+async function _mcpLoadToolsFor(c){
+  const actionsEl=document.getElementById('mcpActions-'+c.id);
+  try{
+    const r=await api('/api/mcp/connectors/'+c.id+'/tools',{method:'POST'});
+    const d=await r.json();
+    if(!r.ok){ actionsEl.innerHTML='<span class="faint">error: '+(d.detail||r.status)+'</span>'; return; }
+    const tools=d.tools||[];
+    _MCP_TOOLS_CACHE[c.id]=tools;
+    const core=_mcpCoreActionsFor(c.name);
+    const paramCfg=core && _mcpDefaultParamConfigFor(c.name);
+    if(paramCfg && !_mcpGetDefaultParam(c.id)){
+      if(paramCfg.autoDiscover) paramCfg.autoDiscover(c); // fires in background, updates the field itself if it finds one
+      else _mcpRenderRepoBlock(c.id); // no auto-discovery for this source — straight to manual entry, no 'detecting' flash
+    }
+    let html='';
+    if(core){
+      const available=core.filter(a=>tools.some(t=>t.name===a.tool));
+      if(available.length){
+        html+='<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">'
+          +available.map(a=>`<button class="ghost sm" onclick="_mcpOpenTool('${c.id}','${a.tool}',${JSON.stringify(a.defaults||{}).replace(/"/g,'&quot;')})">${a.label}</button>`).join('')
+          +'</div>';
+        if(/github/i.test(c.name)){
+          html+='<div class="meta" style="margin-bottom:8px">No invite/accept-collaborator actions — this MCP server only exposes read access to collaborators (list_repository_collaborators), not invite management.</div>';
+        }
+      }
+    }
+    html+=`<details><summary class="meta" style="cursor:pointer">Browse all ${tools.length} tools</summary>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+        ${tools.map(t=>`<button class="ghost sm" onclick="_mcpOpenTool('${c.id}','${t.name.replace(/'/g,"\\'")}',{})" title="${(t.description||'').replace(/"/g,'&quot;')}">${t.name}</button>`).join('')}
+      </div>
+    </details>`;
+    html+=`<div id="mcpForm-${c.id}"></div>`;
+    actionsEl.innerHTML=html;
+  }catch(e){
+    actionsEl.innerHTML='<span class="faint">Could not load tools.</span>';
+  }
+}
+// Legacy key name (predates generalizing this beyond GitHub's "owner/repo")
+// — kept as-is so existing saved GitHub repos aren't lost on upgrade.
+function _mcpDefaultParamKey(cid){ return 'mcp_default_repo_'+cid; }
+function _mcpGetDefaultParam(cid){ return localStorage.getItem(_mcpDefaultParamKey(cid)) || ''; }
+function _mcpParamCfgFor(cid){
+  const name=_MCP_CONNECTOR_NAME_CACHE[cid];
+  return name ? _mcpDefaultParamConfigFor(name) : null;
+}
+// Renders the param-block area in one of three states:
+//  - already known (saved or auto-detected) -> just show it + a "change"
+//    link, no input box cluttering the screen
+//  - state='detecting' -> auto-discovery is running, show a loading line,
+//    no input box (avoids flashing it before discovery gets a chance to run)
+//  - state='failed:<reason>' or nothing known and not detecting -> the ONLY
+//    case where the manual input actually needs to exist
+function _mcpRenderRepoBlock(cid,state){
+  const el=document.getElementById('mcpRepoBlock-'+cid);
+  if(!el) return;
+  const cfg=_mcpParamCfgFor(cid);
+  const label=(cfg&&cfg.label)||'Repo';
+  const placeholder=(cfg&&cfg.placeholder)||'owner/repo';
+  const saved=_mcpGetDefaultParam(cid);
+  if(saved){
+    el.innerHTML=`<span class="meta">${label}: <b style="color:var(--text)">${saved}</b></span> `
+      +`<button class="ghost sm" onclick="_mcpShowRepoInput('${cid}')">change</button>`;
+    return;
+  }
+  if(state==='detecting'){
+    el.innerHTML=`<span class="faint">Detecting your ${label.toLowerCase()}…</span>`;
+    return;
+  }
+  const failMsg=(state&&state.indexOf('failed:')===0)?state.slice(7):'type it once, reused everywhere below';
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:8px">
+    <label class="meta" style="white-space:nowrap">${label}:</label>
+    <input id="mcpDefaultRepo-${cid}" placeholder="${placeholder}" style="flex:0 0 260px"/>
+    <button class="ghost sm" onclick="_mcpSaveDefaultRepo('${cid}')">Save</button>
+    <span class="meta">${failMsg}</span>
+  </div>`;
+}
+function _mcpShowRepoInput(cid){
+  const el=document.getElementById('mcpRepoBlock-'+cid);
+  const cfg=_mcpParamCfgFor(cid);
+  const label=(cfg&&cfg.label)||'Repo';
+  const placeholder=(cfg&&cfg.placeholder)||'owner/repo';
+  const current=_mcpGetDefaultParam(cid);
+  el.innerHTML=`<div style="display:flex;align-items:center;gap:8px">
+    <label class="meta" style="white-space:nowrap">${label}:</label>
+    <input id="mcpDefaultRepo-${cid}" placeholder="${placeholder}" value="${current}" style="flex:0 0 260px"/>
+    <button class="ghost sm" onclick="_mcpSaveDefaultRepo('${cid}')">Save</button>
+    <button class="ghost sm" onclick="_mcpRenderRepoBlock('${cid}')">cancel</button>
+  </div>`;
+}
+function _mcpSaveDefaultRepo(cid){
+  const input=document.getElementById('mcpDefaultRepo-'+cid);
+  const val=input?input.value.trim():'';
+  if(val) localStorage.setItem(_mcpDefaultParamKey(cid), val);
+  else localStorage.removeItem(_mcpDefaultParamKey(cid));
+  _mcpRenderRepoBlock(cid);
+}
+async function _mcpCallSilent(cid,toolName,args){
+  const r=await api('/api/mcp/connectors/'+cid+'/call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:toolName,arguments:args||{}})});
+  const d=await r.json();
+  if(!r.ok) throw new Error(d.detail||('HTTP '+r.status));
+  return d;
+}
+// Best-effort: identify the user (get_me) then their repo (search_repositories),
+// using each tool's REAL schema (already fetched by list_tools) rather than
+// guessing field names. Runs in the background; on any failure it reveals the
+// manual "Repo" input as a fallback — never worse than before. GitHub-only:
+// Plane has no equivalent auto-discovery wired up yet (see _MCP_DEFAULT_PARAM_CONFIG).
+async function _mcpAutoDiscoverGithubRepo(c){
+  if(_mcpGetDefaultParam(c.id)) return;
+  const tools=_MCP_TOOLS_CACHE[c.id]||[];
+  const getMe=tools.find(t=>t.name==='get_me');
+  const search=tools.find(t=>/^search_repositories$/i.test(t.name));
+  if(!getMe||!search){
+    _mcpRenderRepoBlock(c.id,'failed:auto-detect not supported for this source');
+    return;
+  }
+  _mcpRenderRepoBlock(c.id,'detecting');
+  try{
+    const meResult=await _mcpCallSilent(c.id,'get_me',{});
+    const meBlob=(meResult.text||'')+JSON.stringify(meResult.structured||{});
+    const loginMatch=meBlob.match(/"login"\s*:\s*"([^"]+)"/);
+    if(!loginMatch) throw new Error('could not identify username from get_me response');
+    const username=loginMatch[1];
+    const props=(search.input_schema&&search.input_schema.properties)||{};
+    const required=(search.input_schema&&search.input_schema.required)||[];
+    const queryField=required.find(p=>((props[p]&&props[p].type)||'string')==='string')
+      ||Object.keys(props).find(p=>(props[p]&&props[p].type)==='string');
+    if(!queryField) throw new Error('search_repositories has no string query field');
+    const searchResult=await _mcpCallSilent(c.id,'search_repositories',{[queryField]:'user:'+username});
+    const searchBlob=(searchResult.text||'')+JSON.stringify(searchResult.structured||{});
+    const fullNameMatch=searchBlob.match(/"full_name"\s*:\s*"([^"]+)"/);
+    if(!fullNameMatch) throw new Error('no repos found for '+username);
+    localStorage.setItem(_mcpDefaultParamKey(c.id), fullNameMatch[1]);
+    _mcpRenderRepoBlock(c.id);
+  }catch(e){
+    _mcpRenderRepoBlock(c.id,'failed:couldn\'t auto-detect ('+e.message+')');
+  }
+}
+function _mcpFieldInput(cid,prop,schema,required){
+  const t=(schema&&schema.type)||'string';
+  const id=`mcpArg-${cid}-${prop}`;
+  const label=prop+(required?' *':'')+(schema&&schema.description?' — '+schema.description:'');
+  if(t==='boolean'){
+    return `<label style="display:flex;align-items:center;gap:6px;font-size:12px;margin:4px 0"><input type="checkbox" id="${id}" data-type="boolean"/> ${label}</label>`;
+  }
+  if(t==='integer'||t==='number'){
+    return `<div style="margin:4px 0"><label class="meta">${label}</label><input id="${id}" type="number" data-type="${t}" style="margin-top:2px"/></div>`;
+  }
+  if(t==='array'||t==='object'){
+    return `<div style="margin:4px 0"><label class="meta">${label} (JSON)</label><textarea id="${id}" data-type="${t}" rows="2" style="width:100%;margin-top:2px"></textarea></div>`;
+  }
+  return `<div style="margin:4px 0"><label class="meta">${label}</label><input id="${id}" type="text" data-type="string" style="margin-top:2px"/></div>`;
+}
+function _mcpOpenTool(cid,toolName,defaults){
+  const tools=_MCP_TOOLS_CACHE[cid]||[];
+  const tool=tools.find(t=>t.name===toolName);
+  const formEl=document.getElementById('mcpForm-'+cid);
+  if(!tool){ formEl.innerHTML='<span class="faint">Tool not found.</span>'; return; }
+  const schema=tool.input_schema||{};
+  const props=schema.properties||{};
+  const required=schema.required||[];
+  const propNames=Object.keys(props);
+  const fields=propNames.map(p=>_mcpFieldInput(cid,p,props[p],required.includes(p))).join('');
+  const propNamesJson=JSON.stringify(propNames).replace(/"/g,'&quot;');
+  formEl.innerHTML=`<div class="card" style="margin-top:8px;background:var(--surface-2)">
+    <b>${toolName}</b>
+    <p class="muted" style="font-size:12px">${tool.description||''}</p>
+    ${fields||'<p class="meta">No parameters.</p>'}
+    <button class="sm" style="margin-top:8px" onclick="_mcpRunTool('${cid}','${toolName.replace(/'/g,"\\'")}',${propNamesJson})">Run</button>
+    <span class="meta" id="mcpRunMsg-${cid}"></span>
+    <pre id="mcpRunResult-${cid}" style="white-space:pre-wrap;font-size:12px;color:var(--text);margin-top:8px;max-height:400px;overflow:auto;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)"></pre>
+  </div>`;
+  const savedParam=_mcpGetDefaultParam(cid);
+  const paramCfg=_mcpParamCfgFor(cid);
+  const mergedDefaults={...(defaults||{})};
+  if(savedParam && paramCfg){
+    const parsed=paramCfg.parse(savedParam)||{};
+    for(const [k,v] of Object.entries(parsed)){
+      if(v && k in props && mergedDefaults[k]===undefined) mergedDefaults[k]=v;
+    }
+  }
+  for(const [k,v] of Object.entries(mergedDefaults)){
+    const f=document.getElementById(`mcpArg-${cid}-${k}`);
+    if(f) f.value=v;
+  }
+  // Nothing left for the user to fill in -> run immediately instead of making
+  // them click Run for a call whose every required field is already known
+  // (e.g. Read README once a default repo is saved).
+  const allRequiredFilled=required.every(p=>{
+    const f=document.getElementById(`mcpArg-${cid}-${p}`);
+    if(!f) return false;
+    return f.type==='checkbox' ? true : String(f.value||'').trim()!=='';
+  });
+  if(allRequiredFilled) _mcpRunTool(cid,toolName,propNames);
+}
+async function _mcpRunTool(cid,toolName,propNames){
+  const msg=document.getElementById('mcpRunMsg-'+cid);
+  const resultEl=document.getElementById('mcpRunResult-'+cid);
+  const args={};
+  for(const p of propNames){
+    const f=document.getElementById(`mcpArg-${cid}-${p}`);
+    if(!f) continue;
+    const type=f.dataset.type;
+    if(type==='boolean'){ args[p]=f.checked; }
+    else if(type==='integer'){ if(f.value!=='') args[p]=parseInt(f.value,10); }
+    else if(type==='number'){ if(f.value!=='') args[p]=parseFloat(f.value); }
+    else if(type==='array'||type==='object'){
+      if(f.value.trim()){
+        try{ args[p]=JSON.parse(f.value); }
+        catch(e){ msg.textContent='invalid JSON in '+p; return; }
+      }
+    } else { if(f.value!=='') args[p]=f.value; }
+  }
+  msg.textContent='running…'; resultEl.textContent='';
+  try{
+    const r=await api('/api/mcp/connectors/'+cid+'/call',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:toolName,arguments:args})});
+    const d=await r.json();
+    if(!r.ok){ msg.textContent='error: '+(d.detail||r.status); return; }
+    msg.textContent='done ✓';
+    // d.text already has real newlines (JSON decoding restores them) — showing the
+    // whole object via JSON.stringify() re-escapes them into visible "\n" sequences,
+    // which is why file/README content looked unreadable. Show the plain text when
+    // there is any; fall back to the full result only when there's nothing readable.
+    resultEl.textContent=(d.text&&d.text.trim())?d.text:JSON.stringify(d,null,2);
+  }catch(e){ msg.textContent=e.message; }
+}
+
 async function saveKey(){ await jpost('/api/settings/openai-key',{key:document.getElementById('acctKey').value.trim()}); document.getElementById('acctMsg').textContent='key saved ✓'; }
 async function loadVault(){
   try{
@@ -2411,6 +3085,222 @@ async function uploadPDF(aid){
     const d=await r.json();
     m.innerHTML='<span style="color:var(--success)">✓ Imported '+d.imported+', skipped '+d.skipped+'</span>';
     loadFinTransactions();
+  }catch(e){m.textContent='Error: '+e.message;}
+}
+
+/* ── Business entities ───────────────────────────────────────────────── */
+let _activeBizEntity=null;
+let _activeBizView='ledger';
+let _bizEntities=[];
+
+async function loadBizEntities(){
+  const el=document.getElementById('bizList');
+  el.innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/business/entities');
+    _bizEntities=d.entities||[];
+    if(!_bizEntities.length){el.innerHTML='<p class="muted">No businesses yet. Add one above.</p>';return;}
+    el.innerHTML=_bizEntities.map(e=>`
+      <div class="toggle" id="bizRow-${e.id}" onclick="selectBizEntity('${e.id}')" style="cursor:pointer">
+        <div style="flex:1;min-width:0">
+          <b>${e.name}</b> <span class="chip">${e.constitution}</span>
+          <span class="faint">${e.tracking_closeness==='close'?'closely-managed':'recording-only'}</span>
+        </div>
+        <button class="ghost sm" onclick="event.stopPropagation();deleteBizEntity('${e.id}','${e.name.replace(/'/g,"\\'")}')" style="color:var(--danger);padding:4px 8px" title="Remove business">✕</button>
+      </div>`).join('');
+  }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function addBizEntity(){
+  const name=document.getElementById('bizName').value.trim();
+  const m=document.getElementById('bizMsg');
+  if(!name){m.textContent='Enter a legal name.';return;}
+  m.textContent='adding…';
+  try{
+    const r=await api('/api/business/entities',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      name,
+      pan: document.getElementById('bizPan').value.trim()||null,
+      gstin: document.getElementById('bizGstin').value.trim()||null,
+      constitution: document.getElementById('bizConstitution').value,
+      registration_state: document.getElementById('bizState').value.trim()||null,
+      financial_year: document.getElementById('bizFY').value.trim()||null,
+      tax_regime: document.getElementById('bizTaxRegime').value.trim()||null,
+      holds_depreciable_assets: document.getElementById('bizDepreciable').checked,
+      tracking_closeness: document.getElementById('bizTrackingCloseness').value,
+    })});
+    const d=await r.json();
+    if(!r.ok){ m.textContent='Error: '+(d.detail||'could not add business'); return; }
+    ['bizName','bizPan','bizGstin','bizState','bizFY','bizTaxRegime'].forEach(id=>document.getElementById(id).value='');
+    document.getElementById('bizDepreciable').checked=false;
+    m.textContent='added ✓'; loadBizEntities();
+  }catch(e){m.textContent=e.message;}
+}
+
+async function deleteBizEntity(id,name){
+  if(!confirm('Remove "'+name+'" and all its Ledger/Compliance data?'))return;
+  await api('/api/business/entities/'+id,{method:'DELETE'});
+  if(_activeBizEntity===id){_activeBizEntity=null;document.getElementById('bizDetail').classList.add('hidden');}
+  loadBizEntities();
+}
+
+function selectBizEntity(id){
+  _activeBizEntity=id;
+  const entity=_bizEntities.find(e=>e.id===id);
+  document.getElementById('bizDetail').classList.remove('hidden');
+  document.getElementById('bizDetailName').textContent=entity?entity.name:'';
+  document.getElementById('bizAuditBtn').classList.toggle('hidden', !entity || entity.tracking_closeness!=='close');
+  document.getElementById('bizDetail').scrollIntoView({behavior:'smooth',block:'nearest'});
+  switchBizView('ledger', document.getElementById('bizTab-ledger'));
+}
+
+function switchBizView(view, btn){
+  _activeBizView=view;
+  ['ledger','compliance'].forEach(v=>{
+    document.getElementById('bizPane-'+v).classList.toggle('hidden', v!==view);
+    const tb=document.getElementById('bizTab-'+v);
+    if(tb) tb.classList.toggle('active', v===view);
+  });
+  if(view==='ledger') loadBizLedger();
+  if(view==='compliance') loadBizCompliance();
+}
+
+async function loadBizLedger(){
+  if(!_activeBizEntity)return;
+  const el=document.getElementById('bizLedgerList');
+  el.innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/business/entities/'+_activeBizEntity+'/ledger');
+    const list=d.entries||[];
+    if(!list.length){el.innerHTML='<p class="muted">No ledger entries yet. Upload a document above.</p>';return;}
+    const verified=list.filter(e=>e.audit_status==='ok').length;
+    const flagged=list.filter(e=>e.audit_status==='flagged').length;
+    const unaudited=list.length-verified-flagged;
+    let summary='';
+    if(verified||flagged){
+      summary=`<p class="faint" style="font-size:12px;margin:0 0 10px">
+        ${verified?`✓ ${verified} confirmed against your uploaded document`:''}${verified&&flagged?', ':''}${flagged?`⚠ ${flagged} not found in the document — worth a second look`:''}${unaudited?` (${unaudited} not yet audited — click "Run Audit" above)`:''}
+      </p>`;
+    }
+    el.innerHTML=summary+list.map(e=>{
+      const auditBadge = e.audit_status==='flagged'
+        ? `<span class="chip" style="color:var(--danger)" title="Amy re-checked your uploaded document and could not find this amount in it — double-check this row.">⚠ not found in document</span>`
+        : e.audit_status==='ok'
+        ? `<span class="chip" style="color:var(--success)" title="This amount was found in the document you last ran Audit against.">✓ confirmed in document</span>`
+        : `<span class="chip" title="Amy hasn't checked this row against your source document yet.">not yet audited</span>`;
+      const confBadge = e.confidence<1
+        ? `<span class="faint" title="How confident the AI extraction was when reading this entry from your document — lower means double-check the numbers.">AI confidence: ${Math.round(e.confidence*100)}%</span>`
+        : '';
+      return `
+      <div class="toggle" id="bizLedgerRow-${e.id}">
+        <div style="flex:1;min-width:0">
+          <b>${_fmt(e.amount)}</b> <span class="faint">${e.date}</span> — ${e.description||'(no description)'}
+          <span class="chip" title="Category — auto-assigned by keyword rules or the AI extraction; edit if wrong.">${e.category}</span>
+          ${auditBadge}
+          ${confBadge}
+        </div>
+        <button class="ghost sm" onclick="toggleBizLedgerEdit('${e.id}')" title="AI extraction can misread numbers — fix anything wrong here.">Edit</button>
+      </div>
+      <div id="bizLedgerEdit-${e.id}" class="hidden" style="background:rgba(0,0,0,.18);border-radius:12px;padding:12px;margin-bottom:8px">
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <input id="bizEditAmt-${e.id}" type="number" value="${e.amount}" placeholder="Amount" style="flex:0 0 130px"/>
+          <input id="bizEditDesc-${e.id}" value="${(e.description||'').replace(/"/g,'&quot;')}" placeholder="Description" style="flex:1;min-width:160px"/>
+          <input id="bizEditCat-${e.id}" value="${e.category==='Uncategorized'?'':e.category}" placeholder="Category" style="flex:0 0 140px"/>
+          <button class="ghost sm" onclick="saveBizLedgerEdit('${e.id}')">Save</button>
+          <button class="ghost sm" onclick="toggleBizLedgerEdit('${e.id}')">Cancel</button>
+        </div>
+        <span class="faint" style="font-size:12px">Editing marks this row as manually corrected — Amy won't overwrite it again.</span>
+      </div>`;
+    }).join('');
+  }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+function toggleBizLedgerEdit(entryId){
+  document.getElementById('bizLedgerEdit-'+entryId).classList.toggle('hidden');
+}
+
+async function saveBizLedgerEdit(entryId){
+  if(!_activeBizEntity)return;
+  const amount=parseFloat(document.getElementById('bizEditAmt-'+entryId).value);
+  const description=document.getElementById('bizEditDesc-'+entryId).value.trim();
+  const category=document.getElementById('bizEditCat-'+entryId).value.trim()||'Uncategorized';
+  if(isNaN(amount)){alert('Enter a valid amount.');return;}
+  try{
+    const r=await api('/api/business/entities/'+_activeBizEntity+'/ledger/'+entryId,{
+      method:'PATCH',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({amount,description,category})
+    });
+    const d=await r.json();
+    if(!r.ok){alert('Error: '+(d.detail||'could not save'));return;}
+    loadBizLedger();
+  }catch(e){alert('Error: '+e.message);}
+}
+
+async function uploadBizLedger(){
+  if(!_activeBizEntity)return;
+  const f=document.getElementById('bizLedgerFile').files[0];
+  const m=document.getElementById('bizLedgerMsg');
+  if(!f){m.textContent='Select a document first.';return;}
+  m.textContent='uploading (AI parsing)…';
+  try{
+    const fd=new FormData(); fd.append('file',f);
+    const r=await api('/api/business/entities/'+_activeBizEntity+'/ledger/upload',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok){m.textContent='Error: '+(d.detail||'upload failed');return;}
+    m.innerHTML='<span style="color:var(--success)">✓ Posted '+d.count+' entries</span>'+
+      (d.needs_review_count?' <span style="color:var(--warn)">('+d.needs_review_count+' below auto-post confidence — review recommended)</span>':'');
+    loadBizLedger();
+  }catch(e){m.textContent='Error: '+e.message;}
+}
+
+async function runBizAudit(){
+  if(!_activeBizEntity)return;
+  const f=document.getElementById('bizLedgerFile').files[0];
+  const m=document.getElementById('bizLedgerMsg');
+  if(!f){m.textContent='Select the source document to audit against first.';return;}
+  m.textContent='auditing…';
+  try{
+    const fd=new FormData(); fd.append('file',f);
+    const r=await api('/api/business/entities/'+_activeBizEntity+'/ledger/audit',{method:'POST',body:fd});
+    const d=await r.json();
+    if(!r.ok){m.textContent='Error: '+(d.detail||'audit failed');return;}
+    m.innerHTML=d.issues.length===0
+      ? '<span style="color:var(--success)">✓ No issues found across '+d.entries_checked+' entries</span>'
+      : '<span style="color:var(--warn)">⚠ '+d.issues.length+' issue(s) found</span>';
+    loadBizLedger();
+  }catch(e){m.textContent='Error: '+e.message;}
+}
+
+async function loadBizCompliance(){
+  if(!_activeBizEntity)return;
+  const el=document.getElementById('bizComplianceList');
+  el.innerHTML='<p class="muted">Loading…</p>';
+  try{
+    const d=await jget('/api/business/entities/'+_activeBizEntity+'/compliance');
+    const list=d.suggestions||[];
+    if(!list.length){el.innerHTML='<p class="muted">No compliance suggestions yet. Click "Run Compliance Pass" above.</p>';return;}
+    el.innerHTML=list.map(s=>`
+      <div class="card">
+        <div style="display:flex;align-items:center;gap:8px">
+          <b style="flex:1">${s.suggestion_type.toUpperCase()}</b>
+          ${s.routed_sensitive?'<span class="chip" title="Routed through the local-only model">🔒 local</span>':''}
+        </div>
+        <p style="margin:6px 0;font-size:13px">${s.reasoning}</p>
+        <p class="faint" style="font-size:12px;margin:0">Citation: ${s.citation}</p>
+        <p class="faint" style="font-size:12px;margin:4px 0 0;font-style:italic">${s.ca_disclaimer}</p>
+      </div>`).join('');
+  }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+async function runBizCompliance(){
+  if(!_activeBizEntity)return;
+  const m=document.getElementById('bizComplianceMsg');
+  m.textContent='running…';
+  try{
+    const r=await api('/api/business/entities/'+_activeBizEntity+'/compliance/run',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    if(!r.ok){ m.textContent='Error: '+(d.detail||'compliance run failed'); return; }
+    m.textContent=d.new_count+' new suggestion(s) generated ✓';
+    loadBizCompliance();
   }catch(e){m.textContent='Error: '+e.message;}
 }
 

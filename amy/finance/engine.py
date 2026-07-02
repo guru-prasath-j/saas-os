@@ -14,6 +14,8 @@ from pathlib import Path
 
 VALID_ACCOUNT_TYPES = {"savings", "checking", "credit_card", "loan", "investment", "custodial"}
 VALID_SYNC_METHODS  = {"manual", "csv", "pdf", "gmail", "aa"}
+VALID_CONSTITUTIONS = {"proprietorship", "partnership", "llp", "company"}
+VALID_TRACKING_CLOSENESS = {"close", "loose"}
 
 
 def _uuid() -> str:
@@ -120,10 +122,65 @@ class FinanceEngine:
                 active        INTEGER NOT NULL DEFAULT 1,
                 created_at    TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS business_entities (
+                id                       TEXT PRIMARY KEY,
+                name                     TEXT NOT NULL,
+                pan                      TEXT,
+                gstin                    TEXT,
+                constitution             TEXT NOT NULL DEFAULT 'proprietorship',
+                registration_state       TEXT,
+                financial_year           TEXT,
+                tax_regime               TEXT,
+                holds_depreciable_assets INTEGER NOT NULL DEFAULT 0,
+                tracking_closeness       TEXT NOT NULL DEFAULT 'loose',
+                created_at               TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS ledger_entries (
+                id                 TEXT PRIMARY KEY,
+                business_entity_id TEXT NOT NULL,
+                date               TEXT NOT NULL,
+                amount             REAL NOT NULL,
+                description        TEXT DEFAULT '',
+                category           TEXT DEFAULT 'Uncategorized',
+                source_event_id    TEXT NOT NULL,
+                source_document    TEXT,
+                confidence         REAL DEFAULT 1.0,
+                posted_by          TEXT NOT NULL DEFAULT 'accountant',
+                audit_status       TEXT DEFAULT 'unaudited',
+                created_at         TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS compliance_suggestions (
+                id                  TEXT PRIMARY KEY,
+                business_entity_id  TEXT NOT NULL,
+                ledger_entry_id     TEXT NOT NULL,
+                source_event_id     TEXT NOT NULL,
+                suggestion_type     TEXT NOT NULL,
+                reasoning           TEXT NOT NULL,
+                rate_used           TEXT,
+                citation            TEXT NOT NULL,
+                ca_disclaimer       TEXT NOT NULL DEFAULT 'Confirm with your CA before acting on this.',
+                routed_sensitive    INTEGER NOT NULL DEFAULT 0,
+                created_at          TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS rate_table (
+                id             TEXT PRIMARY KEY,
+                rate_type      TEXT NOT NULL,
+                key            TEXT NOT NULL,
+                value          TEXT NOT NULL,
+                effective_from TEXT NOT NULL,
+                effective_to   TEXT,
+                source_note    TEXT DEFAULT '',
+                updated_at     TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_txn_date  ON transactions(date);
             CREATE INDEX IF NOT EXISTS idx_txn_cat   ON transactions(category);
             CREATE INDEX IF NOT EXISTS idx_sub_renew ON subscriptions(renewal_date);
             CREATE INDEX IF NOT EXISTS idx_ben_account ON beneficiaries(account_id);
+            CREATE INDEX IF NOT EXISTS idx_ledger_entity ON ledger_entries(business_entity_id);
+            CREATE INDEX IF NOT EXISTS idx_ledger_source_event ON ledger_entries(source_event_id);
+            CREATE INDEX IF NOT EXISTS idx_compliance_entity ON compliance_suggestions(business_entity_id);
+            CREATE INDEX IF NOT EXISTS idx_compliance_ledger_entry ON compliance_suggestions(ledger_entry_id);
+            CREATE INDEX IF NOT EXISTS idx_rate_type_key ON rate_table(rate_type, key);
         """)
         self.conn.commit()
 
@@ -150,6 +207,10 @@ class FinanceEngine:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_txn_beneficiary ON transactions(beneficiary_id)")
         self.conn.commit()
+        # Business entities: seed the rate table with a starter set of GST
+        # slabs and depreciation blocks (idempotent — only inserts missing keys).
+        from .business.rates import seed_defaults as _seed_rate_defaults
+        _seed_rate_defaults(self)
 
     # =========================================================================
     # Transactions
@@ -528,6 +589,210 @@ class FinanceEngine:
              "column_map": json.loads(r["column_map"])}
             for r in self.conn.execute("SELECT * FROM bank_column_maps")
         ]
+
+    # =========================================================================
+    # Business entities
+    # =========================================================================
+
+    def add_business_entity(self, name: str, pan: str | None = None,
+                            gstin: str | None = None,
+                            constitution: str = "proprietorship",
+                            registration_state: str | None = None,
+                            financial_year: str | None = None,
+                            tax_regime: str | None = None,
+                            holds_depreciable_assets: bool = False,
+                            tracking_closeness: str = "loose") -> str:
+        if constitution not in VALID_CONSTITUTIONS:
+            raise ValueError(f"constitution must be one of {VALID_CONSTITUTIONS}")
+        if tracking_closeness not in VALID_TRACKING_CLOSENESS:
+            raise ValueError(f"tracking_closeness must be one of {VALID_TRACKING_CLOSENESS}")
+        eid = _uuid()
+        self.conn.execute(
+            "INSERT INTO business_entities(id,name,pan,gstin,constitution,"
+            "registration_state,financial_year,tax_regime,holds_depreciable_assets,"
+            "tracking_closeness,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (eid, name, pan, gstin, constitution, registration_state,
+             financial_year, tax_regime, int(holds_depreciable_assets),
+             tracking_closeness, _now_iso()))
+        self.conn.commit()
+        return eid
+
+    def get_business_entity(self, entity_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM business_entities WHERE id=?", (entity_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_business_entities(self) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM business_entities ORDER BY created_at").fetchall()]
+
+    def update_business_entity(self, entity_id: str, **kwargs) -> bool:
+        allowed = {"name", "pan", "gstin", "constitution", "registration_state",
+                   "financial_year", "tax_regime", "holds_depreciable_assets",
+                   "tracking_closeness"}
+        fields = {}
+        for k, v in kwargs.items():
+            if k not in allowed:
+                continue
+            if k == "constitution" and v not in VALID_CONSTITUTIONS:
+                raise ValueError(f"constitution must be one of {VALID_CONSTITUTIONS}")
+            if k == "tracking_closeness" and v not in VALID_TRACKING_CLOSENESS:
+                raise ValueError(f"tracking_closeness must be one of {VALID_TRACKING_CLOSENESS}")
+            if k == "holds_depreciable_assets":
+                v = int(v)
+            fields[k] = v
+        if not fields:
+            return False
+        sets = ", ".join(f"{k}=?" for k in fields)
+        c = self.conn.execute(
+            f"UPDATE business_entities SET {sets} WHERE id=?",
+            list(fields.values()) + [entity_id])
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def delete_business_entity(self, entity_id: str) -> bool:
+        self.conn.execute(
+            "DELETE FROM compliance_suggestions WHERE business_entity_id=?", (entity_id,))
+        self.conn.execute(
+            "DELETE FROM ledger_entries WHERE business_entity_id=?", (entity_id,))
+        c = self.conn.execute(
+            "DELETE FROM business_entities WHERE id=?", (entity_id,))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    # =========================================================================
+    # Ledger entries (business entity Accountant/Auditor)
+    # =========================================================================
+
+    def add_ledger_entry(self, business_entity_id: str, date: str, amount: float,
+                         source_event_id: str, description: str = "",
+                         category: str = "Uncategorized",
+                         source_document: str | None = None,
+                         confidence: float = 1.0,
+                         posted_by: str = "accountant") -> str:
+        lid = _uuid()
+        self.conn.execute(
+            "INSERT INTO ledger_entries(id,business_entity_id,date,amount,"
+            "description,category,source_event_id,source_document,confidence,"
+            "posted_by,audit_status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            (lid, business_entity_id, date, amount, description, category,
+             source_event_id, source_document, confidence, posted_by,
+             "unaudited", _now_iso()))
+        self.conn.commit()
+        return lid
+
+    def list_ledger_entries(self, business_entity_id: str) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM ledger_entries WHERE business_entity_id=?"
+            " ORDER BY date DESC", (business_entity_id,)).fetchall()]
+
+    def get_ledger_entry(self, entry_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM ledger_entries WHERE id=?", (entry_id,)).fetchone()
+        return dict(row) if row else None
+
+    def update_ledger_entry(self, entry_id: str, **kwargs) -> bool:
+        allowed = {"date", "amount", "description", "category", "audit_status", "posted_by"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return False
+        sets = ", ".join(f"{k}=?" for k in fields)
+        c = self.conn.execute(
+            f"UPDATE ledger_entries SET {sets} WHERE id=?",
+            list(fields.values()) + [entry_id])
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def delete_ledger_entry(self, entry_id: str) -> bool:
+        c = self.conn.execute("DELETE FROM ledger_entries WHERE id=?", (entry_id,))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def set_ledger_audit_status(self, entry_id: str, audit_status: str):
+        self.conn.execute(
+            "UPDATE ledger_entries SET audit_status=? WHERE id=?",
+            (audit_status, entry_id))
+        self.conn.commit()
+
+    # =========================================================================
+    # Compliance suggestions
+    # =========================================================================
+
+    def add_compliance_suggestion(self, business_entity_id: str, ledger_entry_id: str,
+                                  source_event_id: str, suggestion_type: str,
+                                  reasoning: str, citation: str,
+                                  rate_used: str | None = None,
+                                  ca_disclaimer: str = "Confirm with your CA before acting on this.",
+                                  routed_sensitive: bool = False) -> str:
+        sid = _uuid()
+        self.conn.execute(
+            "INSERT INTO compliance_suggestions(id,business_entity_id,ledger_entry_id,"
+            "source_event_id,suggestion_type,reasoning,rate_used,citation,"
+            "ca_disclaimer,routed_sensitive,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, business_entity_id, ledger_entry_id, source_event_id,
+             suggestion_type, reasoning, rate_used, citation, ca_disclaimer,
+             int(routed_sensitive), _now_iso()))
+        self.conn.commit()
+        return sid
+
+    def list_compliance_suggestions(self, business_entity_id: str) -> list[dict]:
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM compliance_suggestions WHERE business_entity_id=?"
+            " ORDER BY created_at DESC", (business_entity_id,)).fetchall()]
+
+    def ledger_entries_without_suggestions(self, business_entity_id: str) -> list[dict]:
+        """Ledger entries for this entity that have no compliance_suggestions row yet."""
+        return [dict(r) for r in self.conn.execute(
+            "SELECT l.* FROM ledger_entries l"
+            " WHERE l.business_entity_id=?"
+            " AND l.id NOT IN (SELECT ledger_entry_id FROM compliance_suggestions"
+            "                  WHERE business_entity_id=?)"
+            " ORDER BY l.date", (business_entity_id, business_entity_id)).fetchall()]
+
+    # =========================================================================
+    # Rate table
+    # =========================================================================
+
+    def add_rate(self, rate_type: str, key: str, value: str,
+                effective_from: str, effective_to: str | None = None,
+                source_note: str = "") -> str:
+        rid = _uuid()
+        self.conn.execute(
+            "INSERT INTO rate_table(id,rate_type,key,value,effective_from,"
+            "effective_to,source_note,updated_at) VALUES(?,?,?,?,?,?,?,?)",
+            (rid, rate_type, key, value, effective_from, effective_to,
+             source_note, _now_iso()))
+        self.conn.commit()
+        return rid
+
+    def rate_exists(self, rate_type: str, key: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM rate_table WHERE rate_type=? AND key=? LIMIT 1",
+            (rate_type, key)).fetchone()
+        return row is not None
+
+    def list_rates(self, rate_type: str | None = None, current_only: bool = True) -> list[dict]:
+        q = "SELECT * FROM rate_table WHERE 1=1"
+        params: list = []
+        if rate_type:
+            q += " AND rate_type=?"; params.append(rate_type)
+        if current_only:
+            q += " AND effective_to IS NULL"
+        q += " ORDER BY rate_type, key"
+        return [dict(r) for r in self.conn.execute(q, params).fetchall()]
+
+    def update_rate(self, rate_id: str, **kwargs) -> bool:
+        allowed = {"value", "effective_from", "effective_to", "source_note"}
+        fields = {k: v for k, v in kwargs.items() if k in allowed}
+        if not fields:
+            return False
+        fields["updated_at"] = _now_iso()
+        sets = ", ".join(f"{k}=?" for k in fields)
+        c = self.conn.execute(
+            f"UPDATE rate_table SET {sets} WHERE id=?",
+            list(fields.values()) + [rate_id])
+        self.conn.commit()
+        return c.rowcount > 0
 
     # =========================================================================
     # Analytics

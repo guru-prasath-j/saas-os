@@ -8,13 +8,35 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..db import User
-from .. import paths
+from .. import paths, security
 from ..deps import (
     current_user, Query,
     _engine_for, _user_key, _collab_db_path, _collab_light, _journal_user,
 )
 
 router = APIRouter()
+
+
+def _user_mcp_connectors(user: User) -> list[dict]:
+    """Decrypt this user's registered MCP connectors into plain dicts for
+    CollabMaster's live-context injection (amy/collab/orchestrator.py
+    _career_context()) — decrypted here, not in amy/collab/, so that package
+    doesn't need to import amy.saas.db/security."""
+    from ..db import McpConnector, SessionLocal
+    db = SessionLocal()
+    try:
+        rows = db.query(McpConnector).filter(McpConnector.user_id == user.id).all()
+        out = []
+        for r in rows:
+            try:
+                auth_value = security.decrypt_secret(r.auth_ref) if r.auth_ref else None
+            except Exception:
+                auth_value = None
+            out.append({"name": r.name, "server_url": r.server_url, "auth_type": r.auth_type,
+                       "auth_value": auth_value, "auth_extra": r.auth_extra})
+        return out
+    finally:
+        db.close()
 
 
 class Goal(BaseModel):
@@ -57,7 +79,8 @@ def collab_ask_stream(q: Query, user: User = Depends(current_user)):
                           llm=LLMRouter(openai_api_key=key, use_global_keys=False),
                           vault_path=vault,
                           finance_db_path=str(paths.index_dir(user.id) / "finance.db"),
-                          connector_dir=str(paths.index_dir(user.id) / "connectors"))
+                          connector_dir=str(paths.index_dir(user.id) / "connectors"),
+                          mcp_connectors=_user_mcp_connectors(user))
         try:
             res = cm.handle(q.text)
             yield _sse({"type": "done", "data": res})
@@ -84,7 +107,8 @@ def collab_ask(q: Query, user: User = Depends(current_user)):
                       llm=LLMRouter(openai_api_key=_user_key(user), use_global_keys=False),
                       vault_path=str(paths.vault_dir(user.id)),
                       finance_db_path=str(paths.index_dir(user.id) / "finance.db"),
-                      connector_dir=str(paths.index_dir(user.id) / "connectors"))
+                      connector_dir=str(paths.index_dir(user.id) / "connectors"),
+                      mcp_connectors=_user_mcp_connectors(user))
     try:
         result = cm.handle(q.text)
         _journal_user(user)

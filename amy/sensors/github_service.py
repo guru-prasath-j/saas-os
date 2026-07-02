@@ -19,10 +19,12 @@ API = "https://api.github.com"
 
 
 class GitHubService:
-    def __init__(self, token_env: str = "GITHUB_TOKEN", api_base: str = API):
-        # Read token from the environment ONLY. Never hardcode or persist it.
+    def __init__(self, token_env: str = "GITHUB_TOKEN", api_base: str = API, token: str | None = None):
+        # `token` takes priority (e.g. per-user token from the MCP connector
+        # registry, amy/sensors/mcp_sensor.py); otherwise fall back to the
+        # global env var, unchanged from the original single-tenant behavior.
         self.token_env = token_env
-        self.token = os.environ.get(token_env, "").strip()
+        self.token = (token or os.environ.get(token_env, "")).strip()
         self.api_base = api_base.rstrip("/")
 
     @property

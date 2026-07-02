@@ -9,6 +9,13 @@ google-auth>=2.28
 google-auth-oauthlib>=1.2
 google-api-python-client>=2.120
 
+# Generic MCP connectors (amy/connectors/mcp.py). `mcp` has no starlette upper
+# bound, so a bare `pip install mcp` pulls the latest starlette and breaks
+# fastapi's `starlette<0.38.0,>=0.37.2` pin below — starlette must stay pinned
+# to the version fastapi wants, not the version pip picks by default.
+mcp>=1.28
+starlette>=0.37.2,<0.38.0
+
 # Core (Phase 1-3). All optional deps degrade gracefully if missing.
 fastapi>=0.110
 uvicorn[standard]>=0.29

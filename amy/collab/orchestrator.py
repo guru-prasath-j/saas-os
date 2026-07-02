@@ -18,12 +18,18 @@ from .learning import LearningAgent
 
 class CollabMaster:
     def __init__(self, notes, db_path, llm=None, vault_path=None,
-                 finance_db_path=None, connector_dir=None):
+                 finance_db_path=None, connector_dir=None, mcp_connectors=None):
         self.db = CollabDB(db_path)
         self.llm = llm
         self.vault_path = vault_path   # used for live filesystem memory recall
         self._finance_db_path = finance_db_path
         self._connector_dir = connector_dir
+        # [{name, server_url, auth_type, auth_value, auth_extra}, ...] for this
+        # user's registered MCP sources (amy/saas/db.py McpConnector, already
+        # decrypted by the caller) — used by _career_context() for live
+        # Plane/job-search data. Pre-fetched by the router rather than looked
+        # up here, so this package doesn't need to import amy.saas.db.
+        self._mcp_connectors = mcp_connectors or []
         self.pkos_master, self.registry, self.domain_map = build_pkos(notes, llm=llm)
         # Inject CalendarAgent (data-driven, not vault-note-driven)
         try:
@@ -65,8 +71,9 @@ class CollabMaster:
         except Exception:
             recalled = ""
         finance_ctx = self._finance_context(query)
+        career_ctx = self._career_context(query)
         extra_context = "\n\n".join(
-            p for p in (conv, recalled, finance_ctx) if p)
+            p for p in (conv, recalled, finance_ctx, career_ctx) if p)
         res = self.pkos_master.handle(query, extra_context=extra_context)   # multi-agent + memory context
         disabled = self.marketplace.disabled_set()
         # marketplace: drop disabled domain agents
@@ -121,6 +128,50 @@ class CollabMaster:
                 return fe.context_block()
             finally:
                 fe.close()
+        except Exception:
+            return ""
+
+    def _career_context(self, query: str) -> str:
+        """Inject live Plane project data for career-domain queries — same
+        shape as _finance_context(). Best-effort only: any failure (no
+        connector registered, bad credentials, network issue) silently
+        yields no context rather than breaking the chat response, same
+        defensive pattern as everywhere else context gets merged in above.
+
+        Only Plane is wired to a real tool call — a job-search MCP connector
+        (e.g. jobspy-mcp-server) would match the same keyword gate, but no
+        specific tool name is called for it yet since no real server's tool
+        list has been verified (see mcp connectors session notes: don't call
+        unverified tool names blind)."""
+        if not self._mcp_connectors:
+            return ""
+        from ..pkos.domains import DEFAULT_KEYWORDS
+        kw = DEFAULT_KEYWORDS.get("career", [])
+        q = query.lower()
+        if not ("plane" in q or any(w in q for w in kw)):
+            return ""
+        plane = next((c for c in self._mcp_connectors if "plane" in c.get("name", "").lower()), None)
+        if not plane:
+            return ""
+        try:
+            from ..connectors.mcp import MCPConnector, call_tool_sync
+            connector = MCPConnector(
+                plane["server_url"], auth_type=plane.get("auth_type", "none"),
+                auth_value=plane.get("auth_value"), auth_extra=plane.get("auth_extra"),
+            )
+            # list_projects is the one Plane tool verified to take no required
+            # parameters — safe to call blind. There's no per-user "default
+            # project" available server-side to scope a more specific query
+            # (that's stored in the browser's localStorage, not the backend).
+            # Shorter timeout than call_tool_sync's own default (15s) — this is
+            # optional context enrichment for a chat reply, not worth letting
+            # an unresponsive Plane server add much to every career-domain
+            # question's response time.
+            result = call_tool_sync(connector, "list_projects", {}, timeout=8.0)
+            if not result or result.get("is_error"):
+                return ""
+            text = (result.get("text") or "")[:2000]
+            return f"Live Plane data ({plane['name']}):\n{text}" if text else ""
         except Exception:
             return ""
 
