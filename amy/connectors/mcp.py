@@ -70,13 +70,16 @@ class MCPConnector:
         if self.auth_type not in ("api_key", "oauth") or not self.auth_value:
             return {}
         if self.auth_extra:
-            # Plane's MCP server (mcp.plane.so/http/api-key/mcp) doesn't accept
-            # a Bearer token — it needs the token and workspace slug as two
-            # separate headers. auth_extra is currently only used for this
-            # shape; if a future server needs a *different* extra-header
-            # scheme, this needs to branch on something more specific than
-            # "auth_extra is set" (e.g. a per-connector header-scheme field).
-            return {"x-api-key": self.auth_value, "x-workspace-slug": self.auth_extra}
+            # Plane's MCP server (mcp.plane.so/http/api-key/mcp) needs the
+            # token as a normal Bearer header *plus* the workspace slug as a
+            # separate header — confirmed directly against the live server;
+            # x-api-key/x-workspace-slug (what this used to send) gets a
+            # generic 401 "invalid_token" regardless of credential validity.
+            # auth_extra is currently only used for this shape; if a future
+            # server needs a *different* extra-header scheme, this needs to
+            # branch on something more specific than "auth_extra is set"
+            # (e.g. a per-connector header-scheme field).
+            return {"Authorization": f"Bearer {self.auth_value}", "X-Workspace-slug": self.auth_extra}
         return {"Authorization": f"Bearer {self.auth_value}"}
 
     @asynccontextmanager

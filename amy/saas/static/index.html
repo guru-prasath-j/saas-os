@@ -1976,6 +1976,69 @@ function _mcpOpenTool(cid,toolName,defaults){
   });
   if(allRequiredFilled) _mcpRunTool(cid,toolName,propNames);
 }
+function _mcpEsc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function _mcpCell(v){
+  if(v===null||v===undefined||v==='') return '<span class="muted">—</span>';
+  if(typeof v==='string' && /^https?:\/\//i.test(v)) return '<a href="'+_mcpEsc(v)+'" target="_blank" rel="noopener">open ↗</a>';
+  let s=(typeof v==='object')?JSON.stringify(v):String(v);
+  return _mcpEsc(s.length>150?s.slice(0,150)+'…':s);
+}
+// A column is "long free text" (description, bio, ...) if its values average
+// over this length — such fields ruin a table (huge cells, sideways scroll)
+// so they're dropped from the compact view; the Raw JSON toggle still has them.
+const _MCP_LONGTEXT_AVG=200;
+const _MCP_MAX_COLS=8;
+// Most MCP tools (Plane, GitHub, ...) return their payload as a single-line JSON
+// blob in d.text. Renders it as a table (array/paginated-envelope results) or a
+// key/value list (single object) instead of a raw JSON wall — with the full JSON
+// always available via the "Raw JSON" toggle. Returns null when the parsed value
+// doesn't fit either shape (primitive, empty array, ...) so the caller falls back
+// to pretty-printed JSON text.
+function _mcpRenderResult(rawText){
+  let parsed;
+  try{ parsed=JSON.parse(rawText); }catch(e){ return null; }
+  const rawBlock='<details style="margin-top:10px"><summary class="muted" style="cursor:pointer;font-size:12px">Raw JSON</summary>'
+    +'<pre style="white-space:pre-wrap;font-size:11px;margin-top:6px">'+_mcpEsc(JSON.stringify(parsed,null,2))+'</pre></details>';
+
+  let rows=null, meta='';
+  if(Array.isArray(parsed)) rows=parsed;
+  else if(parsed && typeof parsed==='object' && Array.isArray(parsed.results)){
+    rows=parsed.results;
+    if(typeof parsed.total_count==='number' && parsed.total_count!==rows.length) meta=' ('+parsed.total_count+' total)';
+  }
+
+  if(rows && rows.length && rows.every(r=>r && typeof r==='object' && !Array.isArray(r))){
+    const cols=[];
+    rows.forEach(r=>Object.keys(r).forEach(k=>{ if(!cols.includes(k)) cols.push(k); }));
+    // drop raw-HTML dumps and long free-text fields (description, bio, ...) —
+    // they're still in the Raw JSON toggle, just not fit for a table cell —
+    // then cap the column count so wide payloads (30+ fields) stay readable.
+    let keepCols=cols.filter(k=>{
+      if(/_html$/i.test(k)) return false;
+      const vals=rows.map(r=>r[k]).filter(v=>v!==null && v!==undefined && v!=='');
+      if(!vals.length) return false;
+      const avgLen=vals.reduce((a,v)=>a+(typeof v==='object'?JSON.stringify(v):String(v)).length,0)/vals.length;
+      return avgLen<=_MCP_LONGTEXT_AVG;
+    });
+    if(keepCols.length>_MCP_MAX_COLS) keepCols=keepCols.slice(0,_MCP_MAX_COLS);
+    let html='<div style="white-space:normal">';
+    html+='<div class="meta" style="margin-bottom:6px">'+rows.length+' result'+(rows.length===1?'':'s')+meta+'</div>';
+    html+='<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:12px">';
+    html+='<tr>'+keepCols.map(c=>'<th style="text-align:left;padding:4px 8px;border-bottom:1px solid var(--border);white-space:nowrap">'+_mcpEsc(c)+'</th>').join('')+'</tr>';
+    rows.forEach(r=>{ html+='<tr>'+keepCols.map(c=>'<td style="padding:4px 8px;border-bottom:1px solid var(--border)">'+_mcpCell(r[c])+'</td>').join('')+'</tr>'; });
+    html+='</table></div></div>';
+    return html+rawBlock;
+  }
+  if(parsed && typeof parsed==='object' && !Array.isArray(parsed)){
+    const keys=Object.keys(parsed).filter(k=>parsed[k]!==null && parsed[k]!==undefined && parsed[k]!=='' && !/_html$/i.test(k));
+    if(!keys.length) return null;
+    let html='<div style="white-space:normal"><table style="border-collapse:collapse;font-size:12px">';
+    keys.forEach(k=>{ html+='<tr><td class="muted" style="padding:3px 10px 3px 0;vertical-align:top;white-space:nowrap">'+_mcpEsc(k)+'</td><td style="padding:3px 0">'+_mcpCell(parsed[k])+'</td></tr>'; });
+    html+='</table></div>';
+    return html+rawBlock;
+  }
+  return null;
+}
 async function _mcpRunTool(cid,toolName,propNames){
   const msg=document.getElementById('mcpRunMsg-'+cid);
   const resultEl=document.getElementById('mcpRunResult-'+cid);
@@ -2004,7 +2067,17 @@ async function _mcpRunTool(cid,toolName,propNames){
     // whole object via JSON.stringify() re-escapes them into visible "\n" sequences,
     // which is why file/README content looked unreadable. Show the plain text when
     // there is any; fall back to the full result only when there's nothing readable.
-    resultEl.textContent=(d.text&&d.text.trim())?d.text:JSON.stringify(d,null,2);
+    let out=(d.text&&d.text.trim())?d.text:JSON.stringify(d,null,2);
+    // Many tools (Plane, GitHub search, ...) return that text as a single-line JSON
+    // blob rather than prose. Render it as a table/key-value view when it's JSON
+    // shaped that way (full JSON still available via the "Raw JSON" toggle);
+    // otherwise pretty-print JSON or leave real prose as-is.
+    const formatted=_mcpRenderResult(out);
+    if(formatted){ resultEl.innerHTML=formatted; }
+    else{
+      try{ out=JSON.stringify(JSON.parse(out),null,2); }catch(e){}
+      resultEl.textContent=out;
+    }
   }catch(e){ msg.textContent=e.message; }
 }
 
