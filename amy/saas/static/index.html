@@ -100,6 +100,7 @@
   .me .meta{color:rgba(6,18,26,.7)}
   .chip{display:inline-block;background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:3px 10px;font-size:11px;margin:2px}
   .chip.src{color:#9fd6ff}
+  .nav-badge{margin-left:auto;background:rgba(255,160,0,.22);color:var(--warn);border:1px solid rgba(255,160,0,.4);border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700}
   .amy h1,.amy h2,.amy h3{font-size:15px;margin:.4em 0;font-family:var(--display)}
   .amy code{background:rgba(0,0,0,.35);padding:1px 6px;border-radius:5px;font-size:13px}
   .amy ul{margin:.3em 0 .3em 1.1em}
@@ -172,7 +173,13 @@
       <div class="nav-sector">Finance</div>
       <button data-tab="finance">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
-        <span class="label">Finance CFO</span></button>
+        <span class="label">CFO Briefing</span></button>
+      <button data-tab="custodial">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 4 5v6c0 5 3.5 9 8 11 4.5-2 8-6 8-11V5l-8-3z" stroke-linejoin="round"/></svg>
+        <span class="label">Custodial Accounts</span><span id="navCustodialBadge" class="nav-badge" style="display:none">0</span></button>
+      <button data-tab="budget">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="14" rx="2"/><path d="M2 10h20" stroke-linecap="round"/><circle cx="17" cy="14" r="1.4" fill="currentColor"/></svg>
+        <span class="label">Budgets</span></button>
 
       <!-- ── GROWTH ── -->
       <div class="nav-sector">Growth</div>
@@ -502,11 +509,9 @@
           <div style="display:flex;gap:6px;margin-top:14px;border-bottom:1px solid var(--border);padding-bottom:10px;flex-wrap:wrap">
             <button class="ghost sm active" id="finTab-overview" onclick="switchFinView('overview',this)">Overview</button>
             <button class="ghost sm" id="finTab-transactions" onclick="switchFinView('transactions',this)">Transactions</button>
-            <button class="ghost sm" id="finTab-budget" onclick="switchFinView('budget',this)">Budget</button>
             <button class="ghost sm" id="finTab-subscriptions" onclick="switchFinView('subscriptions',this)">Subscriptions</button>
             <button class="ghost sm" id="finTab-investments" onclick="switchFinView('investments',this)">Investments</button>
             <button class="ghost sm" id="finTab-income" onclick="switchFinView('income',this)">Income</button>
-            <button class="ghost sm" id="finTab-custodial" onclick="switchFinView('custodial',this)">Custodial</button>
             <button class="ghost sm" id="finTab-import" onclick="switchFinView('import',this)">Import</button>
           </div>
         </div>
@@ -578,30 +583,6 @@
         </div>
 
         <!-- BUDGET -->
-        <div id="finPane-budget" class="hidden">
-          <div class="card" id="budgetSuggestCard">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-              <b style="flex:1">Suggested budgets</b>
-              <button class="ghost sm" onclick="loadBudgetSuggestions()">Rescan</button>
-            </div>
-            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Based on your income and this month's spend, localized to your profile location.</p>
-            <div id="budgetSuggestList" class="muted">Loading…</div>
-          </div>
-          <div class="card">
-            <h3 style="margin-top:0">Set budget</h3>
-            <div class="row" style="flex-wrap:wrap;gap:8px">
-              <input id="budgetCat" placeholder="Category (e.g. Food)" style="flex:1;min-width:140px"/>
-              <input id="budgetLimit" placeholder="Monthly limit (₹)" type="number" min="0" style="flex:0 0 170px"/>
-              <button style="flex:0 0 68px" onclick="addBudget()">Set</button>
-            </div>
-            <span class="meta" id="budgetMsg"></span>
-          </div>
-          <div class="card">
-            <h3 style="margin-top:0">Budget status</h3>
-            <div id="budgetList" class="muted">Loading…</div>
-          </div>
-        </div>
-
         <!-- SUBSCRIPTIONS -->
         <div id="finPane-subscriptions" class="hidden">
           <div class="card" id="subSuggestCard">
@@ -709,53 +690,6 @@
           </div>
         </div>
 
-        <!-- CUSTODIAL -->
-        <div id="finPane-custodial" class="hidden">
-          <div class="card">
-            <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-              <b style="flex:1">Custodial account</b>
-              <select id="custAccountPicker" onchange="loadCustodialAll()" style="flex:0 0 220px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
-                <option value="">No custodial account yet</option>
-              </select>
-            </div>
-            <p class="faint" style="font-size:12.5px;margin:0">Money held in-trust for someone else — never counted as your own income or spend. Amy detects refills, nudges at month-end, and logs each transfer you send yourself to your Google Sheet in one tap. It never sends money.</p>
-          </div>
-
-          <div id="custBody" class="hidden">
-            <div class="card">
-              <div style="display:flex;align-items:center;gap:10px">
-                <b style="flex:1">Balance</b>
-                <span id="custBalance" class="chip" style="color:var(--success)"></span>
-              </div>
-            </div>
-
-            <div class="card" id="custValidationCard">
-              <b>Validation</b>
-              <div id="custValidationList" class="muted" style="margin-top:8px">Loading…</div>
-            </div>
-
-            <div class="card">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
-                <b style="flex:1">This cycle</b>
-                <span id="custDueDate" class="faint" style="font-size:11px"></span>
-                <button class="ghost sm" onclick="loadCustodialPrefill()">Refresh</button>
-              </div>
-              <p class="faint" style="font-size:12.5px;margin:0 0 10px">Prefilled from last cycle — edit before confirming. Send the transfer yourself first, then confirm here.</p>
-              <div id="custPrefillList" class="muted">Loading…</div>
-            </div>
-
-            <div class="card">
-              <h3 style="margin-top:0">Add beneficiary</h3>
-              <div class="row" style="flex-wrap:wrap;gap:8px">
-                <input id="custBenName" placeholder="Name (e.g. Eswari (personal UPI))" style="flex:1;min-width:160px"/>
-                <input id="custBenSheetTab" placeholder="Sheet tab (defaults to name)" style="flex:1;min-width:140px"/>
-                <button style="flex:0 0 68px" onclick="addCustodialBeneficiary()">Add</button>
-              </div>
-              <span class="meta" id="custBenMsg"></span>
-            </div>
-          </div>
-        </div>
-
         <!-- IMPORT / ACCOUNTS -->
         <div id="finPane-import" class="hidden">
           <!-- Global Gmail sync card -->
@@ -831,6 +765,86 @@
               <button class="ghost sm" id="calSyncBtn" onclick="syncCalendar()">Sync calendar</button>
             </div>
             <span class="meta" id="calSyncMsg"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: BUDGETS -->
+      <div class="tab hidden" id="tab-budget">
+        <div class="card" style="padding:14px 18px">
+          <h3 style="margin:0">Budgets</h3>
+          <span class="faint" style="font-size:12px">monthly category limits</span>
+        </div>
+        <div class="card" id="budgetSuggestCard">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+            <b style="flex:1">Suggested budgets</b>
+            <button class="ghost sm" onclick="loadBudgetSuggestions()">Rescan</button>
+          </div>
+          <p class="faint" style="font-size:12.5px;margin:0 0 10px">Based on your income and this month's spend, localized to your profile location.</p>
+          <div id="budgetSuggestList" class="muted">Loading…</div>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Set budget</h3>
+          <div class="row" style="flex-wrap:wrap;gap:8px">
+            <input id="budgetCat" placeholder="Category (e.g. Food)" style="flex:1;min-width:140px"/>
+            <input id="budgetLimit" placeholder="Monthly limit (₹)" type="number" min="0" style="flex:0 0 170px"/>
+            <button style="flex:0 0 68px" onclick="addBudget()">Set</button>
+          </div>
+          <span class="meta" id="budgetMsg"></span>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0">Budget status</h3>
+          <div id="budgetList" class="muted">Loading…</div>
+        </div>
+      </div>
+
+      <!-- TAB: CUSTODIAL ACCOUNTS -->
+      <div class="tab hidden" id="tab-custodial">
+        <div class="card" style="padding:14px 18px">
+          <h3 style="margin:0">Custodial Accounts</h3>
+          <span class="faint" style="font-size:12px">money held in-trust — never counted as your own</span>
+        </div>
+        <div class="card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+            <b style="flex:1">Custodial account</b>
+            <select id="custAccountPicker" onchange="loadCustodialAll()" style="flex:0 0 220px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
+              <option value="">No custodial account yet</option>
+            </select>
+          </div>
+          <p class="faint" style="font-size:12.5px;margin:0">Money held in-trust for someone else — never counted as your own income or spend. Amy detects refills, nudges at month-end, and logs each transfer you send yourself to your Google Sheet in one tap. It never sends money.</p>
+        </div>
+
+        <div id="custBody" class="hidden">
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px">
+              <b style="flex:1">Balance</b>
+              <span id="custBalance" class="chip" style="color:var(--success)"></span>
+            </div>
+          </div>
+
+          <div class="card" id="custValidationCard">
+            <b>Validation</b>
+            <div id="custValidationList" class="muted" style="margin-top:8px">Loading…</div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">This cycle</b>
+              <span id="custDueDate" class="faint" style="font-size:11px"></span>
+              <button class="ghost sm" onclick="loadCustodialPrefill()">Refresh</button>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Prefilled from last cycle — edit before confirming. Send the transfer yourself first, then confirm here.</p>
+            <div id="custPrefillList" class="muted">Loading…</div>
+          </div>
+
+          <div class="card">
+            <h3 style="margin-top:0">Add beneficiary</h3>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input id="custBenName" placeholder="Name (e.g. Eswari (personal UPI))" style="flex:1;min-width:160px"/>
+              <input id="custBenSheetTab" placeholder="Sheet tab (defaults to name)" style="flex:1;min-width:140px"/>
+              <button style="flex:0 0 68px" onclick="addCustodialBeneficiary()">Add</button>
+            </div>
+            <span class="meta" id="custBenMsg"></span>
           </div>
         </div>
       </div>
@@ -971,6 +985,8 @@ document.getElementById('nav').addEventListener('click', e=>{
   document.getElementById('tab-'+tab).classList.remove('hidden');
   if(tab==='goals') loadGoals();
   if(tab==='finance') loadFinance();
+  if(tab==='custodial') loadCustodialAccountPicker();
+  if(tab==='budget'){ loadFinBudgets(); loadBudgetSuggestions(); }
   if(tab==='reflect') loadReflect();
   if(tab==='learn') loadLearn();
   if(tab==='agents') loadAgents();
@@ -1013,6 +1029,7 @@ async function onLogin(){
     document.getElementById('obVault').classList.toggle('hidden', !needsVault);
   } else { document.getElementById('tab-chat').classList.remove('hidden'); }
   maybeAutoStartGmailSync();
+  loadCustodialAccountPicker();
 }
 async function obSaveKey(){ try{ await jpost('/api/settings/openai-key',{key:document.getElementById('obKeyInput').value.trim()}); document.getElementById('obKeyMsg').textContent='saved ✓'; }catch(e){ document.getElementById('obKeyMsg').textContent=e.message; } }
 async function obImport(){ const f=document.getElementById('obZip').files[0]; if(!f)return; const fd=new FormData(); fd.append('file',f); const r=await api('/api/vault/import',{method:'POST',body:fd}); const d=await r.json(); document.getElementById('obVaultMsg').textContent=r.ok?('importing… job '+d.job_id):(d.detail||'error'); }
@@ -1764,18 +1781,16 @@ function loadFinance(){
 
 function switchFinView(view, btn){
   _finView=view;
-  ['overview','transactions','budget','subscriptions','investments','income','custodial','import'].forEach(v=>{
+  ['overview','transactions','subscriptions','investments','income','import'].forEach(v=>{
     document.getElementById('finPane-'+v).classList.toggle('hidden', v!==view);
     const tb=document.getElementById('finTab-'+v);
     if(tb) tb.classList.toggle('active', v===view);
   });
   if(view==='overview') loadFinOverview();
   if(view==='transactions') loadFinTransactions();
-  if(view==='budget'){ loadFinBudgets(); loadBudgetSuggestions(); }
   if(view==='subscriptions'){ loadFinSubs(); loadSubSuggestions(); }
   if(view==='investments') loadFinInvestments();
   if(view==='income'){ loadFinIncome(); loadIncomeTxns(); }
-  if(view==='custodial') loadCustodialAccountPicker();
   if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
 }
 
@@ -2057,6 +2072,11 @@ async function loadCustodialAccountPicker(){
     sel.innerHTML = custAccs.length
       ? custAccs.map(a=>`<option value="${a.id}">${a.nickname}</option>`).join('')
       : '<option value="">No custodial account yet — add one in Import tab</option>';
+    const badge=document.getElementById('navCustodialBadge');
+    if(badge){
+      if(custAccs.length){ badge.textContent=custAccs.length; badge.style.display='inline-block'; }
+      else { badge.style.display='none'; }
+    }
   }catch(e){}
   loadCustodialAll();
 }
