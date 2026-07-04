@@ -58,7 +58,13 @@ class OllamaLLM:
     name = "ollama"
     def __init__(self):
         import ollama
-        self._c = ollama.Client(host=config.OLLAMA_HOST)
+        # No timeout here previously — a wedged local daemon/runner (e.g.
+        # after heavy concurrent load) hung the calling HTTP request
+        # forever with no error, since nothing ever raised. 120s is
+        # generous for CPU-only local inference on a long prompt but still
+        # bounded; callers already wrap generate() in try/except and
+        # degrade gracefully, same as the NvidiaLLM timeout below.
+        self._c = ollama.Client(host=config.OLLAMA_HOST, timeout=120.0)
         self._c.list()  # raises if daemon down
         self._model = config.OLLAMA_MODEL
 

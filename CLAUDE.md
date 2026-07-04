@@ -139,6 +139,32 @@ POST              /api/finance/custodial/{account_id}/disburse
 POST              /api/finance/custodial/{account_id}/disburse/{transaction_id}/retry-sheet
 ```
 
+## Business Entities
+
+Register any side business via a form — Ledger (Accountant/Auditor) +
+Compliance suggestions, zero new code per business. Full design: `BUSINESS.md`.
+
+- Data lives in `finance.db`: `business_entities`, `ledger_entries`,
+  `compliance_suggestions`, `rate_table` (`amy/finance/engine.py`).
+- Business logic: `amy/finance/business/` (entities, accountant, auditor,
+  compliance, sensitivity, rates).
+- Routes: `amy/saas/routers/business.py`, prefix `/api/business/...`.
+- GSTIN/PAN routing: `amy/finance/business/sensitivity.py` extends the same
+  `LLMRouter.pick(sensitive=True)` local-only rule used for SBI/Sathish Appa
+  — matched entries force Ollama-only, never a second routing mechanism.
+
+```
+POST/GET          /api/business/entities
+GET/PATCH/DELETE  /api/business/entities/{entity_id}
+POST/GET          /api/business/entities/{entity_id}/ledger
+PATCH/DELETE      /api/business/entities/{entity_id}/ledger/{entry_id}
+POST              /api/business/entities/{entity_id}/ledger/upload
+POST              /api/business/entities/{entity_id}/ledger/audit
+POST/GET          /api/business/entities/{entity_id}/compliance
+POST              /api/business/entities/{entity_id}/compliance/run
+GET/PATCH         /api/business/rates[/{rate_id}]
+```
+
 ## Event System
 
 ```python
@@ -153,6 +179,8 @@ def _emit_fin(user, event_type, payload): ...
 # Event types emitted:
 finance.transaction_added / csv_imported / pdf_imported / gmail_synced
 finance.budget_set / subscription_added / investment_added / income_added
+finance.ledger_entry_posted / ledger_audited / compliance_suggested
+business.entity_created
 vault.note_edited
 goal.created / goal.completed / capture.added / digest.generated
 ```
@@ -188,6 +216,8 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 7. `parse_csv_preview_only` uses magic byte check, not extension — no XLS re-convert needed.
 8. FastAPI route order: exact paths before parameterized (`/auto-categorize` before `/{tid}`).
 9. Custodial accounts excluded from income/spend — `account_type='custodial'` is the flag.
+10. `tracking_closeness` gates both Auditor execution and Accountant auto-post threshold on a business entity — check this before assuming the Auditor ran.
+11. Image/screenshot ledger uploads are not yet supported — convert to PDF/CSV first (see `BUSINESS.md`).
 
 ## Common Pattern
 

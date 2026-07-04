@@ -63,6 +63,31 @@ class ImportJob(Base):
     finished_at: Mapped[_dt.datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class McpConnector(Base):
+    """Layer-1 generic MCP source registration (see amy/connectors/mcp.py).
+
+    Registering a row here only makes the server's tools callable — it does
+    NOT write to the vault or event log. Only rows with promoted_to_sensor=True
+    are picked up by the Layer-2 polling loop (amy/sensors/mcp_sensor.py).
+    """
+    __tablename__ = "mcp_connectors"
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    server_url: Mapped[str] = mapped_column(String(500))
+    auth_type: Mapped[str] = mapped_column(String(20))  # api_key | oauth | none
+    # Fernet-encrypted (security.encrypt_secret) — never stored plaintext.
+    auth_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # official | platform_api | scraping_backed | unofficial_risky
+    risk_tier: Mapped[str] = mapped_column(String(24), default="unofficial_risky")
+    promoted_to_sensor: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=lambda: _dt.datetime.now(_dt.timezone.utc))
+    # Plaintext (not a secret — e.g. a Plane workspace slug, visible in the
+    # browser URL already). Some MCP servers need a second, non-secret auth
+    # parameter beyond the token itself; see amy/connectors/mcp.py _headers().
+    auth_extra: Mapped[str | None] = mapped_column(String(200), nullable=True)
+
+
 def _migrate_users_table() -> None:
     """Idempotent: add columns introduced after initial schema creation."""
     with engine.connect() as conn:
@@ -78,9 +103,21 @@ def _migrate_users_table() -> None:
             conn.commit()
 
 
+def _migrate_mcp_connectors_table() -> None:
+    """Idempotent: add columns introduced after initial schema creation."""
+    with engine.connect() as conn:
+        existing = {row[1] for row in
+                    conn.exec_driver_sql("PRAGMA table_info(mcp_connectors)").fetchall()}
+        if existing and "auth_extra" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE mcp_connectors ADD COLUMN auth_extra VARCHAR(200)")
+            conn.commit()
+
+
 def init_db() -> None:
     Base.metadata.create_all(engine)
     _migrate_users_table()
+    _migrate_mcp_connectors_table()
 
 
 def get_db():

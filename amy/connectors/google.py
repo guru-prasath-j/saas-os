@@ -88,10 +88,18 @@ class GoogleCalendarProvider(_GoogleBase):
         out = []
         for e in res.get("items", []):
             start = e.get("start", {})
+            # Meet join link, when the event has one — no separate Meet API/Workspace
+            # account needed, conferenceData rides along on the normal calendar.events
+            # scope/response already used here.
+            meet_url = ""
+            for ep in (e.get("conferenceData") or {}).get("entryPoints", []):
+                if ep.get("entryPointType") == "video":
+                    meet_url = ep.get("uri", "")
+                    break
             out.append(Item(kind="calendar", id=e.get("id", ""), title=e.get("summary", "(busy)"),
                             body=e.get("description", ""),
                             ts=start.get("dateTime") or start.get("date", ""),
-                            meta={"location": e.get("location", "")}))
+                            meta={"location": e.get("location", ""), "meet_url": meet_url}))
         return out
 
 

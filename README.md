@@ -21,6 +21,7 @@ LLM providers degrade gracefully: NVIDIA → OpenAI → Groq → local Ollama �
 | **Budget suggestions** | LLM-backed caps from income + actual spend + location |
 | **Subscription detect** | Finds recurring charges in transaction history |
 | **Custodial accounts** | Track SBI-style pass-through accounts without polluting your own finances |
+| **Business entities** | Register any side business via a form; per-entity Ledger (Accountant/Auditor) + Compliance suggestions — see `BUSINESS.md` |
 | **"Can I afford this?"** | Checks a purchase against cashflow, budget headroom, and goals |
 | **Vault** | Obsidian-style markdown note journal, auto-written from events |
 | **Knowledge graph** | Cross-source typed nodes + edges with timestamps |
