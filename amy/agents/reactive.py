@@ -163,6 +163,71 @@ def _subscription_agent(events, ctx):
         events.subscribe(etype, on_import)
 
 
+def _screening_agent(events, ctx):
+    """Values screening (R7A-1): after imports or manual adds, screen
+    not-yet-checked transactions against the user's enabled ValuesProfiles.
+    Flags carry reasoning and land in screening_flags (audit export);
+    remediation (a review task) is proposed through the approval queue."""
+    def on_new_transactions(ev):
+        try:
+            from ..values import (list_profiles, mark_screened, persist_flags,
+                                  screen_transactions, unscreened_transactions)
+            fe = ctx.open_finance()
+            try:
+                profiles = list_profiles(fe, enabled_only=True)
+                if not profiles:
+                    return
+                txns = unscreened_transactions(fe, ctx.collab.conn)
+                if not txns:
+                    return
+                flags = screen_transactions(fe, txns, profiles,
+                                            llm=None)   # rules first; llm rules opt-in
+            finally:
+                fe.close()
+            new = persist_flags(ctx.collab.conn, flags)
+            mark_screened(ctx.collab.conn, [t["id"] for t in txns])
+            if not new:
+                return
+            ns = ctx.notify_store()
+            for f in flags[:5]:
+                _emit_insight(events, ctx, "screening",
+                              f"Values flag: {f['profile_name']}", f["reasoning"],
+                              {"transaction_id": f["transaction_id"],
+                               "severity": f["severity"],
+                               "source_event_id": ev.get("id")})
+            ref = f"screening_{ev.get('id')}"
+            if not ns.exists_today("values_flag", ref):
+                ns.create(type="values_flag",
+                          title=f"{new} transaction(s) flagged by your values profiles",
+                          body="; ".join(f["reasoning"] for f in flags[:3]),
+                          priority="high" if any(f["severity"] == "high"
+                                                 for f in flags) else "normal",
+                          related_entity={"id": ref, "entity_type": "screening"})
+            # remediation via the queue: a concrete review task, never a
+            # silent data change
+            from .. import tools
+            from ..autonomous import GoalEngine
+            goals = GoalEngine(ctx.collab)
+            row = ctx.collab.conn.execute(
+                "SELECT id FROM goals WHERE domain='finance'"
+                " AND title='Values Review' AND status='active' LIMIT 1").fetchone()
+            goal_id = row["id"] if row else goals.create_goal(
+                "Values Review", domain="finance")
+            worst = max(flags, key=lambda f: f["severity"] == "high")
+            ctx._extras["agent_name"] = "screening_agent"
+            ctx._extras["agent_reasoning"] = worst["reasoning"]
+            ctx._extras["agent_dedup_key"] = f"values_task_{worst['transaction_id']}"
+            tools.invoke(ctx, "add_goal_task",
+                         {"goal_id": goal_id,
+                          "title": f"Review flagged transaction: {worst['reasoning'][:120]}"},
+                         actor="agent")
+        except Exception as exc:
+            _report_error(events, "screening", exc)
+
+    for etype in _IMPORT_EVENTS + ("finance.transaction_added",):
+        events.subscribe(etype, on_new_transactions)
+
+
 def _compliance_agent(events, ctx):
     def on_ledger_posted(ev):
         try:
@@ -220,4 +285,7 @@ def register_reactive_agents(events, ctx) -> list[str]:
     if config.agent_enabled("compliance"):
         _compliance_agent(events, ctx)
         registered.append("compliance")
+    if config.agent_enabled("screening"):
+        _screening_agent(events, ctx)
+        registered.append("screening")
     return registered

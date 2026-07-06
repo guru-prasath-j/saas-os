@@ -383,6 +383,13 @@
           <div id="agentPending"><p class="muted">Loading…</p></div>
         </div>
         <div class="card">
+          <h3>Values screening <span class="muted">— your money, your principles</span></h3>
+          <p class="muted">Enable a profile and every new transaction is screened against it. Flags carry the reasoning and appear in the audit export.</p>
+          <div id="valuesProfiles"><p class="muted">Loading…</p></div>
+          <div style="margin-top:10px"><b style="font-size:13px">Open flags</b>
+            <div id="valuesFlags"><p class="muted">None.</p></div></div>
+        </div>
+        <div class="card">
           <h3>Recent agent activity</h3>
           <div id="agentHistory"><p class="muted">Loading…</p></div>
         </div>
@@ -2192,7 +2199,40 @@ async function loadTimeline(period='week'){
 // ---- agent approval inbox ----
 const RISK_COLORS = {read:'var(--cyan)', write:'var(--warn)', destructive:'var(--danger)'};
 async function loadAgentTab(){
-  await Promise.all([loadAgentPending(), loadAgentHistory(), loadAgentGoals()]);
+  await Promise.all([loadAgentPending(), loadAgentHistory(), loadAgentGoals(), loadValuesPanel()]);
+}
+async function loadValuesPanel(){
+  try{
+    const [presets, profiles, flags] = await Promise.all([
+      jget('/api/values/presets'), jget('/api/values/profiles'), jget('/api/values/flags?status=open')]);
+    const byPreset={}; (profiles.profiles||[]).forEach(p=>{if(p.preset_id)byPreset[p.preset_id]=p;});
+    document.getElementById('valuesProfiles').innerHTML=(presets.presets||[]).map(p=>{
+      const prof=byPreset[p.id];
+      const on=prof&&prof.enabled;
+      return `<div class="toggle">
+        <div style="min-width:0;flex:1"><b>${p.name}</b>
+          <div class="muted" style="font-size:12px">${p.description}</div></div>
+        <button class="${on?'':'ghost '}sm" onclick="toggleValuesProfile('${p.id}','${prof?prof.id:''}',${on?'false':'true'})">${on?'Enabled ✓':'Enable'}</button>
+      </div>`;}).join('');
+    const fl=flags.flags||[];
+    document.getElementById('valuesFlags').innerHTML=fl.length?fl.map(f=>`
+      <div class="toggle"><div style="min-width:0;flex:1">
+        <span class="chip" style="color:${f.severity==='high'?'var(--danger)':'var(--warn)'}">${f.severity}</span>
+        <span class="muted" style="font-size:12px">${f.reasoning}</span></div>
+        <button class="ghost sm" onclick="dismissValuesFlag('${f.id}')">Dismiss</button>
+      </div>`).join(''):'<p class="muted">None.</p>';
+  }catch(e){document.getElementById('valuesProfiles').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function toggleValuesProfile(presetId, profileId, enable){
+  try{
+    if(profileId){ await api('/api/values/profiles/'+profileId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enable==='true'||enable===true})}); }
+    else { await jpost('/api/values/profiles',{preset_id:presetId}); }
+  }catch(e){}
+  loadValuesPanel();
+}
+async function dismissValuesFlag(fid){
+  try{ await api('/api/values/flags/'+fid+'/dismiss',{method:'POST'}); }catch(e){}
+  loadValuesPanel();
 }
 async function runAgentGoal(){
   const inp=document.getElementById('agentGoalInput');
