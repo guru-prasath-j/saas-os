@@ -133,10 +133,55 @@ def stats(user: User = Depends(current_user)):
     return _engine_for(user).stats()
 
 
+def _try_custodial_answer(query: str, user: User) -> dict | None:
+    """Custodial chat tool: questions about in-trust money (beneficiary names,
+    'custodial', 'disburse', …) answer from the finance ledger via a compact
+    fact block — local-only LLM (sensitive=True), template fallback. Returns
+    None to fall through to the normal vault agents. Never raises."""
+    try:
+        from ...finance import FinanceEngine
+        from ...finance.custodial_ai import chat_keywords_for, chat_context, _tokens
+        from ...llm import LLMRouter
+        fe = FinanceEngine(str(paths.index_dir(user.id) / "finance.db"))
+        try:
+            accounts = [a for a in fe.list_accounts()
+                        if a.get("account_type") == "custodial"]
+            if not accounts:
+                return None
+            kws = chat_keywords_for(fe, [a["id"] for a in accounts])
+            qtoks = _tokens(query)
+            hit = any(qt.startswith(kw) or (len(qt) > 3 and kw.startswith(qt))
+                      for qt in qtoks for kw in kws)
+            if not hit:
+                return None
+            context = "\n\n".join(chat_context(fe, a) for a in accounts)
+            llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+            answer, model = llm.generate(
+                "You are Amy's custodial-accounts agent. Answer the user's "
+                "question using ONLY the facts below about money held in "
+                "trust. Be brief and specific with numbers (₹). If the facts "
+                "don't cover it, say so plainly.",
+                query, context=context, sensitive=True)
+            if model == "template" or not (answer or "").strip():
+                answer = "Here's what the custodial ledger shows:\n\n" + context
+            src = ["finance.db · custodial ledger"]
+            return {"query": query, "domains": ["custodial"], "answer": answer,
+                    "sections": [{"domain": "custodial", "answer": answer,
+                                  "sources": src}],
+                    "sources": src}
+        finally:
+            fe.close()
+    except Exception:
+        return None
+
+
 @router.post("/api/ask")
 def pkos_ask(q: Query, user: User = Depends(current_user)):
     from ...llm import LLMRouter
     from ...pkos import build_pkos
+    cust = _try_custodial_answer(q.text, user)
+    if cust is not None:
+        return cust
     eng = _engine_for(user)
     llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=False)
     master, _registry, _domains = build_pkos(eng.notes, llm=llm)

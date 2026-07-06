@@ -137,7 +137,22 @@ GET               /api/finance/custodial/{account_id}/next-cycle-prefill
 GET               /api/finance/custodial/{account_id}/validate
 POST              /api/finance/custodial/{account_id}/disburse
 POST              /api/finance/custodial/{account_id}/disburse/{transaction_id}/retry-sheet
+POST              /api/finance/custodial/{account_id}/sheet            # link existing Sheet (URL/ID → meta.sheet_id)
+GET               /api/finance/custodial/{account_id}/sheet/analyze    # read-only preview of tabs/rows
+POST              /api/finance/custodial/{account_id}/sheet/import     # bootstrap beneficiaries + history (deduped)
+POST              /api/finance/custodial/{account_id}/screenshot/parse # OCR + parse UPI/NEFT screenshot → prefilled log
+GET               /api/finance/custodial/{account_id}/suggestions      # Gmail-synced debits fuzzy-matched to beneficiaries
+POST              /api/finance/custodial/{account_id}/suggestions/{tid}/confirm  # claim existing debit (no duplicate txn)
+POST              /api/finance/custodial/{account_id}/precheck         # soft anomaly warnings before confirm
 ```
+
+Custodial AI layer: `amy/finance/custodial_ai.py` — regex/stats first, LLM
+only as rescue and ALWAYS `sensitive=True` (local Ollama). Smart prefill
+(median of last 3 cycles + trend note) rides on `next-cycle-prefill`;
+cycle-close writes a vault note (`09_Memory/Custodial Cycle - …`) + deduped
+notification via `_maybe_close_cycle()`; `/api/ask` intercepts custodial
+questions (beneficiary-name tokens) in `vault.py:_try_custodial_answer` and
+answers from the ledger, never vault notes.
 
 ## Business Entities
 

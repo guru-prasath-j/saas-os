@@ -6,37 +6,52 @@
 <title>PersonalOS — Amy</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Chakra+Petch:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
+  /* ── PORSCHE MOTORSPORT THEME ─ carbon black · acid green · miami blue ── */
   :root{
     color-scheme:dark;
-    --bg:#070912; --bg2:#0a0e1c;
-    --surface:rgba(255,255,255,.045); --surface-2:rgba(255,255,255,.07);
-    --border:rgba(255,255,255,.09); --border-2:rgba(255,255,255,.16);
-    --text:#E8ECF6; --muted:#9AA6BF; --faint:#6b7690;
-    --cyan:#22D3EE; --violet:#8B5CF6; --pink:#e879f9;
-    --grad:linear-gradient(135deg,#22D3EE 0%,#8B5CF6 100%);
-    --success:#34D399; --danger:#fb7185; --warn:#FBBF24;
-    --r:14px; --r-lg:18px;
-    --sh:0 10px 30px rgba(0,0,0,.45);
+    --bg:#050607; --bg2:#0b0d0f;
+    --surface:rgba(255,255,255,.04); --surface-2:rgba(255,255,255,.065);
+    --border:rgba(255,255,255,.08); --border-2:rgba(255,255,255,.15);
+    --text:#EDF1EA; --muted:#98A29A; --faint:#636D66;
+    --neon:#BFFF0A; --neon2:#00E0FF; --gold:#E8D5A6;
+    --cyan:#00E0FF; --violet:#8B9BFF; --pink:#FF4D6D;
+    --grad:linear-gradient(135deg,#C6FF2E 0%,#37E787 55%,#00D2FF 100%);
+    --success:#4ADE80; --danger:#FF3B4E; --warn:#FFD500;
+    --r:11px; --r-lg:16px;
+    --sh:0 14px 34px rgba(0,0,0,.55);
+    --glow:0 0 18px rgba(191,255,10,.28);
     --font:'Inter',system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
-    --display:'Space Grotesk',var(--font);
+    --display:'Chakra Petch',var(--font);
+    --mono:'JetBrains Mono',ui-monospace,Consolas,monospace;
   }
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;font-family:var(--font);background:var(--bg);color:var(--text);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
-  /* aurora backdrop */
-  .bg-aurora{position:fixed;inset:0;z-index:-1;overflow:hidden;background:
-    radial-gradient(60% 50% at 18% 8%,rgba(34,211,238,.16),transparent 60%),
-    radial-gradient(55% 45% at 88% 0%,rgba(139,92,246,.18),transparent 60%),
-    radial-gradient(60% 60% at 70% 100%,rgba(232,121,249,.10),transparent 60%),
-    var(--bg)}
-  .bg-aurora::after{content:"";position:absolute;inset:-30%;background:conic-gradient(from 0deg,transparent,rgba(139,92,246,.06),transparent,rgba(34,211,238,.06),transparent);animation:spin 40s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  ::selection{background:rgba(191,255,10,.28);color:#fff}
+  ::-webkit-scrollbar{width:10px;height:10px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:99px;border:3px solid transparent;background-clip:content-box}
+  ::-webkit-scrollbar-thumb:hover{background:rgba(191,255,10,.4);border:3px solid transparent;background-clip:content-box}
 
-  a{color:#8fd3ff;text-decoration:none}
-  h1,h2,h3,h4,.brandname{font-family:var(--display);font-weight:600;letter-spacing:-.01em}
-  h3{margin:.1em 0 .5em;font-size:17px}
+  /* carbon-fibre backdrop with neon field glows */
+  .bg-aurora{position:fixed;inset:0;z-index:-1;overflow:hidden;background:
+    radial-gradient(55% 42% at 12% 0%,rgba(191,255,10,.075),transparent 62%),
+    radial-gradient(48% 40% at 92% 8%,rgba(0,224,255,.06),transparent 60%),
+    radial-gradient(70% 55% at 55% 112%,rgba(191,255,10,.05),transparent 60%),
+    var(--bg)}
+  .bg-aurora::before{content:"";position:absolute;inset:0;opacity:.55;background:
+    repeating-linear-gradient(45deg,rgba(255,255,255,.013) 0 2px,transparent 2px 7px),
+    repeating-linear-gradient(-45deg,rgba(255,255,255,.013) 0 2px,transparent 2px 7px)}
+  .bg-aurora::after{content:"";position:absolute;inset:-40%;background:conic-gradient(from 180deg,transparent 0 38%,rgba(191,255,10,.045) 50%,transparent 62% 100%);animation:spin 70s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  @keyframes pulse{0%,100%{box-shadow:0 0 6px var(--neon)}50%{box-shadow:0 0 16px var(--neon)}}
+
+  a{color:#7FE8FF;text-decoration:none}
+  a:hover{color:var(--neon)}
+  h1,h2,h3,h4,.brandname{font-family:var(--display);font-weight:600;letter-spacing:.01em}
+  h3{margin:.1em 0 .5em;font-size:16.5px}
   .muted{color:var(--muted);font-size:13.5px}
   .faint{color:var(--faint)}
 
@@ -47,79 +62,88 @@
   body:not(.authed) .content{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:16px;max-width:none}
 
   .sidebar{position:sticky;top:0;height:100dvh;padding:18px 14px;display:flex;flex-direction:column;gap:8px;
-    background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border-right:1px solid var(--border);backdrop-filter:blur(14px)}
+    background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.015));border-right:1px solid var(--border);backdrop-filter:blur(14px)}
+  .sidebar::after{content:"";position:absolute;top:0;bottom:0;right:-1px;width:1px;pointer-events:none;
+    background:linear-gradient(180deg,var(--neon) 0%,transparent 26%,transparent 74%,rgba(0,224,255,.6) 100%);opacity:.35}
   .brand{display:flex;align-items:center;gap:11px;padding:8px 8px 14px}
-  .orb{width:30px;height:30px;border-radius:50%;background:var(--grad);box-shadow:0 0 18px rgba(34,211,238,.6);position:relative;flex:0 0 auto}
-  .orb::after{content:"";position:absolute;inset:6px;border-radius:50%;background:#0a0e1c}
-  .brandname{font-size:16px;font-weight:700}
-  .brandsub{font-size:11px;color:var(--muted);letter-spacing:.04em}
+  .orb{width:30px;height:30px;border-radius:50%;background:conic-gradient(from 210deg,#BFFF0A,#00E0FF,#37E787,#BFFF0A);box-shadow:0 0 20px rgba(191,255,10,.55);position:relative;flex:0 0 auto;animation:spin 9s linear infinite}
+  .orb::after{content:"";position:absolute;inset:5px;border-radius:50%;background:#0a0c0d}
+  .brandname{font-size:16px;font-weight:700;letter-spacing:.03em}
+  .brandsub{font-size:10px;color:var(--neon);letter-spacing:.22em;text-transform:uppercase;opacity:.75}
   nav#nav{display:flex;flex-direction:column;gap:2px}
-  .nav-sector{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--faint);padding:10px 12px 3px;margin-top:4px;border-top:1px solid var(--border)}
+  .nav-sector{font-family:var(--display);font-size:10px;font-weight:700;letter-spacing:.18em;text-transform:uppercase;color:var(--faint);padding:10px 12px 3px;margin-top:4px;border-top:1px solid var(--border)}
   .nav-sector:first-child{border-top:none;margin-top:0;padding-top:4px}
   nav#nav button{display:flex;align-items:center;gap:11px;width:100%;justify-content:flex-start;
-    background:transparent;border:1px solid transparent;color:var(--muted);font-size:14px;font-weight:500;padding:9px 12px;border-radius:11px;cursor:pointer;transition:background .18s,color .18s,border-color .18s}
+    background:transparent;border:1px solid transparent;color:var(--muted);font-size:14px;font-weight:500;padding:9px 12px;border-radius:9px;cursor:pointer;transition:background .18s,color .18s,border-color .18s,box-shadow .18s}
   nav#nav button svg{width:17px;height:17px;flex:0 0 auto;opacity:.8}
   nav#nav button:hover{background:var(--surface);color:var(--text)}
-  nav#nav button.active{color:#fff;background:linear-gradient(135deg,rgba(34,211,238,.18),rgba(139,92,246,.18));border-color:var(--border-2);box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
-  nav#nav button.active svg{opacity:1;color:var(--cyan)}
-  .side-foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px;color:var(--muted);font-size:12.5px;border-top:1px solid var(--border)}
-  .dot{width:8px;height:8px;border-radius:50%;background:var(--success);box-shadow:0 0 8px var(--success);flex:0 0 auto}
+  nav#nav button.active{color:#fff;background:linear-gradient(90deg,rgba(191,255,10,.14),rgba(191,255,10,.02));border-color:rgba(191,255,10,.28);
+    box-shadow:inset 2px 0 0 var(--neon),0 0 16px rgba(191,255,10,.08)}
+  nav#nav button.active svg{opacity:1;color:var(--neon)}
+  .side-foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px;color:var(--muted);font-size:12px;font-family:var(--mono);border-top:1px solid var(--border)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--neon);box-shadow:0 0 8px var(--neon);flex:0 0 auto;animation:pulse 2.4s ease-in-out infinite}
 
   .main{display:flex;flex-direction:column;min-width:0}
   .topbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;justify-content:space-between;
-    padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(7,9,18,.6);backdrop-filter:blur(12px)}
-  .topbar h1{font-size:19px;margin:0}
-  .status{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted);background:var(--surface);border:1px solid var(--border);padding:5px 11px;border-radius:999px}
+    padding:14px 24px;border-bottom:1px solid var(--border);background:rgba(5,6,7,.68);backdrop-filter:blur(14px)}
+  .topbar h1{font-size:15px;margin:0;text-transform:uppercase;letter-spacing:.14em}
+  .topbar h1::before{content:"// ";color:var(--neon);font-weight:700}
+  .status{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-family:var(--mono);color:var(--muted);background:var(--surface);border:1px solid rgba(191,255,10,.22);padding:5px 12px;border-radius:999px}
   .content{padding:22px 24px 40px;max-width:1000px;width:100%;margin:0 auto}
 
-  /* cards */
-  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);padding:18px;margin-bottom:16px;backdrop-filter:blur(10px);box-shadow:var(--sh)}
+  /* cards — carbon panels with neon hairline */
+  .card{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--r-lg);padding:18px;margin-bottom:16px;backdrop-filter:blur(10px);box-shadow:var(--sh)}
+  .card::before{content:"";position:absolute;top:-1px;left:16px;right:40%;height:1px;pointer-events:none;
+    background:linear-gradient(90deg,rgba(191,255,10,.45),transparent)}
   .card .card{box-shadow:none;background:var(--surface-2)}
+  .card .card::before{display:none}
   .row{display:flex;gap:10px}.row>*{flex:1}
 
   /* controls */
-  button{font-family:var(--font);background:var(--grad);color:#06121a;border:0;border-radius:11px;padding:10px 16px;cursor:pointer;font-size:14px;font-weight:600;transition:transform .15s,box-shadow .15s,opacity .15s}
-  button:hover{box-shadow:0 6px 22px rgba(34,211,238,.35);transform:translateY(-1px)}
+  button{font-family:var(--display);background:var(--grad);color:#071106;border:0;border-radius:9px;padding:10px 16px;cursor:pointer;font-size:14px;font-weight:600;letter-spacing:.02em;transition:transform .15s,box-shadow .15s,opacity .15s,filter .15s}
+  button:hover{box-shadow:0 6px 26px rgba(191,255,10,.35);transform:translateY(-1px);filter:saturate(1.15)}
   button:active{transform:translateY(0)}
   button:disabled{opacity:.5;cursor:not-allowed;box-shadow:none;transform:none}
-  button.ghost{background:var(--surface);color:var(--text);border:1px solid var(--border-2)}
-  button.ghost:hover{background:var(--surface-2);box-shadow:none}
-  button.sm{padding:6px 11px;font-size:12.5px;border-radius:9px}
-  :focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
-  input,textarea,select{width:100%;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 12px;font-size:14px;font-family:var(--font);transition:border-color .15s,box-shadow .15s}
-  input:focus,textarea:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(34,211,238,.18);outline:none}
+  button.ghost{background:rgba(255,255,255,.04);color:var(--text);border:1px solid var(--border-2)}
+  button.ghost:hover{border-color:rgba(191,255,10,.5);color:#fff;box-shadow:0 0 14px rgba(191,255,10,.12);filter:none}
+  button.ghost.active{border-color:rgba(191,255,10,.55);color:var(--neon);background:rgba(191,255,10,.08)}
+  button.sm{padding:6px 11px;font-size:12.5px;border-radius:8px}
+  :focus-visible{outline:2px solid var(--neon);outline-offset:2px}
+  input,textarea,select{width:100%;background:rgba(0,0,0,.3);border:1px solid var(--border-2);color:var(--text);border-radius:10px;padding:11px 12px;font-size:14px;font-family:var(--font);transition:border-color .15s,box-shadow .15s}
+  input:focus,textarea:focus{border-color:var(--neon);box-shadow:0 0 0 3px rgba(191,255,10,.14),0 0 18px rgba(191,255,10,.1);outline:none}
   label{font-size:13.5px}
 
   /* chat */
   #chat{max-height:48vh;overflow:auto;padding:4px 2px 8px;display:flex;flex-direction:column}
-  .msg{padding:11px 14px;border-radius:14px;margin:7px 0;max-width:86%;font-size:14.5px;animation:rise .22s ease-out}
+  .msg{padding:11px 14px;border-radius:13px;margin:7px 0;max-width:86%;font-size:14.5px;animation:rise .22s ease-out}
   @keyframes rise{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-  .me{align-self:flex-end;background:var(--grad);color:#06121a;font-weight:500;border-bottom-right-radius:4px}
-  .amy{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-bottom-left-radius:4px}
-  .meta{color:var(--muted);font-size:11.5px;margin-top:7px}
-  .me .meta{color:rgba(6,18,26,.7)}
-  .chip{display:inline-block;background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:3px 10px;font-size:11px;margin:2px}
-  .chip.src{color:#9fd6ff}
-  .nav-badge{margin-left:auto;background:rgba(255,160,0,.22);color:var(--warn);border:1px solid rgba(255,160,0,.4);border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700}
+  .me{align-self:flex-end;background:var(--grad);color:#071106;font-weight:500;border-bottom-right-radius:4px;box-shadow:0 4px 18px rgba(191,255,10,.2)}
+  .amy{align-self:flex-start;background:var(--surface-2);border:1px solid var(--border);border-left:2px solid rgba(191,255,10,.4);border-bottom-left-radius:4px}
+  .meta{color:var(--muted);font-size:11px;font-family:var(--mono);margin-top:7px}
+  .me .meta{color:rgba(7,17,6,.7)}
+  .chip{display:inline-block;background:var(--surface-2);border:1px solid var(--border-2);border-radius:999px;padding:3px 10px;font-size:11px;font-family:var(--mono);margin:2px}
+  .chip.src{color:#7FE8FF;border-color:rgba(0,224,255,.3)}
+  .nav-badge{margin-left:auto;background:rgba(255,213,0,.16);color:var(--warn);border:1px solid rgba(255,213,0,.4);border-radius:999px;padding:1px 7px;font-size:10px;font-weight:700}
   .amy h1,.amy h2,.amy h3{font-size:15px;margin:.4em 0;font-family:var(--display)}
-  .amy code{background:rgba(0,0,0,.35);padding:1px 6px;border-radius:5px;font-size:13px}
+  .amy code{background:rgba(0,0,0,.4);border:1px solid var(--border);padding:1px 6px;border-radius:5px;font-size:13px;font-family:var(--mono);color:var(--neon)}
   .amy ul{margin:.3em 0 .3em 1.1em}
 
-  .bar{height:9px;background:rgba(0,0,0,.35);border-radius:99px;overflow:hidden;border:1px solid var(--border)}
-  .bar>i{display:block;height:100%;background:var(--grad);transition:width .4s ease}
+  .bar{height:9px;background:rgba(0,0,0,.4);border-radius:99px;overflow:hidden;border:1px solid var(--border)}
+  .bar>i{display:block;height:100%;background:var(--grad);box-shadow:0 0 10px rgba(191,255,10,.5);transition:width .4s ease}
   .toggle{display:flex;align-items:center;justify-content:space-between;padding:10px 0;border-bottom:1px solid var(--border)}
   .hidden{display:none}
-  #graphBody svg{width:100%;height:380px;background:#04060c;border-radius:14px;border:1px solid var(--border)}
+  #graphBody svg{width:100%;height:380px;background:#040506;border-radius:14px;border:1px solid var(--border)}
 
   /* auth */
-  #authCard{max-width:400px;width:100%;text-align:left}
+  #authCard{max-width:400px;width:100%;text-align:left;border-color:rgba(191,255,10,.18)}
   .auth-brand{display:flex;align-items:center;gap:12px;justify-content:center;margin-bottom:6px}
-  .auth-title{font-family:var(--display);font-size:26px;font-weight:700;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin:2px 0 2px}
+  .auth-title{font-family:var(--display);font-size:26px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;background:var(--grad);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;text-align:center;margin:2px 0 2px}
   .auth-sub{text-align:center;color:var(--muted);font-size:13.5px;margin-bottom:18px}
 
   @media (max-width:820px){
     .app{grid-template-columns:1fr}
     .sidebar{position:sticky;flex-direction:row;align-items:center;height:auto;gap:10px;overflow-x:auto;padding:10px 12px;top:0;z-index:6}
+    .sidebar::after{display:none}
     .brand{padding:0 6px 0 0}.brandsub{display:none}
     nav#nav{flex-direction:row}
     nav#nav button .label{display:none}
@@ -825,6 +849,21 @@
 
         <div id="custBody" class="hidden">
           <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Google Sheet</b>
+              <span id="custSheetStatus" class="faint" style="font-size:11px"></span>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Already tracking this in a Sheet? Link it — Amy reads every tab (read-only), creates beneficiaries from them, and backfills the transfer history so prefill, cadence and validation work from day one. It never edits your Sheet.</p>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input id="custSheetUrl" placeholder="Paste Google Sheet URL (or ID)" style="flex:1;min-width:220px"/>
+              <button class="sm" style="flex:0 0 auto" onclick="linkCustodialSheet()">Link</button>
+              <button class="ghost sm" style="flex:0 0 auto" onclick="analyzeCustodialSheet()">Analyze sheet</button>
+            </div>
+            <span class="meta" id="custSheetMsg"></span>
+            <div id="custSheetAnalysis" style="margin-top:8px"></div>
+          </div>
+
+          <div class="card">
             <div style="display:flex;align-items:center;gap:10px">
               <b style="flex:1">Balance</b>
               <span id="custBalance" class="chip" style="color:var(--success)"></span>
@@ -844,6 +883,29 @@
             </div>
             <p class="faint" style="font-size:12.5px;margin:0 0 10px">Prefilled from last cycle — edit before confirming. Send the transfer yourself first, then confirm here.</p>
             <div id="custPrefillList" class="muted">Loading…</div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Log from screenshot</b>
+              <span class="faint" style="font-size:11px">OCR → local AI</span>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Drop the UPI/NEFT screenshot right after you send — Amy reads the amount, matches the beneficiary, and prefills the log. Confirming writes ledger + Sheet and attaches the screenshot.</p>
+            <div class="row" style="flex-wrap:wrap;gap:8px">
+              <input type="file" id="custShotFile" accept="image/*" style="flex:1;min-width:200px"/>
+              <button class="sm" style="flex:0 0 auto" onclick="parseCustodialScreenshot()">Parse screenshot</button>
+            </div>
+            <span class="meta" id="custShotMsg"></span>
+            <div id="custShotResult" style="margin-top:8px"></div>
+          </div>
+
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Detected transfers</b>
+              <button class="ghost sm" onclick="loadCustodialSuggestions()">Refresh</button>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Debits synced from Gmail that look like transfers to your beneficiaries. Confirming claims the existing transaction (no duplicates) and logs it to the Sheet.</p>
+            <div id="custSuggList" class="muted">Loading…</div>
           </div>
 
           <div class="card">
@@ -1299,7 +1361,7 @@ async function loadAgents(){
 async function toggleAgent(agent,enable){ await jpost('/api/agents/'+agent+'/'+(enable==='true'||enable===true?'enable':'disable'),{}); loadAgents(); }
 // ---- graph ----
 async function buildKnowledge(){ document.getElementById('kbMsg').textContent='building…'; const d=await jpost('/api/knowledge/build',{}); document.getElementById('kbMsg').textContent='built: '+d.notes+' notes, '+d.relationships+' links'; loadGraph(); }
-const PAL=['#22d3ee','#e879f9','#fbbf24','#34d399','#a78bfa','#f472b6','#60a5fa','#f87171','#2dd4bf','#c084fc'];
+const PAL=['#BFFF0A','#00E0FF','#FFD500','#37E787','#FF3B4E','#7FE8FF','#E8D5A6','#9DFF57','#00B4D8','#FF8A3D'];
 function colorFor(dom){ let h=0; for(const ch of (dom||'general')) h=(h*31+ch.charCodeAt(0))>>>0; return PAL[h%PAL.length]; }
 function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); }); }
 async function ensureFG(){ if(window.ForceGraph) return; await loadScript('https://cdn.jsdelivr.net/npm/force-graph/dist/force-graph.min.js'); }
@@ -1386,7 +1448,7 @@ function loadGraphSVG(d){
   const el=document.getElementById('graphBody');
   const allNodes=d.nodes||[], edges=d.edges||[]; const nodes=allNodes.slice(0,40);
   if(!nodes.length){ el.innerHTML='<p class="muted">No graph yet — click "Build / refresh knowledge".</p>'; return; }
-  const PAL2=['#22d3ee','#e879f9','#fbbf24','#34d399','#a78bfa','#f472b6','#60a5fa','#f87171'];
+  const PAL2=['#BFFF0A','#00E0FF','#FFD500','#37E787','#FF3B4E','#7FE8FF','#E8D5A6','#9DFF57'];
   const W=820,H=380,cx=W/2,cy=H/2;
   let center=nodes[0]; nodes.forEach(n=>{ if((n.importance||0)>(center.importance||0)) center=n; });
   const sats=nodes.filter(n=>n.id!==center.id);
@@ -2669,7 +2731,7 @@ async function loadFinTransactions(){
       const isIncome=t.amount>0;
       const amtColor=isIncome?'#22c55e':'var(--danger)';
       const sign=isIncome?'+':'';
-      const srcBadge=t.source==='cc_gmail'?'<span class="chip" style="background:rgba(139,92,246,.25);color:#c4b5fd;font-size:10px">CC</span>':'';
+      const srcBadge=t.source==='cc_gmail'?'<span class="chip" style="background:rgba(0,224,255,.15);color:#7FE8FF;border-color:rgba(0,224,255,.35);font-size:10px">CC</span>':'';
       return `<div class="toggle">
         <div style="flex:1;min-width:0">
           ${srcBadge}<span class="chip">${t.category||'Uncategorized'}</span>
@@ -2810,12 +2872,14 @@ function dismissBudgetSuggestion(i){
 
 /* ── Custodial accounts (money held in-trust — never the user's own) ───── */
 let _custPrefill=[];
+let _custAccounts=[];
 
 async function loadCustodialAccountPicker(){
   const sel=document.getElementById('custAccountPicker');
   try{
     const d=await jget('/api/finance/accounts');
     const custAccs=(d.accounts||[]).filter(a=>a.account_type==='custodial');
+    _custAccounts=custAccs;
     sel.innerHTML = custAccs.length
       ? custAccs.map(a=>`<option value="${a.id}">${a.nickname}</option>`).join('')
       : '<option value="">No custodial account yet — add one in Import tab</option>';
@@ -2828,13 +2892,97 @@ async function loadCustodialAccountPicker(){
   loadCustodialAll();
 }
 
-function loadCustodialAll(){
+async function loadCustodialAll(){
   const aid=document.getElementById('custAccountPicker').value;
   const body=document.getElementById('custBody');
   if(!aid){ body.classList.add('hidden'); return; }
   body.classList.remove('hidden');
-  loadCustodialPrefill();
+  const acc=_custAccounts.find(a=>a.id===aid);
+  const linked=acc&&acc.meta&&acc.meta.sheet_id;
+  document.getElementById('custSheetStatus').textContent=linked?'linked ✓':'not linked';
+  document.getElementById('custSheetAnalysis').innerHTML='';
+  document.getElementById('custSheetMsg').textContent='';
+  document.getElementById('custShotResult').innerHTML='';
+  document.getElementById('custShotMsg').textContent='';
   loadCustodialValidation();
+  await loadCustodialPrefill();       // suggestions need the beneficiary list
+  loadCustodialSuggestions();
+}
+
+async function linkCustodialSheet(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const sheet=document.getElementById('custSheetUrl').value.trim();
+  const m=document.getElementById('custSheetMsg');
+  if(!aid){ m.textContent='Pick a custodial account first.'; return; }
+  if(!sheet){ m.textContent='Paste the Sheet URL first.'; return; }
+  m.textContent='linking…';
+  try{
+    const d=await jpost(`/api/finance/custodial/${aid}/sheet`,{sheet});
+    if(d.detail){ m.textContent=d.detail; return; }
+    const acc=_custAccounts.find(a=>a.id===aid);
+    if(acc){ acc.meta=acc.meta||{}; acc.meta.sheet_id='linked'; }
+    document.getElementById('custSheetStatus').textContent='linked ✓';
+    document.getElementById('custSheetUrl').value='';
+    m.textContent='linked ✓ — analyzing…';
+    analyzeCustodialSheet();
+  }catch(e){ m.textContent=e.message; }
+}
+
+async function analyzeCustodialSheet(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const m=document.getElementById('custSheetMsg');
+  const el=document.getElementById('custSheetAnalysis');
+  if(!aid) return;
+  el.innerHTML='<p class="muted">Reading sheet…</p>';
+  try{
+    const d=await jget(`/api/finance/custodial/${aid}/sheet/analyze`);
+    if(d.detail){ el.innerHTML=''; m.textContent=d.detail; return; }
+    if(!d.linked){ el.innerHTML=''; m.textContent='No sheet linked yet — paste the URL above.'; return; }
+    m.textContent='';
+    const tabs=(d.tabs||[]);
+    if(!tabs.length){ el.innerHTML='<p class="muted">Sheet is empty — no tabs found.</p>'; return; }
+    el.innerHTML=`
+      <div class="faint" style="font-size:11px;margin-bottom:6px">${d.sheet_title||'Sheet'} — ${tabs.length} tab(s)</div>
+      ${tabs.map((t,i)=>{
+        const importable=t.parsed>t.already_imported;
+        const status=!t.parsed?'no data rows'
+          :(t.beneficiary?`→ ${t.beneficiary}`:'new — will create beneficiary')
+           +(t.already_imported?` · ${t.already_imported}/${t.parsed} already in ledger`:'');
+        return `<div class="toggle" style="flex-wrap:wrap;gap:8px">
+          <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px;cursor:pointer">
+            <input type="checkbox" id="cs-tab-${i}" data-tab="${t.tab.replace(/"/g,'&quot;')}" ${importable?'checked':''} ${t.parsed?'':'disabled'} style="width:auto"/>
+            <b style="font-size:13px">${t.tab}</b>
+            <span class="faint" style="font-size:11px">${status}</span>
+          </label>
+          <span class="faint" style="font-size:11px">
+            ${t.parsed?`${t.parsed} rows · ${t.first_date} → ${t.last_date} · ${_fmt(t.disbursed_total)}${t.refill_total?` (+${_fmt(t.refill_total)} refills)`:''}`:''}
+          </span>
+        </div>`;
+      }).join('')}
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+        <button class="sm" onclick="importCustodialSheet()">Import selected</button>
+        <span class="faint" style="font-size:11px">Deduped — safe to run again anytime.</span>
+      </div>`;
+  }catch(e){ el.innerHTML=''; m.textContent=e.message; }
+}
+
+async function importCustodialSheet(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const m=document.getElementById('custSheetMsg');
+  const tabs=[...document.querySelectorAll('#custSheetAnalysis input[type=checkbox]:checked')]
+    .map(c=>c.dataset.tab);
+  if(!tabs.length){ m.textContent='Tick at least one tab.'; return; }
+  m.textContent='importing…';
+  try{
+    const d=await jpost(`/api/finance/custodial/${aid}/sheet/import`,{tabs});
+    if(d.detail){ m.textContent=d.detail; return; }
+    m.textContent=`✓ imported ${d.imported} rows`
+      +(d.beneficiaries_created.length?`, created: ${d.beneficiaries_created.join(', ')}`:'')
+      +(d.skipped_existing?` (${d.skipped_existing} already existed)`:'');
+    analyzeCustodialSheet();
+    loadCustodialPrefill();
+    loadCustodialValidation();
+  }catch(e){ m.textContent=e.message; }
 }
 
 async function loadCustodialPrefill(){
@@ -2854,8 +3002,9 @@ async function loadCustodialPrefill(){
     el.innerHTML=_custPrefill.map((b,i)=>`
       <div class="toggle" id="custRow-${i}" style="flex-wrap:wrap;gap:8px">
         <div class="row" style="flex:1;min-width:220px;gap:8px">
-          <span style="flex:0 0 140px;align-self:center;font-size:13px">${b.name}</span>
-          <input id="cb-amt-${i}" type="number" min="0" step="1" placeholder="Amount" value="${b.last_amount||''}" style="flex:0 0 110px"/>
+          <span style="flex:0 0 140px;align-self:center;font-size:13px">${b.name}
+            ${b.trend_note?`<br><span class="faint" style="font-size:10px" title="${b.trend_note}">✦ ${b.trend_note}</span>`:''}</span>
+          <input id="cb-amt-${i}" type="number" min="0" step="1" placeholder="Amount" value="${b.suggested_amount||b.last_amount||''}" style="flex:0 0 110px"/>
           <select id="cb-mode-${i}" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
             <option value="UPI">UPI</option>
             <option value="NEFT">NEFT</option>
@@ -2871,6 +3020,15 @@ async function loadCustodialPrefill(){
   }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
 }
 
+async function custodialPrecheckOk(aid, beneficiary_id, amount){
+  try{
+    const pc=await jpost(`/api/finance/custodial/${aid}/precheck`,{beneficiary_id, amount});
+    const ws=(pc.warnings||[]).map(w=>w.message);
+    if(ws.length) return confirm('⚠ '+ws.join('\n⚠ ')+'\n\nLog anyway?');
+  }catch(e){}
+  return true;
+}
+
 async function confirmDisbursement(i){
   const aid=document.getElementById('custAccountPicker').value;
   const b=_custPrefill[i];
@@ -2878,6 +3036,7 @@ async function confirmDisbursement(i){
   const mode=document.getElementById('cb-mode-'+i).value;
   const notes=document.getElementById('cb-notes-'+i).value;
   if(!amount){ alert('Enter an amount.'); return; }
+  if(!await custodialPrecheckOk(aid, b.beneficiary_id, amount)) return;
   try{
     const r=await api(`/api/finance/custodial/${aid}/disburse`,{method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -2930,6 +3089,141 @@ async function addCustodialBeneficiary(){
     m.textContent='added ✓';
     loadCustodialPrefill();
   }catch(e){ m.textContent=e.message; }
+}
+
+/* ── Custodial AI: screenshot parsing, detected transfers ─────────────── */
+let _custShotParsed=null;
+let _custSuggestions=[];
+
+function _custBenOptions(selectedId){
+  return _custPrefill.map(b=>
+    `<option value="${b.beneficiary_id}" ${b.beneficiary_id===selectedId?'selected':''}>${b.name}</option>`).join('');
+}
+
+async function parseCustodialScreenshot(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const f=(document.getElementById('custShotFile').files||[])[0];
+  const m=document.getElementById('custShotMsg');
+  const el=document.getElementById('custShotResult');
+  if(!aid){ m.textContent='Pick a custodial account first.'; return; }
+  if(!f){ m.textContent='Choose a screenshot first.'; return; }
+  if(!_custPrefill.length){ m.textContent='Add or import beneficiaries first.'; return; }
+  m.textContent='reading screenshot…'; el.innerHTML='';
+  try{
+    const fd=new FormData(); fd.append('file', f);
+    const r=await api(`/api/finance/custodial/${aid}/screenshot/parse`,{method:'POST',body:fd});
+    const d=await r.json();
+    if(d.detail){ m.textContent=d.detail; return; }
+    if(!d.ok){ m.textContent=d.error||'Could not parse the screenshot.'; return; }
+    _custShotParsed=d;
+    m.textContent=d.used_llm?'parsed ✓ (local AI assisted)':'parsed ✓';
+    const p=d.parsed||{};
+    const today=new Date().toISOString().slice(0,10);
+    const matchNote=d.beneficiary_id
+      ? `matched <b>${d.beneficiary_name}</b> (${Math.round((d.match_score||0)*100)}%)`
+      : `couldn't match a beneficiary${p.receiver?` for “${p.receiver}”`:''} — pick one`;
+    el.innerHTML=`
+      <div class="faint" style="font-size:11px;margin-bottom:6px">${matchNote}</div>
+      ${(d.warnings||[]).map(w=>`<div class="chip" style="color:var(--warn);display:block;margin-bottom:6px">⚠ ${w.message}</div>`).join('')}
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        <select id="shot-ben" style="flex:1;min-width:140px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+          ${_custBenOptions(d.beneficiary_id)}
+        </select>
+        <input id="shot-amt" type="number" min="0" step="0.01" placeholder="Amount" value="${p.amount||''}" style="flex:0 0 110px"/>
+        <input id="shot-date" type="date" value="${p.date||today}" style="flex:0 0 140px"/>
+        <select id="shot-mode" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+          <option ${p.mode==='UPI'||!p.mode?'selected':''}>UPI</option>
+          <option ${p.mode==='NEFT'?'selected':''}>NEFT</option>
+          <option ${p.mode==='Account Transfer'?'selected':''}>Account Transfer</option>
+        </select>
+        <input id="shot-notes" placeholder="Notes" value="${p.ref?('ref '+p.ref):''}" style="flex:1;min-width:120px"/>
+        <button class="sm" style="flex:0 0 auto" onclick="confirmParsedScreenshot()">✓ Confirm &amp; log</button>
+      </div>`;
+  }catch(e){ m.textContent=e.message; }
+}
+
+async function confirmParsedScreenshot(){
+  const aid=document.getElementById('custAccountPicker').value;
+  const m=document.getElementById('custShotMsg');
+  const beneficiary_id=document.getElementById('shot-ben').value;
+  const amount=parseFloat(document.getElementById('shot-amt').value);
+  const date=document.getElementById('shot-date').value||null;
+  const mode=document.getElementById('shot-mode').value;
+  const notes=document.getElementById('shot-notes').value;
+  if(!amount){ m.textContent='Enter an amount.'; return; }
+  if(!await custodialPrecheckOk(aid, beneficiary_id, amount)) return;
+  m.textContent='logging…';
+  try{
+    const d=await jpost(`/api/finance/custodial/${aid}/disburse`,{beneficiary_id, amount, date, mode, notes});
+    if(d.detail){ m.textContent=d.detail; return; }
+    let extra='';
+    const f=(document.getElementById('custShotFile').files||[])[0];
+    if(f && d.transaction_id){
+      try{
+        const fd=new FormData();
+        fd.append('file', f); fd.append('source','custodial');
+        fd.append('note','custodial disbursement screenshot');
+        fd.append('tags','custodial,disbursement');
+        fd.append('link_disbursement_txn', d.transaction_id);
+        await api('/api/captures',{method:'POST',body:fd});
+        extra=' · screenshot attached';
+      }catch(e){ extra=' · screenshot attach failed'; }
+    }
+    const sheetMsg=d.sheet_write&&d.sheet_write.ok?'logged to Sheet ✓':'⚠ Sheet write failed';
+    m.textContent=`✓ logged — ${sheetMsg}${extra}`;
+    document.getElementById('custShotResult').innerHTML='';
+    document.getElementById('custShotFile').value='';
+    document.getElementById('custBalance').textContent=_fmt(d.balance||0);
+    loadCustodialPrefill(); loadCustodialValidation(); loadCustodialSuggestions();
+  }catch(e){ m.textContent=e.message; }
+}
+
+async function loadCustodialSuggestions(){
+  const aid=document.getElementById('custAccountPicker').value;
+  if(!aid) return;
+  const el=document.getElementById('custSuggList');
+  el.innerHTML='<p class="muted">Scanning synced debits…</p>';
+  try{
+    const d=await jget(`/api/finance/custodial/${aid}/suggestions`);
+    if(d.detail){ el.innerHTML='<p class="muted">'+d.detail+'</p>'; return; }
+    _custSuggestions=d.suggestions||[];
+    if(!_custSuggestions.length){
+      el.innerHTML='<p class="muted">Nothing unclaimed looks like a beneficiary transfer.</p>';
+      return;
+    }
+    el.innerHTML=_custSuggestions.map((s,i)=>`
+      <div class="toggle" id="custSugg-${i}" style="flex-wrap:wrap;gap:8px">
+        <div style="flex:1;min-width:200px;font-size:13px">
+          <b>${_fmt(s.amount)}</b> · ${s.date}
+          <span class="faint" style="font-size:11px">${s.merchant||''} (${s.source})</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span class="chip" style="font-size:10px">${Math.round((s.score||0)*100)}% match</span>
+          <select id="sugg-ben-${i}" style="background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 8px;font-size:12px">
+            ${_custBenOptions(s.beneficiary_id)}
+          </select>
+          <button class="sm" onclick="confirmCustodialSuggestion(${i})">✓ It's this</button>
+        </div>
+      </div>`).join('');
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+
+async function confirmCustodialSuggestion(i){
+  const aid=document.getElementById('custAccountPicker').value;
+  const s=_custSuggestions[i];
+  const bid=document.getElementById('sugg-ben-'+i).value;
+  if(!await custodialPrecheckOk(aid, bid, s.amount)) return;
+  try{
+    const d=await jpost(`/api/finance/custodial/${aid}/suggestions/${s.transaction_id}/confirm`,{beneficiary_id:bid});
+    if(d.detail){ alert(d.detail); return; }
+    const row=document.getElementById('custSugg-'+i);
+    if(row){
+      const sheetMsg=d.sheet_write&&d.sheet_write.ok?'logged to Sheet ✓':'⚠ Sheet write failed';
+      row.innerHTML=`<span class="muted">claimed ✓ (${sheetMsg})</span>`;
+    }
+    document.getElementById('custBalance').textContent=_fmt(d.balance||0);
+    loadCustodialPrefill(); loadCustodialValidation();
+  }catch(e){ alert(e.message); }
 }
 
 async function loadFinSubs(){
@@ -3441,7 +3735,7 @@ async function previewImport(aid, type){
         </div>
         <div style="max-height:260px;overflow-y:auto">
           <table style="width:100%;border-collapse:collapse;font-size:12px">
-            <thead style="position:sticky;top:0;background:rgba(20,20,30,.97)">
+            <thead style="position:sticky;top:0;background:rgba(9,11,10,.97)">
               <tr>
                 <th style="text-align:left;padding:7px 12px;color:var(--muted);font-weight:500;white-space:nowrap">Date</th>
                 <th style="text-align:left;padding:7px 12px;color:var(--muted);font-weight:500">Description</th>

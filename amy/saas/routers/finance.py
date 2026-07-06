@@ -1196,11 +1196,69 @@ class DisburseBody(BaseModel):
     notes: str = ""
 
 
+class SheetLinkBody(BaseModel):
+    sheet: str  # full Google Sheets URL or bare spreadsheet ID
+
+
+class SheetImportBody(BaseModel):
+    tabs: list[str] | None = None  # None = every tab that has parseable rows
+
+
+class PrecheckBody(BaseModel):
+    beneficiary_id: str
+    amount: float
+
+
+class SuggestionConfirmBody(BaseModel):
+    beneficiary_id: str
+    mode: str = "UPI"
+
+
 def _require_custodial_account(fe, account_id: str) -> dict:
     acc = fe.get_account(account_id)
     if not acc or acc.get("account_type") != "custodial":
         raise HTTPException(status_code=404, detail="custodial account not found")
     return acc
+
+
+def _maybe_close_cycle(user: "User", fe, account: dict) -> None:
+    """After a disbursement lands: if every beneficiary is now paid this
+    cycle, write a narrative note into the vault (idempotent by filename) and
+    raise a notification (deduped 24h). Fire-and-forget — never breaks the
+    calling route. LLM insight line is local-only (sensitive=True)."""
+    try:
+        import datetime as _dt
+        import re as _re
+        from ...finance.custodial_ai import cycle_close_status, cycle_narrative
+        status = cycle_close_status(fe, account["id"])
+        if not status["complete"]:
+            return
+        today = _dt.date.today().isoformat()
+        ref_id = f"custodial_cycle_closed_{account['id']}_{today}"
+        cdb = _open_collab(user)
+        try:
+            from ...notifications import NotificationStore
+            store = NotificationStore(cdb)
+            if store.exists_today("custodial_cycle_closed", ref_id):
+                return
+            from ...llm import LLMRouter
+            from ..deps import _user_key
+            llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+            title, body = cycle_narrative(fe, account, status, llm=llm)
+            slug = _re.sub(r"[^\w -]", "", account.get("nickname") or "account").strip()
+            note_dir = paths.vault_dir(user.id) / "09_Memory"
+            note_dir.mkdir(parents=True, exist_ok=True)
+            note = note_dir / f"Custodial Cycle - {slug} {today}.md"
+            if not note.exists():
+                note.write_text(f"# {title}\n\n{body}\n", encoding="utf-8")
+            store.create(type="custodial_cycle_closed", title=title, body=body,
+                         related_entity={"id": ref_id,
+                                         "entity_type": "custodial_account",
+                                         "account_id": account["id"]})
+        finally:
+            cdb.close()
+    except Exception:
+        pass
 
 
 @router.post("/api/finance/custodial/{account_id}/beneficiaries")
@@ -1300,6 +1358,7 @@ def custodial_disburse(account_id: str, body: DisburseBody,
         sheet_result = append_disbursement_row(
             creds, acc, ben, date, body.mode, body.amount, body.category, body.notes)
 
+        _maybe_close_cycle(user, fe, acc)
         return {
             "transaction_id": tid, "event_id": eid,
             "sheet_write": sheet_result,
@@ -1338,5 +1397,301 @@ def custodial_retry_sheet(account_id: str, transaction_id: str,
         return append_disbursement_row(
             creds, acc, ben, row["date"], "NEFT", abs(row["amount"]),
             row["category"], row["notes"] or "")
+    finally:
+        fe.close()
+
+
+# --- Bootstrap from an already-manually-maintained Google Sheet -------------
+# The user was tracking disbursements in a Sheet (one tab per beneficiary)
+# before this feature existed. link → analyze (read-only preview) → import
+# (creates beneficiaries from tabs + backfills history, deduped, so cadence /
+# prefill / validation work immediately). Never modifies the Sheet.
+
+def _custodial_creds(user):
+    from ...connectors.google import load_credentials, TOKEN_FILENAME
+    from ..deps import _connector_dir
+    return load_credentials(str(_connector_dir(user) / TOKEN_FILENAME))
+
+
+def _match_beneficiary(beneficiaries: list[dict], tab: str) -> dict | None:
+    key = tab.strip().lower()
+    for b in beneficiaries:
+        if (b.get("sheet_tab") or "").strip().lower() == key:
+            return b
+        if b["name"].strip().lower() == key:
+            return b
+    return None
+
+
+def _sheet_row_exists(fe, account_id: str, beneficiary_id: str | None,
+                      date: str, signed_amount: float) -> bool:
+    return fe.conn.execute(
+        "SELECT 1 FROM transactions WHERE account_id=? AND date=?"
+        " AND ABS(amount-?)<0.01 AND COALESCE(beneficiary_id,'')=COALESCE(?,'')",
+        (account_id, date, signed_amount, beneficiary_id)).fetchone() is not None
+
+
+@router.post("/api/finance/custodial/{account_id}/sheet")
+def custodial_link_sheet(account_id: str, body: SheetLinkBody,
+                         user: User = Depends(current_user)):
+    """Store the user's existing Sheet on the account (accounts.meta.sheet_id)."""
+    from ...finance.custodial_sheets import SHEET_ID_META_KEY, extract_sheet_id
+    sid = extract_sheet_id(body.sheet)
+    if not sid:
+        raise HTTPException(status_code=400, detail="could not read a spreadsheet ID from that — paste the full Sheet URL")
+    fe = _finance_db(user)
+    try:
+        acc = _require_custodial_account(fe, account_id)
+        meta = acc.get("meta") or {}
+        meta[SHEET_ID_META_KEY] = sid
+        fe.update_account(account_id, meta=meta)
+        return {"sheet_id": sid}
+    finally:
+        fe.close()
+
+
+@router.get("/api/finance/custodial/{account_id}/sheet/analyze")
+def custodial_analyze_sheet(account_id: str, user: User = Depends(current_user)):
+    """Read-only preview of the linked Sheet: per tab, how many rows parse,
+    date range, totals, and how much is already in the ledger (deduped)."""
+    from ...finance.custodial_sheets import SHEET_ID_META_KEY, fetch_sheet_data
+    fe = _finance_db(user)
+    try:
+        acc = _require_custodial_account(fe, account_id)
+        sheet_id = (acc.get("meta") or {}).get(SHEET_ID_META_KEY)
+        if not sheet_id:
+            return {"linked": False}
+        data = fetch_sheet_data(_custodial_creds(user), sheet_id)
+        if not data.get("ok"):
+            raise HTTPException(status_code=400, detail=data.get("error", "sheet read failed"))
+
+        beneficiaries = fe.list_beneficiaries(account_id, active_only=False)
+        tabs = []
+        for t in data["tabs"]:
+            rows = t["rows"]
+            ben = _match_beneficiary(beneficiaries, t["tab"])
+            already = 0
+            for r in rows:
+                signed = r["amount"] if r["kind"] == "refill" else -r["amount"]
+                bid = None if r["kind"] == "refill" else (ben["id"] if ben else None)
+                if ben or r["kind"] == "refill":
+                    if _sheet_row_exists(fe, account_id, bid, r["date"], signed):
+                        already += 1
+            tabs.append({
+                "tab": t["tab"],
+                "parsed": len(rows),
+                "skipped": t["skipped"],
+                "already_imported": already,
+                "first_date": rows[0]["date"] if rows else None,
+                "last_date": rows[-1]["date"] if rows else None,
+                "disbursed_total": round(sum(r["amount"] for r in rows if r["kind"] == "disbursement"), 2),
+                "refill_total": round(sum(r["amount"] for r in rows if r["kind"] == "refill"), 2),
+                "beneficiary": ben["name"] if ben else None,
+            })
+        return {"linked": True, "sheet_id": sheet_id,
+                "sheet_title": data.get("sheet_title", ""), "tabs": tabs}
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/custodial/{account_id}/sheet/import")
+def custodial_import_sheet(account_id: str, body: SheetImportBody,
+                           user: User = Depends(current_user)):
+    """Bootstrap the ledger from the linked Sheet: creates a beneficiary per
+    selected tab (if missing) and inserts its history as transactions
+    (source='sheet_import'), skipping rows already in the ledger."""
+    import uuid as _uuid
+    from ...finance.custodial_sheets import SHEET_ID_META_KEY, fetch_sheet_data
+
+    fe = _finance_db(user)
+    try:
+        acc = _require_custodial_account(fe, account_id)
+        sheet_id = (acc.get("meta") or {}).get(SHEET_ID_META_KEY)
+        if not sheet_id:
+            raise HTTPException(status_code=400, detail="link a sheet first")
+        data = fetch_sheet_data(_custodial_creds(user), sheet_id)
+        if not data.get("ok"):
+            raise HTTPException(status_code=400, detail=data.get("error", "sheet read failed"))
+
+        beneficiaries = fe.list_beneficiaries(account_id, active_only=False)
+        imported, skipped_existing, created = 0, 0, []
+        for t in data["tabs"]:
+            if body.tabs is not None and t["tab"] not in body.tabs:
+                continue
+            if not t["rows"]:
+                continue
+            ben = _match_beneficiary(beneficiaries, t["tab"])
+            if ben is None and any(r["kind"] == "disbursement" for r in t["rows"]):
+                bid = fe.add_beneficiary(account_id, t["tab"], sheet_tab=t["tab"])
+                ben = fe.get_beneficiary(bid)
+                beneficiaries.append(ben)
+                created.append(t["tab"])
+            for r in t["rows"]:
+                refill = r["kind"] == "refill"
+                signed = r["amount"] if refill else -r["amount"]
+                bid = None if refill else ben["id"]
+                if _sheet_row_exists(fe, account_id, bid, r["date"], signed):
+                    skipped_existing += 1
+                    continue
+                fe.conn.execute(
+                    "INSERT INTO transactions(id,date,amount,category,merchant,"
+                    "source,notes,account_id,beneficiary_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (_uuid.uuid4().hex, r["date"], signed, r["category"],
+                     "Refill" if refill else ben["name"], "sheet_import",
+                     r["notes"], account_id, bid))
+                imported += 1
+        fe.conn.commit()
+
+        _emit_fin(user, "custodial.sheet_imported", {
+            "account_id": account_id, "sheet_id": sheet_id,
+            "imported": imported, "skipped_existing": skipped_existing,
+            "beneficiaries_created": created,
+        })
+        return {"imported": imported, "skipped_existing": skipped_existing,
+                "beneficiaries_created": created,
+                "balance": fe.custodial_balance(account_id)}
+    finally:
+        fe.close()
+
+
+# --- AI layer: screenshot parse, Gmail-debit suggestions, anomaly precheck --
+# All LLM text-parsing here is sensitive=True (local Ollama only). The
+# screenshot OCR itself reuses the existing captures vision path (the user's
+# own OpenAI key — same trust boundary as the share-intent screenshot flow).
+
+@router.post("/api/finance/custodial/{account_id}/screenshot/parse")
+async def custodial_parse_screenshot(account_id: str, file: UploadFile = File(...),
+                                     user: User = Depends(current_user)):
+    """Parse a UPI/NEFT transfer screenshot into a prefilled disbursement:
+    OCR → regex extraction (LLM rescue if regex finds no amount) → fuzzy
+    beneficiary match → anomaly warnings. Nothing is saved here; the UI
+    confirms via /disburse and then links the image via /api/captures."""
+    from ...captures import analyze_image, _ext_for
+    from ...finance.custodial_ai import (parse_transfer_text, llm_parse_transfer,
+                                         match_beneficiary, anomaly_precheck)
+    from ...llm import LLMRouter
+    from ..deps import _user_key
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="empty file")
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        vis = analyze_image(data, _ext_for(file.filename or "", file.content_type),
+                            api_key=_user_key(user))
+        ocr = "\n".join(x for x in (vis.get("ocr"), vis.get("caption")) if x)
+        if not ocr.strip():
+            return {"ok": False,
+                    "error": "Couldn't read the image — add your OpenAI key in Account (vision OCR) or enter the transfer manually."}
+
+        parsed = parse_transfer_text(ocr)
+        used_llm = False
+        if parsed["amount"] is None:
+            llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+            rescue = llm_parse_transfer(llm, ocr)
+            for k, v in rescue.items():
+                if not parsed.get(k):
+                    parsed[k] = v
+            used_llm = True
+
+        bens = fe.list_beneficiaries(account_id)
+        ben, score = match_beneficiary(bens, parsed.get("receiver") or ocr[:800])
+        warnings = []
+        if ben and parsed.get("amount"):
+            warnings = anomaly_precheck(fe, account_id, ben["id"], parsed["amount"])
+        return {
+            "ok": True, "parsed": parsed,
+            "beneficiary_id": ben["id"] if ben else None,
+            "beneficiary_name": ben["name"] if ben else None,
+            "match_score": score, "warnings": warnings,
+            "used_llm": used_llm, "ocr_excerpt": ocr[:400],
+        }
+    finally:
+        fe.close()
+
+
+@router.get("/api/finance/custodial/{account_id}/suggestions")
+def custodial_suggestions(account_id: str, user: User = Depends(current_user)):
+    """Unclaimed debits already synced into this custodial account (Gmail/CSV)
+    fuzzy-matched to beneficiaries — 'looks like you sent Eswari ₹5,000'."""
+    from ...finance.custodial_ai import detect_disbursement_suggestions
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        return {"suggestions": detect_disbursement_suggestions(fe, account_id)}
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/custodial/{account_id}/suggestions/{transaction_id}/confirm")
+def custodial_confirm_suggestion(account_id: str, transaction_id: str,
+                                 body: SuggestionConfirmBody,
+                                 user: User = Depends(current_user)):
+    """Claim an existing synced debit as a disbursement: links the beneficiary
+    to the EXISTING transaction (never creates a duplicate), emits the event,
+    appends the Sheet row, and checks cycle-close."""
+    from ...finance.custodial_sheets import append_disbursement_row
+    from ...connectors.google import load_credentials, TOKEN_FILENAME
+    from ...events.store import EventStore
+    from ..deps import _connector_dir
+
+    fe = _finance_db(user)
+    cdb = _open_collab(user)
+    try:
+        acc = _require_custodial_account(fe, account_id)
+        row = fe.conn.execute(
+            "SELECT * FROM transactions WHERE id=? AND account_id=?",
+            (transaction_id, account_id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="transaction not found")
+        if row["amount"] >= 0:
+            raise HTTPException(status_code=400, detail="not a debit")
+        if row["beneficiary_id"]:
+            raise HTTPException(status_code=400, detail="already linked to a beneficiary")
+        ben = fe.get_beneficiary(body.beneficiary_id)
+        if not ben or ben["account_id"] != account_id:
+            raise HTTPException(status_code=404, detail="beneficiary not found")
+
+        fe.conn.execute(
+            "UPDATE transactions SET beneficiary_id=?, category=? WHERE id=?",
+            (body.beneficiary_id, "Custodial Disbursement", transaction_id))
+        fe.conn.commit()
+
+        eid = EventStore(cdb).emit("custodial.disbursed", {
+            "account_id": account_id, "beneficiary_id": body.beneficiary_id,
+            "beneficiary_name": ben["name"], "transaction_id": transaction_id,
+            "amount": abs(row["amount"]), "date": row["date"], "mode": body.mode,
+            "detected_from": row["source"],
+        }, source="custodial_suggestion_confirm")
+
+        creds = load_credentials(str(_connector_dir(user) / TOKEN_FILENAME))
+        sheet_result = append_disbursement_row(
+            creds, acc, ben, row["date"], body.mode, abs(row["amount"]),
+            "Custodial Disbursement", row["notes"] or "auto-detected from bank alert")
+
+        _maybe_close_cycle(user, fe, acc)
+        return {"transaction_id": transaction_id, "event_id": eid,
+                "sheet_write": sheet_result,
+                "balance": fe.custodial_balance(account_id)}
+    finally:
+        fe.close()
+        cdb.close()
+
+
+@router.post("/api/finance/custodial/{account_id}/precheck")
+def custodial_precheck(account_id: str, body: PrecheckBody,
+                       user: User = Depends(current_user)):
+    """Soft anomaly warnings (duplicate this cycle, unusual amount, balance
+    shortfall) shown before Confirm — advisory only, never blocks."""
+    from ...finance.custodial_ai import anomaly_precheck
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        ben = fe.get_beneficiary(body.beneficiary_id)
+        if not ben or ben["account_id"] != account_id:
+            raise HTTPException(status_code=404, detail="beneficiary not found")
+        return {"warnings": anomaly_precheck(fe, account_id,
+                                             body.beneficiary_id, body.amount)}
     finally:
         fe.close()

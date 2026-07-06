@@ -120,16 +120,21 @@ def next_cycle_prefill(fe: "FinanceEngine", account_id: str) -> dict:
         due_date = (_dt.date.fromisoformat(cycle_dates[0])
                     + _dt.timedelta(days=cadence_days)).isoformat()
 
+    from .custodial_ai import beneficiary_history, suggest_amount
+
     last_cycle = {r["beneficiary_id"]: r for r in fe.custodial_last_cycle(account_id)}
     beneficiaries = []
     for b in fe.list_beneficiaries(account_id):
         last = last_cycle.get(b["id"])
+        suggested, trend_note = suggest_amount(beneficiary_history(fe, b["id"]))
         beneficiaries.append({
             "beneficiary_id": b["id"],
             "name": b["name"],
             "sheet_tab": b.get("sheet_tab"),
             "last_amount": abs(last["amount"]) if last else None,
             "last_date": last["date"] if last else None,
+            "suggested_amount": suggested,
+            "trend_note": trend_note,
             "transaction_id": last["id"] if last else None,
             "has_screenshot": bool(last and last.get("screenshot_path")),
         })
