@@ -27,8 +27,8 @@ Commit after each phase. Present a short file-mapped plan before each phase.
 | 0.3 | Security: JWT secret ≥32B + gate DELETE all-transactions | DONE | 32f3c05 |
 | R1 | Tool registry (amy/tools/) | DONE | d10672f |
 | R3 | Unified approval queue (extend existing approvals) | DONE | 8a33642 |
-| R2 | Reactive agents on the event bus | DONE | (this commit) |
-| R7A-6 | Audit export | pending | |
+| R2 | Reactive agents on the event bus | DONE | 7d2d2f2 |
+| R7A-6 | Audit export | DONE | (this commit) |
 | R4 | Orchestrator agent | pending | |
 | R7A-3 | Calendar abstraction | pending | |
 | R7B | Jurisdiction packs + FX + locale | pending | |
