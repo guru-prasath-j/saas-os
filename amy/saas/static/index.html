@@ -366,7 +366,16 @@
 
       <!-- TAB: AGENT (approval inbox + activity; R4 adds the goal planner here) -->
       <div class="tab hidden" id="tab-agent">
-        <div class="card hidden" id="agentGoalCard"></div>
+        <div class="card">
+          <h3>Give the agent a goal</h3>
+          <p class="muted">e.g. "cut my spending 10% this quarter" — the orchestrator plans, reads your data, and parks any changes below for your approval.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="agentGoalInput" placeholder="Describe a goal…" style="flex:1;min-width:220px"/>
+            <button style="flex:0 0 90px" onclick="runAgentGoal()">Run</button>
+          </div>
+          <span class="meta" id="agentGoalMsg"></span>
+          <div id="agentGoalResult"></div>
+        </div>
         <div class="card">
           <h3>Approval inbox <span class="muted">— actions agents want to take</span></h3>
           <p class="muted">Every agent-proposed write waits here with its reasoning. Nothing runs until you approve it; items expire automatically if ignored.</p>
@@ -2164,7 +2173,44 @@ async function loadTimeline(period='week'){
 // ---- agent approval inbox ----
 const RISK_COLORS = {read:'var(--cyan)', write:'var(--warn)', destructive:'var(--danger)'};
 async function loadAgentTab(){
-  await Promise.all([loadAgentPending(), loadAgentHistory()]);
+  await Promise.all([loadAgentPending(), loadAgentHistory(), loadAgentGoals()]);
+}
+async function runAgentGoal(){
+  const inp=document.getElementById('agentGoalInput');
+  const goal=(inp.value||'').trim(); if(!goal) return;
+  const m=document.getElementById('agentGoalMsg');
+  m.textContent='Planning and executing… (this can take a minute)';
+  try{
+    const d=await jpost('/api/agent/goal',{goal});
+    if(d.error){m.textContent=d.error;return;}
+    m.textContent=d.queued_approvals?`Done — ${d.queued_approvals} action(s) waiting for your approval below.`:'Done.';
+    renderGoalRun(d);
+    loadAgentPending();
+  }catch(e){m.textContent=e.message;}
+}
+function renderGoalRun(d){
+  document.getElementById('agentGoalResult').innerHTML=`
+    <div style="margin-top:10px">
+      <b>Plan</b>
+      <ol style="margin:6px 0 8px 18px">${(d.plan||[]).map(s=>`<li>${s}</li>`).join('')}</ol>
+      ${(d.steps||[]).length?`<b>Actions</b>${(d.steps||[]).map(s=>`
+        <div class="toggle"><div style="min-width:0;flex:1">
+          <code>${s.tool}</code>
+          <span class="chip" style="color:${s.queued?'var(--warn)':(s.ok?'var(--success)':'var(--danger)')}">${s.queued?'queued for approval':(s.ok?'ok':'failed')}</span>
+          <div class="muted" style="font-size:12px;margin-top:2px">${s.reasoning||''}</div>
+        </div></div>`).join('')}`:''}
+      <div class="muted" style="margin-top:8px"><b>Summary:</b> ${d.summary||''}</div>
+    </div>`;
+}
+async function loadAgentGoals(){
+  try{
+    const d=await jget('/api/agent/goals?limit=5');
+    const runs=d.runs||[];
+    if(runs.length&&!document.getElementById('agentGoalResult').innerHTML){
+      renderGoalRun({plan:runs[0].plan,steps:runs[0].steps,summary:runs[0].summary});
+      document.getElementById('agentGoalMsg').textContent=`Last run: ${(runs[0].ts||'').slice(0,16).replace('T',' ')} — "${runs[0].goal}"`;
+    }
+  }catch(e){/* panel is optional */}
 }
 async function loadAgentPending(){
   try{
