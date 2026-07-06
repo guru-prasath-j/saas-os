@@ -359,6 +359,35 @@ def _tier_for(risk: str) -> int:
     return min(max(t, 0), 2)
 
 
+def _custodial_budget_warning(ctx: JobCtx, tool, args: dict) -> str | None:
+    """Guardrail found via manual testing: the orchestrator proposed cutting
+    a 'Custodial Disbursement' budget as if it were personal spending. This
+    injects a visible warning onto the approval card whenever an agent
+    targets set_budget at a category that is actually custodial pass-through
+    money — even if the LLM ignored the tool's own description. Read-only
+    check; never touches custodial.py's disbursement/refill logic."""
+    if tool.name != "set_budget":
+        return None
+    category = args.get("category")
+    if not category:
+        return None
+    try:
+        from ..tools.builtin import is_custodial_category
+        fe = ctx.open_finance()
+        try:
+            if is_custodial_category(fe, category):
+                return (f"Category '{category}' is mostly custodial "
+                        "pass-through money (forwarded to beneficiaries), "
+                        "not the user's own discretionary spending — "
+                        "review carefully before treating this as a "
+                        "personal spending cut.")
+        finally:
+            fe.close()
+    except Exception:
+        return None   # warning is best-effort; never block the proposal
+    return None
+
+
 def agent_gate(ctx: JobCtx, tool, args: dict) -> dict:
     """Installed as amy.tools.registry.AGENT_GATE (see amy/automation/__init__).
 
@@ -367,6 +396,9 @@ def agent_gate(ctx: JobCtx, tool, args: dict) -> dict:
     """
     reasoning = str(ctx._extras.get("agent_reasoning") or
                     "Proposed autonomously by an agent (no reasoning supplied).")
+    warning = _custodial_budget_warning(ctx, tool, args)
+    if warning:
+        reasoning = f"⚠️ {warning}\n\n{reasoning}"
     agent = str(ctx._extras.get("agent_name") or "agent")
     dedup_key = ctx._extras.pop("agent_dedup_key", None)
     affected = next((f"{k}={args[k]}" for k in _ENTITY_ARGS if args.get(k)), "")

@@ -26,6 +26,32 @@ def _index_dir(ctx) -> Path:
     return Path(ctx.finance_path).parent
 
 
+_CUSTODIAL_CATEGORY_THRESHOLD = 0.9
+
+
+def is_custodial_category(fe, category: str) -> bool:
+    """True if >=90% of this category's transaction volume (by absolute
+    amount) originates from custodial accounts — i.e. money forwarded to
+    beneficiaries, not the user's own discretionary spending.
+
+    Read-only signal for tool/agent layers (surfaced in list_budgets and
+    used to warn on set_budget proposals); never touches custodial.py's
+    disbursement/refill logic itself. Found via manual testing: the
+    orchestrator proposed cutting a 'Custodial Disbursement' budget as if
+    it were personal spending — this flag lets both the LLM and the human
+    reviewer catch that."""
+    rows = fe.conn.execute(
+        "SELECT t.amount, a.account_type FROM transactions t"
+        " LEFT JOIN accounts a ON t.account_id = a.id WHERE t.category=?",
+        (category,)).fetchall()
+    total = sum(abs(r["amount"] or 0) for r in rows)
+    if total <= 0:
+        return False
+    custodial_total = sum(abs(r["amount"] or 0) for r in rows
+                          if (r["account_type"] or "") == "custodial")
+    return (custodial_total / total) >= _CUSTODIAL_CATEGORY_THRESHOLD
+
+
 # ===========================================================================
 # READ tools
 # ===========================================================================
@@ -60,12 +86,21 @@ def _t_list_txns(ctx, args):
         fe.close()
 
 
-@register_tool("list_budgets", "Budget caps with current-month spend/headroom.",
+@register_tool("list_budgets",
+               "Budget caps with current-month spend/headroom. A row with "
+               "custodial_category:true means that category's money is "
+               "pass-through funds forwarded to beneficiaries from a "
+               "custodial account — NOT the user's own discretionary "
+               "spending. Never propose cutting it as part of a "
+               "'reduce my spending' style goal.",
                _obj({}), RISK_READ)
 def _t_budgets(ctx, args):
     fe = ctx.open_finance()
     try:
-        return fe.budget_status()
+        budgets = fe.budget_status()
+        for b in budgets:
+            b["custodial_category"] = is_custodial_category(fe, b["category"])
+        return budgets
     finally:
         fe.close()
 
@@ -222,7 +257,13 @@ def _t_add_txn(ctx, args):
     return executors.execute(ctx, "add_transaction", args)
 
 
-@register_tool("set_budget", "Create/update a monthly budget cap for a category.",
+@register_tool("set_budget",
+               "Create/update a monthly budget cap for a category. Before "
+               "proposing a cut as part of a spending-reduction goal, check "
+               "list_budgets' custodial_category flag for this category — "
+               "if true, it is pass-through money forwarded to "
+               "beneficiaries, not personal spending, and should not be "
+               "targeted for a spending cut.",
                _obj({"category": {"type": "string"},
                      "monthly_limit": {"type": "number"}},
                     ["category", "monthly_limit"]), RISK_WRITE)

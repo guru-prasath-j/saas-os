@@ -41,6 +41,35 @@ Commit after each phase. Present a short file-mapped plan before each phase.
 final commit: API_ENDPOINTS.md (5 new sections), CLAUDE.md (layout, agent
 events, quirks 15–19), docs/jurisdictions.md.
 
+## Post-launch bug fixes (found during manual UI testing)
+
+Two real bugs surfaced running the orchestrator against real data via the
+browser (goal: "cut my spending 10%"):
+
+1. **Custodial category blindness** — the orchestrator proposed cutting the
+   "Custodial Disbursement" budget by 10%, treating pass-through money
+   forwarded to beneficiaries as if it were the user's own discretionary
+   spending. Fixed: `amy/tools/builtin.py` adds `is_custodial_category()`
+   (>=90% of a category's transaction volume from custodial accounts);
+   `list_budgets` now returns `custodial_category` per row and both
+   `list_budgets`/`set_budget` tool descriptions warn against it;
+   `amy/automation/executors.py`'s `agent_gate` injects a visible ⚠️
+   warning into the approval card regardless of whether the LLM heeded the
+   description. Read-only checks — custodial.py itself untouched.
+2. **No dedup on orchestrator proposals** — running an equivalently-worded
+   goal twice ("cut spending 10%" vs "reduce spending by 10 percent")
+   queued two separate pending approvals for the identical action. Fixed:
+   `amy/automation/orchestrator.py` now computes a dedup key
+   (tool name + sorted args hash) before every tool invocation, matching
+   what reactive agents already do — a repeat proposal collapses into the
+   existing pending one, but a fresh proposal is still allowed after
+   rejection (dedup only blocks pending/executed rows).
+
+Tests: `tests/test_manual_testing_bugfixes.py` (8 passing). Full suite
+re-verified: 508 passed; 18 pre-existing failures (categorizer/BYOK/
+career-agent/finance-import tests, none touching the files changed here)
+confirmed present on the pre-fix baseline too — unrelated to this work.
+
 ## Approved decisions
 
 1. **Approval queue**: EXTEND the existing `approvals` table + tier router +

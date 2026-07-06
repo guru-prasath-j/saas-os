@@ -12,6 +12,7 @@ provider-retry), with three upgrades:
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import uuid
 from pathlib import Path
@@ -205,6 +206,17 @@ def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS) -> d
             reasoning = str(resp.get("reasoning") or f"step {i + 1}: {step}")
             ctx._extras["agent_name"] = "orchestrator"
             ctx._extras["agent_reasoning"] = reasoning
+            # Found via manual testing: running an equivalent goal twice
+            # ("cut spending 10%" vs "reduce spending by 10 percent") queued
+            # two separate approvals for the IDENTICAL action. Dedup by
+            # tool+args (not by goal phrasing) so a repeat proposal for the
+            # same underlying change collapses into the existing pending
+            # one; a fresh proposal is still allowed after rejection, since
+            # create_approval's dedup only blocks pending/executed rows.
+            ctx._extras["agent_dedup_key"] = (
+                "orch_" + tool_name + "_" + hashlib.sha256(
+                    json.dumps(args, sort_keys=True, default=str).encode()
+                ).hexdigest()[:16])
             try:
                 result = tools.invoke(ctx, tool_name, args, actor="agent")
                 ok = True
