@@ -27,12 +27,25 @@ def _open_collab(user: "User"):
 
 
 def _emit_fin(user: "User", event_type: str, payload: dict) -> None:
-    """Fire-and-forget finance event. Never raises — bad event must not break the route."""
+    """Fire-and-forget finance event. Never raises — bad event must not break the route.
+
+    Reactive agents (amy/agents/reactive.py) are wired onto the store before
+    emitting so they react synchronously to route-driven imports too; wiring
+    failures degrade to a plain emit."""
     try:
         from ...events.store import EventStore
         cdb = _open_collab(user)
         try:
-            EventStore(cdb).emit(event_type, payload, source="finance")
+            es = EventStore(cdb)
+            try:
+                from ...agents.reactive import register_reactive_agents
+                from ...automation.jobs import build_ctx
+                ctx = build_ctx(user.id, user.email, cdb,
+                                paths.index_dir(user.id), llm_router=None)
+                register_reactive_agents(es, ctx)
+            except Exception:
+                pass   # agents are optional; the event itself must still emit
+            es.emit(event_type, payload, source="finance")
         finally:
             cdb.close()
     except Exception:
@@ -99,6 +112,11 @@ class IncomeBody(BaseModel):
 class AffordBody(BaseModel):
     amount: float
     description: str = ""
+    # optional financing comparison (R7A-4): when months is set, the response
+    # compares total cost across the financing models enabled by the user's
+    # jurisdiction pack (values profiles may flag models)
+    financing_months: int | None = None
+    financing_annual_rate: float = 0.12
 
 
 class AccountBody(BaseModel):
@@ -217,13 +235,22 @@ def auto_remove_duplicates(user: User = Depends(current_user)):
 
 
 @router.delete("/api/finance/transactions")
-def reset_all_transactions(user: User = Depends(current_user)):
-    """Delete ALL transactions for this user (irreversible reset)."""
+def reset_all_transactions(confirm: str = "", user: User = Depends(current_user)):
+    """Delete ALL transactions for this user (irreversible reset).
+
+    Destructive full-wipe: requires the explicit confirmation token
+    ?confirm=DELETE-ALL-TRANSACTIONS so no single unqualified call (from the
+    UI, an agent, or a mistyped script) can erase the ledger."""
+    if confirm != "DELETE-ALL-TRANSACTIONS":
+        raise HTTPException(
+            status_code=400,
+            detail="Full wipe requires ?confirm=DELETE-ALL-TRANSACTIONS")
     fe = _finance_db(user)
     try:
         count = fe.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
         fe.conn.execute("DELETE FROM transactions")
         fe.conn.commit()
+        _emit_fin(user, "finance.transactions_reset", {"deleted": count})
         return {"deleted": count}
     finally:
         fe.close()
@@ -262,13 +289,23 @@ def auto_categorize(user: User = Depends(current_user)):
 
 @router.patch("/api/finance/transactions/{tid}/category")
 def set_category(tid: str, body: dict, user: User = Depends(current_user)):
-    """Manually set category for a single transaction."""
+    """Manually set category for a single transaction. The correction is also
+    saved as a learned rule so future imports categorize this merchant right."""
     cat = body.get("category", "Uncategorized")
     fe = _finance_db(user)
     try:
+        row = fe.conn.execute(
+            "SELECT merchant FROM transactions WHERE id=?", (tid,)).fetchone()
         fe.conn.execute("UPDATE transactions SET category=? WHERE id=?", (cat, tid))
         fe.conn.commit()
-        return {"ok": True}
+        learned = None
+        if row and row["merchant"]:
+            try:
+                from ...automation.learning import learn_from_correction
+                learned = learn_from_correction(fe, row["merchant"], cat)
+            except Exception:
+                pass
+        return {"ok": True, "learned_pattern": learned}
     finally:
         fe.close()
 
@@ -522,7 +559,25 @@ def can_afford(body: AffordBody, user: User = Depends(current_user)):
     fe = _finance_db(user)
     cdb = _open_collab(user)
     try:
-        return _can_afford(body.amount, body.description, fe, collab_db=cdb)
+        result = _can_afford(body.amount, body.description, fe, collab_db=cdb)
+        if body.financing_months and body.financing_months > 0:
+            try:
+                from ...financing import compare, flagged_models_from_profiles
+                from ...values import list_profiles
+                from .jurisdictions import home_pack
+                pack = home_pack(user)
+                result["financing_options"] = compare(
+                    body.amount, body.financing_months,
+                    body.financing_annual_rate,
+                    enabled_models=pack.get("financing_models"),
+                    flagged_models=flagged_models_from_profiles(
+                        list_profiles(fe, enabled_only=True)))
+                result["financing_note"] = (
+                    f"Models enabled by the '{pack['id']}' jurisdiction pack; "
+                    "totals assume the given rate/markup. Estimates only.")
+            except Exception:
+                pass   # financing comparison is additive; never break afford
+        return result
     finally:
         fe.close()
         cdb.close()

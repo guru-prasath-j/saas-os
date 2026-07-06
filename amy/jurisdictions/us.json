@@ -1,0 +1,102 @@
+{
+  "id": "us",
+  "name": "United States",
+  "currency": {
+    "code": "USD",
+    "symbol": "$",
+    "grouping": "western",
+    "decimals": 2
+  },
+  "fiscal_year": { "calendar": "fiscal", "start_month": 1 },
+  "calendar_systems": ["gregorian"],
+  "default_language": "en-US",
+  "financing_models": ["amortized_interest", "installment_zero_interest"],
+  "default_screening_profiles": ["esg_basic"],
+  "obligation_presets": [
+    {
+      "id": "quarterly_tax_estimate",
+      "name": "Quarterly estimated tax (IRS)",
+      "description": "Prepaid federal income tax for income without withholding, due in four installments.",
+      "kind": "scheduled_estimate",
+      "calendar_system": "fiscal",
+      "calendar_config": { "start_month": 1 },
+      "eligible_account_types": ["savings", "current"],
+      "versions": [
+        {
+          "effective_from": "2010-01-01",
+          "effective_to": null,
+          "rate": null,
+          "rate_basis": "user_estimated_annual_tax",
+          "wealth_threshold": { "amount": 1000, "basis": "annual_tax_liability", "currency": "USD" },
+          "schedule": [
+            { "month": 4, "day": 15, "cumulative_portion": 0.25, "label": "Q1 payment" },
+            { "month": 6, "day": 15, "cumulative_portion": 0.5, "label": "Q2 payment" },
+            { "month": 9, "day": 15, "cumulative_portion": 0.75, "label": "Q3 payment" },
+            { "month": 1, "day": 15, "cumulative_portion": 1.0, "label": "Q4 payment (following Jan)" }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "retirement_contribution",
+      "name": "Retirement contribution tracking",
+      "description": "Track progress toward the annual tax-advantaged retirement contribution limit.",
+      "kind": "annual_cap_tracking",
+      "calendar_system": "fiscal",
+      "calendar_config": { "start_month": 1 },
+      "eligible_account_types": ["savings", "current", "investment"],
+      "versions": [
+        {
+          "effective_from": "2024-01-01",
+          "effective_to": "2024-12-31",
+          "rate": null,
+          "rate_basis": "fixed_annual_cap",
+          "wealth_threshold": { "amount": 23000, "basis": "annual_contribution_cap", "currency": "USD" },
+          "schedule": [{ "month": 12, "day": 31, "cumulative_portion": 1.0, "label": "Contribution year end" }]
+        },
+        {
+          "effective_from": "2025-01-01",
+          "effective_to": null,
+          "rate": null,
+          "rate_basis": "fixed_annual_cap",
+          "wealth_threshold": { "amount": 23500, "basis": "annual_contribution_cap", "currency": "USD" },
+          "schedule": [{ "month": 12, "day": 31, "cumulative_portion": 1.0, "label": "Contribution year end" }]
+        }
+      ]
+    },
+    {
+      "id": "savings_commitment",
+      "name": "Savings commitment",
+      "description": "A self-imposed rule: set aside a fixed share of monthly income.",
+      "kind": "recurring_commitment",
+      "calendar_system": "gregorian",
+      "eligible_account_types": ["savings", "current"],
+      "versions": [
+        {
+          "effective_from": "2000-01-01",
+          "effective_to": null,
+          "rate": 0.10,
+          "rate_basis": "monthly_income",
+          "wealth_threshold": null,
+          "schedule": [{ "recurrence": "monthly", "day": 1, "label": "Monthly set-aside" }]
+        }
+      ]
+    }
+  ],
+  "compliance_deadlines": [
+    {
+      "id": "federal_filing",
+      "name": "Federal income-tax filing deadline",
+      "calendar_system": "gregorian",
+      "applies_to": "individual",
+      "versions": [
+        { "effective_from": "2010-01-01", "effective_to": null, "month": 4, "day": 15 }
+      ]
+    }
+  ],
+  "tax_facts": [],
+  "seasonal_notes": [
+    { "months": [11, 12], "note": "Holiday season — discretionary spending typically rises." }
+  ],
+  "disclaimer": "Figures produced from this pack are ESTIMATES for planning, not professional tax advice. The pack's rates and dates are shown (with effective dates) so you can verify them; confirm filings with a qualified professional."
+}

@@ -1,0 +1,103 @@
+{
+  "id": "uae",
+  "name": "United Arab Emirates",
+  "currency": {
+    "code": "AED",
+    "symbol": "AED",
+    "grouping": "western",
+    "decimals": 2
+  },
+  "fiscal_year": { "calendar": "fiscal", "start_month": 1 },
+  "calendar_systems": ["gregorian", "hijri"],
+  "default_language": "en-AE",
+  "financing_models": ["profit_rate_markup", "lease_to_own", "installment_zero_interest"],
+  "default_screening_profiles": ["interest_free_finance"],
+  "obligation_presets": [
+    {
+      "id": "zakat",
+      "name": "Zakat (annual wealth obligation)",
+      "description": "An annual giving obligation: a fixed share of qualifying wealth that has remained above the threshold (nisab) for one full lunar year.",
+      "kind": "wealth_rate",
+      "calendar_system": "hijri",
+      "eligible_account_types": ["savings", "current", "investment"],
+      "versions": [
+        {
+          "effective_from": "2000-01-01",
+          "effective_to": null,
+          "rate": 0.025,
+          "rate_basis": "qualifying_wealth",
+          "wealth_threshold": { "amount": 20000, "basis": "nisab_reference", "currency": "AED",
+            "note": "Nisab is conventionally the value of 85g gold; this pack value is a reference default — edit to the current gold-based figure." },
+          "holding_period_years": 1,
+          "schedule": [{ "recurrence": "yearly", "label": "On completion of one lunar year above nisab" }]
+        }
+      ]
+    },
+    {
+      "id": "corporate_tax_estimate",
+      "name": "Corporate tax estimate",
+      "description": "Federal corporate tax on business profits above the threshold.",
+      "kind": "scheduled_estimate",
+      "calendar_system": "fiscal",
+      "calendar_config": { "start_month": 1 },
+      "eligible_account_types": ["current"],
+      "applies_to": "business",
+      "versions": [
+        {
+          "effective_from": "2023-06-01",
+          "effective_to": null,
+          "rate": 0.09,
+          "rate_basis": "business_profit_above_threshold",
+          "wealth_threshold": { "amount": 375000, "basis": "annual_profit", "currency": "AED" },
+          "schedule": [{ "months_after_fy_end": 9, "label": "File and pay within 9 months of FY end" }]
+        }
+      ]
+    },
+    {
+      "id": "savings_commitment",
+      "name": "Savings commitment",
+      "description": "A self-imposed rule: set aside a fixed share of monthly income.",
+      "kind": "recurring_commitment",
+      "calendar_system": "gregorian",
+      "eligible_account_types": ["savings", "current"],
+      "versions": [
+        {
+          "effective_from": "2000-01-01",
+          "effective_to": null,
+          "rate": 0.10,
+          "rate_basis": "monthly_income",
+          "wealth_threshold": null,
+          "schedule": [{ "recurrence": "monthly", "day": 1, "label": "Monthly set-aside" }]
+        }
+      ]
+    }
+  ],
+  "compliance_deadlines": [
+    {
+      "id": "vat_quarterly",
+      "name": "VAT return filing (quarterly, standard stagger)",
+      "calendar_system": "gregorian",
+      "applies_to": "business_vat_registered",
+      "versions": [
+        { "effective_from": "2018-01-01", "effective_to": null,
+          "recurrence": "quarterly", "day": 28,
+          "months": [1, 4, 7, 10],
+          "note": "Due the 28th of the month following each quarter; stagger varies by registration." }
+      ]
+    }
+  ],
+  "tax_facts": [
+    {
+      "id": "vat_rate",
+      "name": "VAT (value-added tax)",
+      "versions": [
+        { "effective_from": "2018-01-01", "effective_to": null, "rate": 0.05,
+          "note": "Standard rate on most goods and services." }
+      ]
+    }
+  ],
+  "seasonal_notes": [
+    { "hijri_months": [9], "note": "Fasting month — food/charity spending patterns typically shift; giving rises." }
+  ],
+  "disclaimer": "Figures produced from this pack are ESTIMATES for planning, not professional tax or religious-obligation advice. The pack's rates, thresholds, and dates are shown (with effective dates) so you can verify them; confirm with a qualified professional."
+}

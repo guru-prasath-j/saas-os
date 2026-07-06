@@ -295,6 +295,69 @@ Amy routes LLM calls automatically:
 
 ---
 
+## Automation Layer
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/automation/status` | Paused flag, all jobs with next/last run, pending approvals count |
+| GET | `/api/automation/jobs` | List scheduled jobs |
+| PATCH | `/api/automation/jobs/{name}` | Enable/disable or reschedule — body: `{enabled?, schedule?}` |
+| POST | `/api/automation/jobs/{name}/run` | Run one job immediately |
+| GET | `/api/automation/runs` | Run ledger — params: `job`, `limit` |
+| GET | `/api/automation/approvals` | Approval Inbox — param: `status=pending\|all\|executed\|rejected\|expired` |
+| POST | `/api/automation/approvals/{aid}/approve` | Execute a pending approval (recorded in DecisionEngine) |
+| POST | `/api/automation/approvals/{aid}/reject` | Reject — body: `{reason}` |
+| GET | `/api/automation/llm-stats` | Per-provider call counts / success / latency |
+| GET | `/api/automation/dead-letters` | Event subscribers that failed twice |
+| GET | `/api/automation/learned-rules` | Learned categorizer rules |
+| POST | `/api/automation/pause` / `resume` | Global automation kill switch |
+| POST | `/api/assistant/chat` | Tool-loop assistant — body: `{message, history?}` |
+
+## Agent (orchestrator + audit)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/agent/goal` | Natural-language goal → plan → gated tool calls — body: `{goal}` |
+| GET | `/api/agent/goals` | Past orchestrator runs (plan, steps, summary) |
+| GET | `/api/agent/audit` | Regulator-style report — params: `from`, `to` (events, runs, approvals w/ reasoning, decisions, screening flags, LLM-routing docs) |
+
+## Jurisdictions & Locale (R7B)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/jurisdictions` | Available packs + user's home/active |
+| GET | `/api/jurisdictions/deadlines` | Upcoming obligation/compliance dates across active packs — param: `days` |
+| GET | `/api/jurisdictions/{pack_id}` | Full pack JSON |
+| GET/POST | `/api/settings/locale` | `{home_jurisdiction, active_jurisdictions[], language, currency}` |
+| GET | `/api/finance/overview/fx` | Per-currency + per-jurisdiction totals converted to base currency |
+
+## Obligations (R7A-2)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/obligations` | Active obligations with computed status, rules shown, disclaimer |
+| GET | `/api/obligations/presets` | Presets available across active jurisdictions |
+| POST | `/api/obligations/activate` | Body: `{jurisdiction, preset_id, config}` (e.g. `estimated_annual_amount`) |
+| PATCH | `/api/obligations/{oid}` | Update config — body: `{config}` |
+| POST | `/api/obligations/{oid}/deactivate` | Pause an obligation |
+
+## Values Screening (R7A-1)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/values/presets` | Shipped rule presets (interest_free_finance, esg_basic, budget_discipline) |
+| GET | `/api/values/profiles` | User's editable profiles |
+| POST | `/api/values/profiles` | Enable a preset or create custom — body: `{preset_id}` or `{name, rules}` |
+| PATCH | `/api/values/profiles/{pid}` | Body: `{enabled?, rules?}` |
+| GET | `/api/values/flags` | Screening flags — param: `status=open\|all` |
+| POST | `/api/values/flags/{fid}/dismiss` | Dismiss a flag |
+
+Notes:
+- `POST /api/finance/afford` accepts optional `financing_months` (+ `financing_annual_rate`) → response gains `financing_options` compared across the models the user's jurisdiction pack enables.
+- `DELETE /api/finance/transactions` (full wipe) requires `?confirm=DELETE-ALL-TRANSACTIONS`.
+
+---
+
 ## Running the Server
 
 ```bash

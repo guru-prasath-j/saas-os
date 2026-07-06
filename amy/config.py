@@ -44,6 +44,16 @@ AUTH_TOKEN = _env("AMY_AUTH_TOKEN")
 # folders instead of the hardcoded personal layout. Off by default (personal vault
 # keeps its tailored agents).
 DYNAMIC_AGENTS = _env("AMY_DYNAMIC_AGENTS", "").lower() in ("1", "true", "yes", "on")
+# Per-agent kill switches: AMY_AGENT_<NAME>=0/1 (e.g. AMY_AGENT_BUDGET=0).
+# Default ON, except agents that can take destructive actions — those must be
+# opted in explicitly (destructive_default_off=True).
+def agent_enabled(name: str, destructive_default_off: bool = False) -> bool:
+    raw = _env(f"AMY_AGENT_{name.upper()}", "").lower()
+    if raw in ("1", "true", "yes", "on"):
+        return True
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return not destructive_default_off
 FEATURES = {"write": not PUBLIC, "scheduler": not PUBLIC, "sensitive": not PUBLIC, "vault_edit": not PUBLIC, "voice": True}
 ALL_AGENTS = ["home", "profile", "projects", "family", "finances", "career", "resources", "jobsearch", "knowledge", "captures"]
 BLOCKED_AGENTS = ["family", "finances"] if PUBLIC else []

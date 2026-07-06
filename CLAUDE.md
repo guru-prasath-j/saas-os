@@ -37,8 +37,34 @@ amy/
       gmail_import.py    Gmail sync: 3-pass (parse → NVIDIA enrich → dedup insert)
       bank_presets.py    Named presets (HDFC, ICICI, SBI…)
       gmail_sensor.py    GmailSensor extends Sensor, polls + emits finance.gmail_synced
+  automation/
+    store.py             AutomationStore: jobs/runs/approvals/llm_calls tables (collab.db) + TrackedLLM
+    executors.py         JobCtx + tier router (submit_action) + agent_gate + approval executors
+    jobs.py              Handler registry, DEFAULT_JOBS, run_due (called by app loop)
+    ingest.py            Hybrid Gmail statement-attachment auto-ingest + LLM column-map proposal
+    learning.py          Learned categorizer rules (corrections → rules, finance.db)
+    sentinels.py         Anomaly sentinel (dupes/large debits/price hikes/run-rate) + goal drift
+    closers.py           Monthly close, custodial autopilot, morning briefing (R5), daily Autopilot
+    assistant.py         AI chat console: JSON tool loop over the tool registry
+    orchestrator.py      /api/agent/goal: plan → gated tools → GraphStore plan graph
+    audit.py             build_audit_report: regulator-style joined report
+  tools/                 Tool registry (R1): JSON-schema tools with risk levels
+                         read|write|destructive; AGENT_GATE parks agent writes
+  agents/reactive.py     Reactive agents (R2): budget/subscription/compliance/
+                         screening — wired onto EventStore at emit points
+  calendars/             Calendar abstraction (R7A-3): gregorian|hijri|fiscal
+  jurisdictions/         Packs (R7B): {uae,us,india}.json + loader/versioning
+                         + fx_seed.json. New jurisdiction = new JSON only
+  obligations/           Obligations engine + agent (R7A-2): zakat/advance tax/
+                         quarterly estimates/savings as pack presets
+  values/                Values screening (R7A-1): presets.json + profiles +
+                         screening_flags (collab.db, joined by audit)
+  financing.py           Financing models (R7A-4): amortized|markup|zero|lease
+  fx.py                  FxConverter (pluggable source, daily cache) + multi_currency_summary
+  locale_fmt.py          lakh/crore vs western grouping, format_money, prompt_hint
   events/
     store.py             EventStore: persist to collab.db events table + pub/sub
+                         (failing subscribers retried once → event_dead_letters)
     triggers.py          Default subscribers (goal, vault, all finance events)
   memory/writer.py       MemoryWriter: idempotent vault journaling (daily + atomic notes)
   knowledge_graph/store.py  GraphStore: typed nodes+edges, edge UPSERT with timestamps
@@ -49,6 +75,11 @@ amy/
     paths.py             saas_data/index/{uid}/
     routers/
       finance.py         ~60 finance endpoints (main active router, ~1300 lines)
+      automation.py      Jobs/runs/Approval Inbox/llm-stats/dead-letters + /api/assistant/chat
+      agent.py           /api/agent/goal + /api/agent/goals + /api/agent/audit
+      jurisdictions.py   Packs, deadlines, /api/settings/locale, /api/finance/overview/fx
+      obligations.py     /api/obligations activate/status/config
+      values.py          /api/values presets/profiles/flags
       auth.py            JWT login, OpenAI key, private folder
       connectors.py      Google OAuth flow + disconnect
       [11 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
@@ -180,6 +211,32 @@ POST              /api/business/entities/{entity_id}/compliance/run
 GET/PATCH         /api/business/rates[/{rate_id}]
 ```
 
+## Automation Layer
+
+App loop ticks every 60s (`AMY_AUTOMATION_TICK_SECONDS`), runs due jobs per user,
+logs every run to `automation_runs`. All automated writes go through
+`submit_action(ctx, tier, …)` — **tier 0** auto, **tier 1** auto+notify,
+**tier 2** parked in the Approval Inbox until approved. Executors:
+`import_statement` · `custodial_disburse` · `add_subscription` · `set_budget` ·
+`add_transaction`. Approve/reject decisions are recorded via DecisionEngine.
+
+Default jobs: `gmail_statement_ingest` (6h, hybrid: saved-map/preset/pdfplumber
+→ auto-import tier 1; auto-detect/LLM-map/ambiguous → tier 2 approval, map saved
+on approve) · `auto_categorize` (12h, learned rules first) · `anomaly_sentinel` ·
+`cashflow_alerts` · `morning_briefing` (07:00, email if SMTP set) ·
+`custodial_autopilot` (proposes prefilled cycle as tier 2) · `autopilot` (05:00) ·
+`monthly_close` (1st, CFO report + subscription proposals + compliance refresh).
+
+```
+GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
+PATCH             /api/automation/jobs/{name}            # enable/disable/schedule
+POST              /api/automation/jobs/{name}/run
+GET               /api/automation/approvals?status=pending|all
+POST              /api/automation/approvals/{aid}/approve | reject
+POST              /api/automation/pause | resume          # global kill switch
+POST              /api/assistant/chat                     # {message, history} → JSON tool loop
+```
+
 ## Event System
 
 ```python
@@ -196,8 +253,15 @@ finance.transaction_added / csv_imported / pdf_imported / gmail_synced
 finance.budget_set / subscription_added / investment_added / income_added
 finance.ledger_entry_posted / ledger_audited / compliance_suggested
 business.entity_created
+agent.insight / agent.action_proposed / agent.action_executed
+agent.goal_planned / agent.error        # always carry {agent, reasoning}
 vault.note_edited
 goal.created / goal.completed / capture.added / digest.generated
+
+# Reactive agents (amy/agents/reactive.py) are wired onto EventStore at both
+# emit points (_emit_fin + JobCtx.events()) — the bus is per-instance, so
+# subscribers must attach where the emit happens. Kill switches:
+# AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _SCREENING / _OBLIGATION.
 ```
 
 ## LLM Routing
@@ -233,6 +297,14 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 9. Custodial accounts excluded from income/spend — `account_type='custodial'` is the flag.
 10. `tracking_closeness` gates both Auditor execution and Accountant auto-post threshold on a business entity — check this before assuming the Auditor ran.
 11. Image/screenshot ledger uploads are not yet supported — convert to PDF/CSV first (see `BUSINESS.md`).
+12. Automation tables (jobs/runs/approvals/llm_calls) are created lazily by `AutomationStore.__init__` in collab.db; `learned_category_rules` lives in finance.db (created by `amy/automation/learning.py`).
+13. PATCH `/transactions/{tid}/category` also saves a learned rule — the categorizer converges from corrections; check `learned_category_rules` before assuming a static rule matched.
+14. The assistant (`/api/assistant/chat`) expects ONE JSON object per LLM turn; `_parse_step` takes the first complete object (models sometimes emit several tool calls at once) — but it filters for tool/final keys; the orchestrator has its own `_first_obj` without that filter (plans/summaries are arbitrary objects).
+15. Any registry tool invoked with `actor="agent"` and risk write/destructive parks in the Approval Inbox via `AGENT_GATE` (installed at `import amy.automation`). Agents set `ctx._extras["agent_name"/"agent_reasoning"/"agent_dedup_key"]` BEFORE `tools.invoke`. Destructive tier is hard-pinned to 2; `AMY_AGENT_WRITE_TIER` only affects writes.
+16. JWT secret: `AMY_JWT_SECRET` env (≥32 chars) or auto-generated at `saas_data/.jwt_secret`. `AMY_ENC_SECRET` fallback stays the legacy constant on purpose (stored keys stay decryptable). `DELETE /api/finance/transactions` needs `?confirm=DELETE-ALL-TRANSACTIONS`.
+17. Jurisdiction packs: everything country-specific is JSON in `amy/jurisdictions/` (validated on load, effective-date versioned). No jurisdiction/religion logic in Python — new jurisdiction = new pack file (docs/jurisdictions.md). Obligation/screening presets are data; custodial accounts are excluded from obligation wealth math as a hard rail packs cannot override.
+18. Currency display: never hardcode ₹ — backend formats via `amy/locale_fmt.py` (+ `AMY_CURRENCY_SYMBOL` for context.py), frontend via `fmtMoney()` driven by `/api/settings/locale`.
+19. `docs/AGENT_PLAN.md` is the source of truth for the agentic-finance project (phases, commits, binding R7B spec).
 
 ## Common Pattern
 

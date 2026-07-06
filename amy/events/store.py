@@ -30,6 +30,12 @@ FINANCE_SUBSCRIPTION_ADDED = "finance.subscription_added"
 FINANCE_INVESTMENT_ADDED = "finance.investment_added"
 FINANCE_INCOME_ADDED = "finance.income_added"
 
+# Agent events (reactive agents / orchestrator / screening)
+AGENT_INSIGHT = "agent.insight"
+AGENT_ACTION_PROPOSED = "agent.action_proposed"
+AGENT_ACTION_EXECUTED = "agent.action_executed"
+AGENT_ERROR = "agent.error"
+
 # Business entity events
 BUSINESS_ENTITY_CREATED = "business.entity_created"
 FINANCE_LEDGER_ENTRY_POSTED = "finance.ledger_entry_posted"
@@ -45,6 +51,11 @@ class EventStore:
     def __init__(self, collab_db):
         self.db = collab_db.conn
         self._handlers: dict[str, list] = {}
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS event_dead_letters ("
+            " id TEXT PRIMARY KEY, ts TEXT, event_id TEXT, event_type TEXT,"
+            " handler TEXT, error TEXT, retries INTEGER DEFAULT 0)")
+        self.db.commit()
 
     # --- pub/sub -----------------------------------------------------------
     def subscribe(self, event_type: str, handler):
@@ -75,7 +86,21 @@ class EventStore:
             try:
                 fn(ev)
             except Exception:
-                pass   # a bad subscriber never breaks the emitter
+                # a bad subscriber never breaks the emitter: retry once,
+                # then record the failure as a dead letter instead of losing it
+                try:
+                    fn(ev)
+                except Exception as exc:
+                    try:
+                        self.db.execute(
+                            "INSERT INTO event_dead_letters"
+                            " (id, ts, event_id, event_type, handler, error, retries)"
+                            " VALUES (?,?,?,?,?,?,1)",
+                            (uuid.uuid4().hex[:12], _now(), eid, event_type,
+                             getattr(fn, "__qualname__", repr(fn)), str(exc)[:400]))
+                        self.db.commit()
+                    except Exception:
+                        pass
         return eid
 
     # --- reads -------------------------------------------------------------
@@ -93,3 +118,8 @@ class EventStore:
     def stats(self) -> dict:
         rs = self.db.execute("SELECT type, COUNT(*) c FROM events GROUP BY type").fetchall()
         return {r["type"]: r["c"] for r in rs}
+
+    def dead_letters(self, n: int = 50) -> list[dict]:
+        rs = self.db.execute(
+            "SELECT * FROM event_dead_letters ORDER BY ts DESC LIMIT ?", (n,)).fetchall()
+        return [dict(r) for r in rs]

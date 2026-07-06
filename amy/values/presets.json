@@ -1,0 +1,63 @@
+{
+  "_comment": "Values screening presets - pure data, no religion/company/country references in code. A profile = a list of rules; rule kinds are interpreted by amy/values/__init__.py. Users copy a preset into their own editable profile.",
+  "presets": [
+    {
+      "id": "interest_free_finance",
+      "name": "Interest-free finance",
+      "description": "Flags interest charges and interest-bearing products so money can be kept free of paid/earned pure interest.",
+      "rules": [
+        {
+          "kind": "description_pattern",
+          "pattern": "finance charge|interest (charged|debited|levied)|\\bint\\.? (on|chg)|overdraft interest|late payment interest|emi interest|interest on (loan|card|overdraft)",
+          "reason": "Transaction description indicates a pure interest charge.",
+          "severity": "high"
+        },
+        {
+          "kind": "description_pattern",
+          "pattern": "\\b(fd|fixed deposit) interest\\b|interest credit(ed)?",
+          "reason": "Incoming pure interest — this profile flags earned interest for review/redirection.",
+          "severity": "normal"
+        },
+        {
+          "kind": "financing_type",
+          "flagged_models": ["amortized_interest"],
+          "reason": "Interest-based financing conflicts with this profile; markup or lease-based structures are the compliant alternatives.",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "id": "esg_basic",
+      "name": "ESG basics",
+      "description": "Flags spending at merchant types commonly excluded by environmental/social screens.",
+      "rules": [
+        {
+          "kind": "description_pattern",
+          "pattern": "casino|betting|bet365|1xbet|dream11|rummy|poker|lottery|lotto",
+          "reason": "Merchant appears to be gambling/betting-related.",
+          "severity": "high"
+        },
+        {
+          "kind": "description_pattern",
+          "pattern": "tobacco|cigarette|cigar\\b|vape shop",
+          "reason": "Merchant appears to be tobacco-related.",
+          "severity": "normal"
+        }
+      ]
+    },
+    {
+      "id": "budget_discipline",
+      "name": "Budget discipline",
+      "description": "Flags any single purchase that exceeds a set share of monthly income.",
+      "rules": [
+        {
+          "kind": "amount_share_of_income",
+          "max_share": 0.2,
+          "exclude_categories": ["Rent", "EMI/Loan", "Investment", "Transfer"],
+          "reason": "Single purchase exceeds the configured share of monthly income.",
+          "severity": "normal"
+        }
+      ]
+    }
+  ]
+}

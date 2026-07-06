@@ -207,6 +207,19 @@ class FinanceEngine:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_txn_beneficiary ON transactions(beneficiary_id)")
         self.conn.commit()
+        # Jurisdiction packs + multi-currency (R7B): optional jurisdiction on
+        # accounts/business entities (default = user's home pack at read time)
+        # and a native currency per account/transaction (default = home pack
+        # currency at read time — NULL means "home").
+        for table, col in (("accounts", "jurisdiction"),
+                           ("accounts", "currency"),
+                           ("transactions", "currency"),
+                           ("business_entities", "jurisdiction")):
+            try:
+                self.conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} TEXT")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
         # Business entities: seed the rate table with a starter set of GST
         # slabs and depreciation blocks (idempotent — only inserts missing keys).
         from .business.rates import seed_defaults as _seed_rate_defaults
@@ -461,7 +474,8 @@ class FinanceEngine:
         return result
 
     def update_account(self, account_id: str, **kwargs) -> bool:
-        allowed = {"nickname", "bank_name", "account_type", "sync_method", "meta"}
+        allowed = {"nickname", "bank_name", "account_type", "sync_method", "meta",
+                   "jurisdiction", "currency"}
         fields = {}
         for k, v in kwargs.items():
             if k not in allowed:
@@ -629,7 +643,7 @@ class FinanceEngine:
     def update_business_entity(self, entity_id: str, **kwargs) -> bool:
         allowed = {"name", "pan", "gstin", "constitution", "registration_state",
                    "financial_year", "tax_regime", "holds_depreciable_assets",
-                   "tracking_closeness"}
+                   "tracking_closeness", "jurisdiction"}
         fields = {}
         for k, v in kwargs.items():
             if k not in allowed:

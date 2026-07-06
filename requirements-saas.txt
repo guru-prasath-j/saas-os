@@ -5,5 +5,7 @@ cryptography>=42.0
 python-multipart>=0.0.9
 # pytest for the isolation test
 pytest>=8.0
+# Calendar abstraction (Phase R7A-3): Hijri <-> Gregorian conversion
+hijridate>=2.6
 # Production DB driver (only if you set DATABASE_URL to Postgres):
 # psycopg[binary]>=3.1

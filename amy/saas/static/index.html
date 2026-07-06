@@ -91,6 +91,20 @@
   .status{display:inline-flex;align-items:center;gap:7px;font-size:11.5px;font-family:var(--mono);color:var(--muted);background:var(--surface);border:1px solid rgba(191,255,10,.22);padding:5px 12px;border-radius:999px}
   .content{padding:22px 24px 40px;max-width:1000px;width:100%;margin:0 auto}
 
+  /* notification bell */
+  .notif-wrap{position:relative}
+  .notif-bell{background:var(--surface);color:var(--text);border:1px solid var(--border);border-radius:11px;padding:9px 10px;display:inline-flex;align-items:center;position:relative;box-shadow:none}
+  .notif-bell:hover{background:var(--surface-2);box-shadow:0 0 14px rgba(191,255,10,.12);transform:none}
+  .notif-bell svg{width:18px;height:18px;display:block}
+  .notif-badge{position:absolute;top:-4px;right:-4px;min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--danger);color:#2a0a0a;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1;box-shadow:0 0 0 2px var(--bg)}
+  .notif-panel{position:absolute;top:calc(100% + 10px);right:0;width:360px;max-height:70vh;overflow-y:auto;background:var(--bg2);border:1px solid var(--border-2);border-radius:var(--r-lg);box-shadow:var(--sh);backdrop-filter:blur(14px);z-index:20}
+  .notif-panel-head{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg2);border-radius:var(--r-lg) var(--r-lg) 0 0}
+  .notif-item{padding:11px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+  .notif-item:last-child{border-bottom:none}
+  .notif-item:hover{background:var(--surface-2)}
+  .notif-item.unread{background:rgba(191,255,10,.05)}
+  .notif-item.unread .notif-title::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--neon);margin-right:7px;vertical-align:middle}
+
   /* cards — carbon panels with neon hairline */
   .card{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--r-lg);padding:18px;margin-bottom:16px;backdrop-filter:blur(10px);box-shadow:var(--sh)}
   .card::before{content:"";position:absolute;top:-1px;left:16px;right:40%;height:1px;pointer-events:none;
@@ -98,6 +112,12 @@
   .card .card{box-shadow:none;background:var(--surface-2)}
   .card .card::before{display:none}
   .row{display:flex;gap:10px}.row>*{flex:1}
+
+  /* expense/income toggle (add-transaction form) */
+  .tx-type-btn{background:var(--surface);color:var(--muted);border:1px solid var(--border-2);border-radius:9px;padding:9px 13px;font-size:13px;font-weight:600;box-shadow:none;cursor:pointer}
+  .tx-type-btn:hover{box-shadow:none;transform:none}
+  .tx-type-btn.tx-expense.active{background:rgba(251,113,133,.15);color:var(--danger);border-color:var(--danger)}
+  .tx-type-btn.tx-income.active{background:rgba(52,211,153,.15);color:var(--success);border-color:var(--success)}
 
   /* controls */
   button{font-family:var(--display);background:var(--grad);color:#071106;border:0;border-radius:9px;padding:10px 16px;cursor:pointer;font-size:14px;font-weight:600;letter-spacing:.02em;transition:transform .15s,box-shadow .15s,opacity .15s,filter .15s}
@@ -228,6 +248,9 @@
 
       <!-- ── AI SYSTEMS ── -->
       <div class="nav-sector">AI Systems</div>
+      <button data-tab="agent">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/><path d="M12 3l7 4v5c0 4.5-3 8.5-7 9-4-.5-7-4.5-7-9V7z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="label">Agent Approvals</span><span class="chip hidden" id="agentPendingBadge" style="margin-left:auto"></span></button>
       <button data-tab="intelligence">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="12" r="10"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <span class="label">Intelligence</span></button>
@@ -260,7 +283,22 @@
   <main class="main">
     <div class="topbar">
       <h1 id="pageTitle">Chat</h1>
-      <span class="status"><span class="dot"></span> Amy online</span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="notif-wrap">
+          <button class="notif-bell" id="notifBellBtn" onclick="toggleNotifPanel()" title="Notifications" aria-label="Notifications">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.73 21a2 2 0 0 1-3.46 0" stroke-linecap="round"/></svg>
+            <span class="notif-badge hidden" id="notifBadge">0</span>
+          </button>
+          <div class="notif-panel hidden" id="notifPanel">
+            <div class="notif-panel-head">
+              <b style="font-size:13.5px">Notifications</b>
+              <button class="ghost sm" onclick="markAllNotifsRead()">Mark all read</button>
+            </div>
+            <div id="notifList"><p class="muted" style="padding:14px">Loading…</p></div>
+          </div>
+        </div>
+        <span class="status"><span class="dot"></span> Amy online</span>
+      </div>
     </div>
     <div class="content">
       <!-- AUTH -->
@@ -389,6 +427,41 @@
           <div id="decHistory"><p class="muted">Loading…</p></div>
           <div id="decAnalysis" class="hidden"></div>
           <div id="decRecs" class="hidden"></div>
+        </div>
+      </div>
+
+      <!-- TAB: AGENT (approval inbox + activity; R4 adds the goal planner here) -->
+      <div class="tab hidden" id="tab-agent">
+        <div class="card" id="briefingCard" style="display:none">
+          <h3>Latest briefing</h3>
+          <div id="briefingBody" class="muted"></div>
+        </div>
+        <div class="card">
+          <h3>Give the agent a goal</h3>
+          <p class="muted">e.g. "cut my spending 10% this quarter" — the orchestrator plans, reads your data, and parks any changes below for your approval.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="agentGoalInput" placeholder="Describe a goal…" style="flex:1;min-width:220px"/>
+            <button style="flex:0 0 90px" onclick="runAgentGoal()">Run</button>
+          </div>
+          <span class="meta" id="agentGoalMsg"></span>
+          <div id="agentGoalResult"></div>
+        </div>
+        <div class="card">
+          <h3>Approval inbox <span class="muted">— actions agents want to take</span></h3>
+          <p class="muted">Every agent-proposed write waits here with its reasoning. Nothing runs until you approve it; items expire automatically if ignored.</p>
+          <span class="meta" id="agentMsg"></span>
+          <div id="agentPending"><p class="muted">Loading…</p></div>
+        </div>
+        <div class="card">
+          <h3>Values screening <span class="muted">— your money, your principles</span></h3>
+          <p class="muted">Enable a profile and every new transaction is screened against it. Flags carry the reasoning and appear in the audit export.</p>
+          <div id="valuesProfiles"><p class="muted">Loading…</p></div>
+          <div style="margin-top:10px"><b style="font-size:13px">Open flags</b>
+            <div id="valuesFlags"><p class="muted">None.</p></div></div>
+        </div>
+        <div class="card">
+          <h3>Recent agent activity</h3>
+          <div id="agentHistory"><p class="muted">Loading…</p></div>
         </div>
       </div>
 
@@ -582,7 +655,11 @@
           <div class="card">
             <h3 style="margin-top:0">Add transaction</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
-              <input id="txAmount" placeholder="Amount (₹)" type="number" min="0" style="flex:0 0 130px"/>
+              <div style="display:flex;gap:6px;flex:0 0 auto">
+                <button type="button" class="tx-type-btn tx-expense active" id="txTypeExpense" onclick="setTxType('expense')">− Expense</button>
+                <button type="button" class="tx-type-btn tx-income" id="txTypeIncome" onclick="setTxType('income')">+ Income</button>
+              </div>
+              <input id="txAmount" placeholder="Amount" type="number" min="0" style="flex:0 0 130px"/>
               <input id="txCategory" placeholder="Category (e.g. Food)" style="flex:1;min-width:110px"/>
               <input id="txMerchant" placeholder="Merchant (e.g. Swiggy)" style="flex:1;min-width:110px"/>
               <input id="txDate" type="date" style="flex:0 0 140px"/>
@@ -615,7 +692,7 @@
           </div>
         </div>
 
-        <!-- BUDGET -->
+        <!-- BUDGET: moved to top-level tab-budget (nav restructure) -->
         <!-- SUBSCRIPTIONS -->
         <div id="finPane-subscriptions" class="hidden">
           <div class="card" id="subSuggestCard">
@@ -630,7 +707,7 @@
             <h3 style="margin-top:0">Add subscription</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
               <input id="subName" placeholder="Name (e.g. Netflix)" style="flex:1;min-width:120px"/>
-              <input id="subCost" placeholder="Monthly cost (₹)" type="number" min="0" step="0.01" style="flex:0 0 160px"/>
+              <input id="subCost" placeholder="Monthly cost" type="number" min="0" step="0.01" style="flex:0 0 160px"/>
               <input id="subRenewal" type="date" placeholder="Next renewal" style="flex:0 0 140px"/>
               <button style="flex:0 0 68px" onclick="addSub()">Add</button>
             </div>
@@ -663,8 +740,8 @@
                 <option value="other">Other</option>
               </select>
               <input id="invName" placeholder="Name (e.g. Axis Bluechip)" style="flex:2;min-width:140px"/>
-              <input id="invValue" placeholder="Current value (₹)" type="number" min="0" step="0.01" style="flex:0 0 170px"/>
-              <input id="invCost" placeholder="Cost basis (₹)" type="number" min="0" step="0.01" style="flex:0 0 150px"/>
+              <input id="invValue" placeholder="Current value" type="number" min="0" step="0.01" style="flex:0 0 170px"/>
+              <input id="invCost" placeholder="Cost basis" type="number" min="0" step="0.01" style="flex:0 0 150px"/>
               <button style="flex:0 0 68px" onclick="addInvestment()">Add</button>
             </div>
             <span class="meta" id="invMsg"></span>
@@ -693,7 +770,7 @@
                 <option value="investment">Investment</option>
                 <option value="other">Other</option>
               </select>
-              <input id="incAmount" placeholder="Monthly amount (₹)" type="number" min="0" step="1" style="flex:0 0 180px"/>
+              <input id="incAmount" placeholder="Monthly amount" type="number" min="0" step="1" style="flex:0 0 180px"/>
               <select id="incRecurrence" style="flex:0 0 110px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
                 <option value="monthly">Monthly</option>
                 <option value="weekly">Weekly</option>
@@ -1166,6 +1243,24 @@ async function api(path, opts={}){
 async function jget(path){ const r=await api(path); return r.json(); }
 async function jpost(path, body){ const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return r.json(); }
 
+// ---- locale layer (R7B): currency symbol + grouping from the user's jurisdiction pack ----
+let LOCALE = {symbol:'₹', grouping:'indian', code:'INR'};
+async function loadLocale(){
+  try{
+    const d=await jget('/api/settings/locale');
+    if(d&&d.currency) LOCALE={symbol:d.currency.symbol||'', grouping:d.currency.grouping||'western', code:d.currency.code||''};
+  }catch(e){/* pre-login or offline: keep defaults */}
+}
+function fmtNum(n, dec){
+  n=+(n||0);
+  const style=LOCALE.grouping==='indian'?'en-IN':'en-US';
+  return n.toLocaleString(style,{minimumFractionDigits:dec??0,maximumFractionDigits:dec??2});
+}
+function fmtMoney(n, dec){
+  const sep=(LOCALE.symbol||'').length>1?' ':'';
+  return LOCALE.symbol+sep+fmtNum(Math.abs(+(n||0)), dec);
+}
+
 // ---- minimal markdown ----
 function md(t){
   if(!t) return '';
@@ -1198,6 +1293,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   document.getElementById('onboard').classList.add('hidden');
   document.querySelectorAll('.tab').forEach(t=>t.classList.add('hidden'));
   document.getElementById('tab-'+tab).classList.remove('hidden');
+  if(tab==='agent') loadAgentTab();
   if(tab==='goals') loadGoals();
   if(tab==='finance') loadFinance();
   if(tab==='custodial') loadCustodialAccountPicker();
@@ -1219,6 +1315,82 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='mcp') loadMcpDashboard();
 });
 
+// ---- notification bell ----
+let notifPanelOpen = false;
+let _notifPollTimer = null;
+
+async function loadNotifBadge(){
+  try{
+    const d = await jget('/api/notifications/count');
+    const b = document.getElementById('notifBadge');
+    if(!b) return;
+    const n = d.unread_count || 0;
+    b.textContent = n > 99 ? '99+' : n;
+    b.classList.toggle('hidden', n === 0);
+  }catch(e){ /* not logged in yet, or offline — badge just stays as-is */ }
+}
+
+function toggleNotifPanel(){
+  notifPanelOpen = !notifPanelOpen;
+  document.getElementById('notifPanel').classList.toggle('hidden', !notifPanelOpen);
+  if(notifPanelOpen) loadNotifList();
+}
+
+function closeNotifPanel(){
+  notifPanelOpen = false;
+  const p = document.getElementById('notifPanel');
+  if(p) p.classList.add('hidden');
+}
+
+document.addEventListener('click', e=>{
+  if(notifPanelOpen && !e.target.closest('.notif-wrap')) closeNotifPanel();
+});
+
+async function loadNotifList(){
+  try{
+    const d = await jget('/api/notifications?limit=20');
+    const list = d.notifications || [];
+    if(!list.length){
+      document.getElementById('notifList').innerHTML = '<p class="muted" style="padding:14px">No notifications yet.</p>';
+      return;
+    }
+    document.getElementById('notifList').innerHTML = list.map(n=>`
+      <div class="notif-item ${n.read_at ? '' : 'unread'}" onclick="notifClicked('${n.id}')">
+        <div style="display:flex;justify-content:space-between;align-items:start;gap:8px">
+          <b class="notif-title" style="font-size:13px">${n.title}</b>
+          ${n.priority==='high' ? '<span class="chip" style="color:var(--danger);flex:0 0 auto">high</span>' : ''}
+        </div>
+        <div class="muted" style="font-size:12.5px;margin-top:3px">${n.body || ''}</div>
+        <div class="faint" style="font-size:11px;margin-top:4px">${(n.created_at||'').slice(0,16).replace('T',' ')}</div>
+      </div>`).join('');
+  }catch(e){
+    document.getElementById('notifList').innerHTML = '<p class="muted" style="padding:14px">'+e.message+'</p>';
+  }
+}
+
+async function notifClicked(nid){
+  try{ await api('/api/notifications/'+nid+'/read', {method:'POST'}); }catch(e){}
+  loadNotifBadge();
+  loadNotifList();
+}
+
+async function markAllNotifsRead(){
+  try{ await api('/api/notifications/read-all', {method:'POST'}); }catch(e){}
+  loadNotifBadge();
+  loadNotifList();
+}
+
+function startNotifPolling(){
+  loadNotifBadge();
+  if(_notifPollTimer) clearInterval(_notifPollTimer);
+  _notifPollTimer = setInterval(loadNotifBadge, 25000);
+}
+
+function stopNotifPolling(){
+  if(_notifPollTimer){ clearInterval(_notifPollTimer); _notifPollTimer = null; }
+  closeNotifPanel();
+}
+
 // ---- auth ----
 async function auth(kind){
   const msg=document.getElementById('authMsg'); msg.textContent='…';
@@ -1231,12 +1403,14 @@ async function auth(kind){
     TOKEN=d.token; localStorage.setItem('amy_token',TOKEN); show(true);
   }catch(e){ msg.textContent=e.message; }
 }
-function logout(){ TOKEN=''; localStorage.removeItem('amy_token'); show(false); }
+function logout(){ TOKEN=''; localStorage.removeItem('amy_token'); stopNotifPolling(); show(false); }
 
 // ---- onboarding ----
 async function onLogin(){
   let me={}, vault={notes:0};
   try{ me=await jget('/api/me'); }catch(e){ return; }
+  loadLocale();   // currency symbol/grouping from the user's jurisdiction pack
+  startNotifPolling();   // notification bell: badge now, then every 25s
   try{ vault=await jget('/api/vault'); }catch(e){}
   document.getElementById('who').textContent = me.email||'';
   const needsKey=!me.has_openai_key, needsVault=!(vault.notes>0);
@@ -2221,6 +2395,143 @@ async function loadTimeline(period='week'){
 }
 
 // ---- decisions ----
+// ---- agent approval inbox ----
+const RISK_COLORS = {read:'var(--cyan)', write:'var(--warn)', destructive:'var(--danger)'};
+async function loadAgentTab(){
+  await Promise.all([loadAgentPending(), loadAgentHistory(), loadAgentGoals(), loadValuesPanel(), loadBriefing()]);
+}
+async function loadBriefing(){
+  try{
+    const d=await jget('/api/notifications');
+    const b=(d.notifications||[]).find(n=>n.type==='morning_briefing');
+    if(!b) return;
+    document.getElementById('briefingCard').style.display='';
+    document.getElementById('briefingBody').innerHTML=`<div class="faint" style="font-size:11px;margin-bottom:4px">${(b.created_at||'').slice(0,16).replace('T',' ')}</div>${b.body}`;
+  }catch(e){/* optional panel */}
+}
+async function loadValuesPanel(){
+  try{
+    const [presets, profiles, flags] = await Promise.all([
+      jget('/api/values/presets'), jget('/api/values/profiles'), jget('/api/values/flags?status=open')]);
+    const byPreset={}; (profiles.profiles||[]).forEach(p=>{if(p.preset_id)byPreset[p.preset_id]=p;});
+    document.getElementById('valuesProfiles').innerHTML=(presets.presets||[]).map(p=>{
+      const prof=byPreset[p.id];
+      const on=prof&&prof.enabled;
+      return `<div class="toggle">
+        <div style="min-width:0;flex:1"><b>${p.name}</b>
+          <div class="muted" style="font-size:12px">${p.description}</div></div>
+        <button class="${on?'':'ghost '}sm" onclick="toggleValuesProfile('${p.id}','${prof?prof.id:''}',${on?'false':'true'})">${on?'Enabled ✓':'Enable'}</button>
+      </div>`;}).join('');
+    const fl=flags.flags||[];
+    document.getElementById('valuesFlags').innerHTML=fl.length?fl.map(f=>`
+      <div class="toggle"><div style="min-width:0;flex:1">
+        <span class="chip" style="color:${f.severity==='high'?'var(--danger)':'var(--warn)'}">${f.severity}</span>
+        <span class="muted" style="font-size:12px">${f.reasoning}</span></div>
+        <button class="ghost sm" onclick="dismissValuesFlag('${f.id}')">Dismiss</button>
+      </div>`).join(''):'<p class="muted">None.</p>';
+  }catch(e){document.getElementById('valuesProfiles').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function toggleValuesProfile(presetId, profileId, enable){
+  try{
+    if(profileId){ await api('/api/values/profiles/'+profileId,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:enable==='true'||enable===true})}); }
+    else { await jpost('/api/values/profiles',{preset_id:presetId}); }
+  }catch(e){}
+  loadValuesPanel();
+}
+async function dismissValuesFlag(fid){
+  try{ await api('/api/values/flags/'+fid+'/dismiss',{method:'POST'}); }catch(e){}
+  loadValuesPanel();
+}
+async function runAgentGoal(){
+  const inp=document.getElementById('agentGoalInput');
+  const goal=(inp.value||'').trim(); if(!goal) return;
+  const m=document.getElementById('agentGoalMsg');
+  m.textContent='Planning and executing… (this can take a minute)';
+  try{
+    const d=await jpost('/api/agent/goal',{goal});
+    if(d.error){m.textContent=d.error;return;}
+    m.textContent=d.queued_approvals?`Done — ${d.queued_approvals} action(s) waiting for your approval below.`:'Done.';
+    renderGoalRun(d);
+    loadAgentPending();
+  }catch(e){m.textContent=e.message;}
+}
+function renderGoalRun(d){
+  document.getElementById('agentGoalResult').innerHTML=`
+    <div style="margin-top:10px">
+      <b>Plan</b>
+      <ol style="margin:6px 0 8px 18px">${(d.plan||[]).map(s=>`<li>${s}</li>`).join('')}</ol>
+      ${(d.steps||[]).length?`<b>Actions</b>${(d.steps||[]).map(s=>`
+        <div class="toggle"><div style="min-width:0;flex:1">
+          <code>${s.tool}</code>
+          <span class="chip" style="color:${s.queued?'var(--warn)':(s.ok?'var(--success)':'var(--danger)')}">${s.queued?'queued for approval':(s.ok?'ok':'failed')}</span>
+          <div class="muted" style="font-size:12px;margin-top:2px">${s.reasoning||''}</div>
+        </div></div>`).join('')}`:''}
+      <div class="muted" style="margin-top:8px"><b>Summary:</b> ${d.summary||''}</div>
+    </div>`;
+}
+async function loadAgentGoals(){
+  try{
+    const d=await jget('/api/agent/goals?limit=5');
+    const runs=d.runs||[];
+    if(runs.length&&!document.getElementById('agentGoalResult').innerHTML){
+      renderGoalRun({plan:runs[0].plan,steps:runs[0].steps,summary:runs[0].summary});
+      document.getElementById('agentGoalMsg').textContent=`Last run: ${(runs[0].ts||'').slice(0,16).replace('T',' ')} — "${runs[0].goal}"`;
+    }
+  }catch(e){/* panel is optional */}
+}
+async function loadAgentPending(){
+  try{
+    const d=await jget('/api/automation/approvals?status=pending');
+    const list=d.approvals||[];
+    const badge=document.getElementById('agentPendingBadge');
+    if(badge){badge.textContent=list.length; badge.classList.toggle('hidden', !list.length);}
+    if(!list.length){document.getElementById('agentPending').innerHTML='<p class="muted">Nothing waiting — agents will park proposed actions here.</p>';return;}
+    document.getElementById('agentPending').innerHTML=list.map(a=>`
+      <div class="toggle">
+        <div style="min-width:0;flex:1">
+          <b>${a.title}</b>
+          ${a.risk?`<span class="chip" style="color:${RISK_COLORS[a.risk]||'var(--text)'}">${a.risk}</span>`:''}
+          <span class="chip">tier ${a.tier}</span>
+          ${a.affected_entity?`<span class="chip">${a.affected_entity}</span>`:''}
+          <div class="faint" style="font-size:11px">${(a.created_at||'').slice(0,16).replace('T',' ')}${a.expires_at?` · expires ${(a.expires_at||'').slice(0,10)}`:''} · from ${a.source||'agent'}</div>
+          ${a.reasoning||a.body?`<div class="muted" style="font-size:12px;margin-top:3px"><b>Why:</b> ${a.reasoning||a.body}</div>`:''}
+          ${a.payload&&a.payload.tool?`<div class="faint" style="font-size:11px;margin-top:2px"><code>${a.payload.tool}(${JSON.stringify(a.payload.args||{})})</code></div>`:''}
+        </div>
+        <div style="display:flex;gap:6px;flex-direction:column">
+          <button class="sm" onclick="agentDecide('${a.id}','approve')">Approve</button>
+          <button class="ghost sm" onclick="agentDecide('${a.id}','reject')">Reject</button>
+        </div>
+      </div>`).join('');
+  }catch(e){document.getElementById('agentPending').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function agentDecide(id, verb){
+  const m=document.getElementById('agentMsg');
+  m.textContent=verb==='approve'?'Executing…':'Rejecting…';
+  try{
+    const r=await api(`/api/automation/approvals/${id}/${verb}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    m.textContent=r.ok?(verb==='approve'?`Done — ${d.status}.`:'Rejected.'):(d.detail||'Error');
+  }catch(e){m.textContent=e.message;}
+  loadAgentTab();
+}
+async function loadAgentHistory(){
+  try{
+    const d=await jget('/api/automation/approvals?status=all&limit=25');
+    const list=(d.approvals||[]).filter(a=>a.status!=='pending');
+    if(!list.length){document.getElementById('agentHistory').innerHTML='<p class="muted">No agent activity yet.</p>';return;}
+    const stColor={executed:'var(--success)',auto_executed:'var(--success)',rejected:'var(--danger)',failed:'var(--danger)',expired:'var(--warn)'};
+    document.getElementById('agentHistory').innerHTML=list.map(a=>`
+      <div class="toggle">
+        <div style="min-width:0;flex:1">
+          <b>${a.title}</b>
+          <span class="chip" style="color:${stColor[a.status]||'var(--text)'}">${a.status}</span>
+          ${a.risk?`<span class="chip">${a.risk}</span>`:''}
+          <div class="faint" style="font-size:11px">${(a.decided_at||a.created_at||'').slice(0,16).replace('T',' ')} · from ${a.source||'automation'}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){document.getElementById('agentHistory').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
 async function loadDecisions(){
   await Promise.all([loadDecHistory(), loadDecAnalysis(), loadDecRecs()]);
 }
@@ -2603,7 +2914,7 @@ function switchFinView(view, btn){
   if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
 }
 
-function _fmt(n){ return '₹'+(+(n||0)).toLocaleString('en-IN'); }
+function _fmt(n){ return fmtMoney(n, 0); }
 
 async function loadFinOverview(){
   const el=document.getElementById('finOverviewCards');
@@ -2762,9 +3073,23 @@ async function autoCategorize(){
   }catch(e){btn.textContent='✦ Categorize';btn.disabled=false;alert(e.message);}
 }
 
+// Expense/Income toggle: the amount field always holds a positive
+// magnitude; this decides its sign before the transaction is saved.
+// Found via manual testing — the amount input alone (min="0") made it
+// impossible to ever record an expense, so every manually-added
+// transaction was silently treated as income and never counted toward
+// any budget.
+let txType = 'expense';
+function setTxType(type){
+  txType = type;
+  document.getElementById('txTypeExpense').classList.toggle('active', type==='expense');
+  document.getElementById('txTypeIncome').classList.toggle('active', type==='income');
+}
+
 async function addTransaction(){
-  const amount=parseFloat(document.getElementById('txAmount').value);
-  if(!amount){document.getElementById('txMsg').textContent='Enter an amount.';return;}
+  const raw=parseFloat(document.getElementById('txAmount').value);
+  if(!raw){document.getElementById('txMsg').textContent='Enter an amount.';return;}
+  const amount = txType==='expense' ? -Math.abs(raw) : Math.abs(raw);
   const m=document.getElementById('txMsg'); m.textContent='adding…';
   try{
     await jpost('/api/finance/transactions',{
@@ -3721,15 +4046,15 @@ async function previewImport(aid, type){
 
     const income=txns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
     const expense=txns.filter(t=>t.amount<0).reduce((s,t)=>s+t.amount,0);
-    const _f=v=>(v<0?'-':'+')+'₹'+Math.abs(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const _f=v=>(v<0?'-':'+')+fmtMoney(v,2);
     const _ac=v=>v<0?'color:var(--danger)':'color:var(--success)';
 
     preview.innerHTML=`
       <div style="margin-top:12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06)">
           <span style="flex:1;font-size:13px"><b>${txns.length}</b> transactions extracted from <span style="color:var(--muted)">${file.name}</span></span>
-          <span style="font-size:12px;color:var(--success);margin-right:6px">+₹${income.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
-          <span style="font-size:12px;color:var(--danger);margin-right:10px">-₹${Math.abs(expense).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+          <span style="font-size:12px;color:var(--success);margin-right:6px">+${fmtMoney(income,2)}</span>
+          <span style="font-size:12px;color:var(--danger);margin-right:10px">-${fmtMoney(expense,2)}</span>
           <button class="ghost sm" onclick="cancelImport('${aid}','${type}')" style="color:var(--danger)">✕ Cancel</button>
           <button onclick="confirmImport('${aid}','${type}')" style="padding:5px 14px;font-size:12px">✓ Import</button>
         </div>
@@ -3783,7 +4108,7 @@ async function resetAllTransactions(){
   const m=document.getElementById('resetMsg');
   m.textContent='Deleting…';
   try{
-    const r=await api('/api/finance/transactions',{method:'DELETE'});
+    const r=await api('/api/finance/transactions?confirm=DELETE-ALL-TRANSACTIONS',{method:'DELETE'});
     const d=await r.json();
     if(r.ok){
       m.textContent=`Deleted ${d.deleted} transactions.`;
@@ -3845,7 +4170,7 @@ async function scanDuplicates(){
               </td>
               <td style="padding:5px 10px;font-family:monospace;color:var(--muted);white-space:nowrap">${t.date}</td>
               <td style="padding:5px 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.merchant||''}">${t.merchant||'—'}</td>
-              <td style="padding:5px 10px;text-align:right;${t.amount<0?'color:var(--danger)':'color:var(--success)'};white-space:nowrap">${t.amount<0?'-':'+'}₹${Math.abs(t.amount).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+              <td style="padding:5px 10px;text-align:right;${t.amount<0?'color:var(--danger)':'color:var(--success)'};white-space:nowrap">${t.amount<0?'-':'+'}${fmtMoney(t.amount,2)}</td>
               <td style="padding:5px 10px;color:var(--muted);font-size:11px">${t.source||'manual'}</td>
               <td style="padding:5px 10px;color:var(--muted);font-size:11px">${t.category||''}</td>
             </tr>`).join('')}

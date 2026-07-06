@@ -77,6 +77,20 @@ class NotificationStore:
             (type, f'%"{related_id}"%', cutoff)).fetchone()
         return row is not None
 
+    def mark_read_by_related_id(self, related_id: str) -> int:
+        """Mark as read any notification whose related_entity references
+        this id — e.g. an Approval Inbox item that was just approved,
+        rejected, or expired. Keeps the bell's unread badge in sync with
+        decisions made elsewhere (the Approval Inbox) instead of leaving a
+        stale 'approval needed' notification unread forever. Returns the
+        number of rows updated."""
+        c = self.db.conn.execute(
+            "UPDATE notifications SET read_at=?"
+            " WHERE read_at IS NULL AND related_entity LIKE ?",
+            (self._now(), f'%"{related_id}"%'))
+        self.db.conn.commit()
+        return c.rowcount
+
 
 # ---------------------------------------------------------------------------
 # Service — evaluates finance conditions and emits notifications
