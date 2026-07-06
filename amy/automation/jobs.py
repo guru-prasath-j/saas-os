@@ -26,6 +26,11 @@ def _auto_categorize(ctx: JobCtx) -> dict:
         fe.close()
 
 
+def _obligation_check(ctx: JobCtx) -> dict:
+    from ..obligations.agent import obligation_check
+    return obligation_check(ctx)
+
+
 HANDLERS: dict[str, callable] = {
     "gmail_statement_ingest": ingest.gmail_statement_ingest,
     "auto_categorize": _auto_categorize,
@@ -35,6 +40,7 @@ HANDLERS: dict[str, callable] = {
     "custodial_autopilot": closers.custodial_autopilot,
     "morning_briefing": closers.morning_briefing,
     "autopilot": closers.autopilot_run,
+    "obligation_check": _obligation_check,
 }
 
 DEFAULT_JOBS: list[tuple[str, dict]] = [
@@ -46,6 +52,7 @@ DEFAULT_JOBS: list[tuple[str, dict]] = [
     ("custodial_autopilot",    {"daily_at": "07:30"}),
     ("morning_briefing",       {"daily_at": "07:00"}),
     ("autopilot",              {"daily_at": "05:00"}),
+    ("obligation_check",       {"daily_at": "07:15"}),
 ]
 
 

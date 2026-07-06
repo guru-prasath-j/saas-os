@@ -368,6 +368,7 @@ def agent_gate(ctx: JobCtx, tool, args: dict) -> dict:
     reasoning = str(ctx._extras.get("agent_reasoning") or
                     "Proposed autonomously by an agent (no reasoning supplied).")
     agent = str(ctx._extras.get("agent_name") or "agent")
+    dedup_key = ctx._extras.pop("agent_dedup_key", None)
     affected = next((f"{k}={args[k]}" for k in _ENTITY_ARGS if args.get(k)), "")
     expires = (_dt.datetime.now(_dt.timezone.utc)
                + _dt.timedelta(days=_DEFAULT_EXPIRY_DAYS)).isoformat()
@@ -379,6 +380,7 @@ def agent_gate(ctx: JobCtx, tool, args: dict) -> dict:
         body=reasoning,
         payload={"tool": tool.name, "args": args},
         source=agent,
+        dedup_key=dedup_key,
         reasoning=reasoning,
         risk=tool.risk,
         affected_entity=affected,
