@@ -48,6 +48,14 @@ class User(Base):
     # free-text country/city, set at signup or later in profile — powers
     # locale-aware budget suggestions (cost-of-living norms differ by country).
     location: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    # Jurisdiction packs (R7B): home pack id + comma-separated active pack ids.
+    # Defaults to 'india' (the original deployment); every value must match a
+    # JSON pack in amy/jurisdictions/.
+    home_jurisdiction: Mapped[str] = mapped_column(
+        String(16), default="india", server_default="india")
+    active_jurisdictions: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # BCP-47-ish output language for briefings/digests (locale layer).
+    language: Mapped[str | None] = mapped_column(String(12), nullable=True)
     created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=lambda: _dt.datetime.now(_dt.timezone.utc))
 
 
@@ -100,6 +108,19 @@ def _migrate_users_table() -> None:
         if "location" not in existing:
             conn.exec_driver_sql(
                 "ALTER TABLE users ADD COLUMN location VARCHAR(120)")
+            conn.commit()
+        if "home_jurisdiction" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN home_jurisdiction VARCHAR(16)"
+                " NOT NULL DEFAULT 'india'")
+            conn.commit()
+        if "active_jurisdictions" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN active_jurisdictions TEXT")
+            conn.commit()
+        if "language" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE users ADD COLUMN language VARCHAR(12)")
             conn.commit()
 
 

@@ -1,0 +1,17 @@
+{
+  "_comment": "Static FX seed - units of currency per 1 USD. APPROXIMATE planning rates, used when no live source is configured. as_of documents when these were set; refresh by editing this file or plugging a live source into FxConverter.",
+  "as_of": "2026-07-01",
+  "rates_vs_usd": {
+    "USD": 1.0,
+    "INR": 87.0,
+    "AED": 3.6725,
+    "EUR": 0.92,
+    "GBP": 0.78,
+    "SAR": 3.75,
+    "PKR": 282.0,
+    "BDT": 122.0,
+    "IDR": 16200.0,
+    "MYR": 4.45,
+    "SGD": 1.34
+  }
+}

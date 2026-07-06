@@ -580,7 +580,7 @@
           <div class="card">
             <h3 style="margin-top:0">Add transaction</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
-              <input id="txAmount" placeholder="Amount (₹)" type="number" min="0" style="flex:0 0 130px"/>
+              <input id="txAmount" placeholder="Amount" type="number" min="0" style="flex:0 0 130px"/>
               <input id="txCategory" placeholder="Category (e.g. Food)" style="flex:1;min-width:110px"/>
               <input id="txMerchant" placeholder="Merchant (e.g. Swiggy)" style="flex:1;min-width:110px"/>
               <input id="txDate" type="date" style="flex:0 0 140px"/>
@@ -627,7 +627,7 @@
             <h3 style="margin-top:0">Set budget</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
               <input id="budgetCat" placeholder="Category (e.g. Food)" style="flex:1;min-width:140px"/>
-              <input id="budgetLimit" placeholder="Monthly limit (₹)" type="number" min="0" style="flex:0 0 170px"/>
+              <input id="budgetLimit" placeholder="Monthly limit" type="number" min="0" style="flex:0 0 170px"/>
               <button style="flex:0 0 68px" onclick="addBudget()">Set</button>
             </div>
             <span class="meta" id="budgetMsg"></span>
@@ -652,7 +652,7 @@
             <h3 style="margin-top:0">Add subscription</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
               <input id="subName" placeholder="Name (e.g. Netflix)" style="flex:1;min-width:120px"/>
-              <input id="subCost" placeholder="Monthly cost (₹)" type="number" min="0" step="0.01" style="flex:0 0 160px"/>
+              <input id="subCost" placeholder="Monthly cost" type="number" min="0" step="0.01" style="flex:0 0 160px"/>
               <input id="subRenewal" type="date" placeholder="Next renewal" style="flex:0 0 140px"/>
               <button style="flex:0 0 68px" onclick="addSub()">Add</button>
             </div>
@@ -685,8 +685,8 @@
                 <option value="other">Other</option>
               </select>
               <input id="invName" placeholder="Name (e.g. Axis Bluechip)" style="flex:2;min-width:140px"/>
-              <input id="invValue" placeholder="Current value (₹)" type="number" min="0" step="0.01" style="flex:0 0 170px"/>
-              <input id="invCost" placeholder="Cost basis (₹)" type="number" min="0" step="0.01" style="flex:0 0 150px"/>
+              <input id="invValue" placeholder="Current value" type="number" min="0" step="0.01" style="flex:0 0 170px"/>
+              <input id="invCost" placeholder="Cost basis" type="number" min="0" step="0.01" style="flex:0 0 150px"/>
               <button style="flex:0 0 68px" onclick="addInvestment()">Add</button>
             </div>
             <span class="meta" id="invMsg"></span>
@@ -715,7 +715,7 @@
                 <option value="investment">Investment</option>
                 <option value="other">Other</option>
               </select>
-              <input id="incAmount" placeholder="Monthly amount (₹)" type="number" min="0" step="1" style="flex:0 0 180px"/>
+              <input id="incAmount" placeholder="Monthly amount" type="number" min="0" step="1" style="flex:0 0 180px"/>
               <select id="incRecurrence" style="flex:0 0 110px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 10px;font-size:14px">
                 <option value="monthly">Monthly</option>
                 <option value="weekly">Weekly</option>
@@ -1117,6 +1117,24 @@ async function api(path, opts={}){
 async function jget(path){ const r=await api(path); return r.json(); }
 async function jpost(path, body){ const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return r.json(); }
 
+// ---- locale layer (R7B): currency symbol + grouping from the user's jurisdiction pack ----
+let LOCALE = {symbol:'₹', grouping:'indian', code:'INR'};
+async function loadLocale(){
+  try{
+    const d=await jget('/api/settings/locale');
+    if(d&&d.currency) LOCALE={symbol:d.currency.symbol||'', grouping:d.currency.grouping||'western', code:d.currency.code||''};
+  }catch(e){/* pre-login or offline: keep defaults */}
+}
+function fmtNum(n, dec){
+  n=+(n||0);
+  const style=LOCALE.grouping==='indian'?'en-IN':'en-US';
+  return n.toLocaleString(style,{minimumFractionDigits:dec??0,maximumFractionDigits:dec??2});
+}
+function fmtMoney(n, dec){
+  const sep=(LOCALE.symbol||'').length>1?' ':'';
+  return LOCALE.symbol+sep+fmtNum(Math.abs(+(n||0)), dec);
+}
+
 // ---- minimal markdown ----
 function md(t){
   if(!t) return '';
@@ -1187,6 +1205,7 @@ function logout(){ TOKEN=''; localStorage.removeItem('amy_token'); show(false); 
 async function onLogin(){
   let me={}, vault={notes:0};
   try{ me=await jget('/api/me'); }catch(e){ return; }
+  loadLocale();   // currency symbol/grouping from the user's jurisdiction pack
   try{ vault=await jget('/api/vault'); }catch(e){}
   document.getElementById('who').textContent = me.email||'';
   const needsKey=!me.has_openai_key, needsVault=!(vault.notes>0);
@@ -2649,7 +2668,7 @@ function switchFinView(view, btn){
   if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
 }
 
-function _fmt(n){ return '₹'+(+(n||0)).toLocaleString('en-IN'); }
+function _fmt(n){ return fmtMoney(n, 0); }
 
 async function loadFinOverview(){
   const el=document.getElementById('finOverviewCards');
@@ -3530,15 +3549,15 @@ async function previewImport(aid, type){
 
     const income=txns.filter(t=>t.amount>0).reduce((s,t)=>s+t.amount,0);
     const expense=txns.filter(t=>t.amount<0).reduce((s,t)=>s+t.amount,0);
-    const _f=v=>(v<0?'-':'+')+'₹'+Math.abs(v).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});
+    const _f=v=>(v<0?'-':'+')+fmtMoney(v,2);
     const _ac=v=>v<0?'color:var(--danger)':'color:var(--success)';
 
     preview.innerHTML=`
       <div style="margin-top:12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;overflow:hidden">
         <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06)">
           <span style="flex:1;font-size:13px"><b>${txns.length}</b> transactions extracted from <span style="color:var(--muted)">${file.name}</span></span>
-          <span style="font-size:12px;color:var(--success);margin-right:6px">+₹${income.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
-          <span style="font-size:12px;color:var(--danger);margin-right:10px">-₹${Math.abs(expense).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+          <span style="font-size:12px;color:var(--success);margin-right:6px">+${fmtMoney(income,2)}</span>
+          <span style="font-size:12px;color:var(--danger);margin-right:10px">-${fmtMoney(expense,2)}</span>
           <button class="ghost sm" onclick="cancelImport('${aid}','${type}')" style="color:var(--danger)">✕ Cancel</button>
           <button onclick="confirmImport('${aid}','${type}')" style="padding:5px 14px;font-size:12px">✓ Import</button>
         </div>
@@ -3654,7 +3673,7 @@ async function scanDuplicates(){
               </td>
               <td style="padding:5px 10px;font-family:monospace;color:var(--muted);white-space:nowrap">${t.date}</td>
               <td style="padding:5px 10px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${t.merchant||''}">${t.merchant||'—'}</td>
-              <td style="padding:5px 10px;text-align:right;${t.amount<0?'color:var(--danger)':'color:var(--success)'};white-space:nowrap">${t.amount<0?'-':'+'}₹${Math.abs(t.amount).toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2})}</td>
+              <td style="padding:5px 10px;text-align:right;${t.amount<0?'color:var(--danger)':'color:var(--success)'};white-space:nowrap">${t.amount<0?'-':'+'}${fmtMoney(t.amount,2)}</td>
               <td style="padding:5px 10px;color:var(--muted);font-size:11px">${t.source||'manual'}</td>
               <td style="padding:5px 10px;color:var(--muted);font-size:11px">${t.category||''}</td>
             </tr>`).join('')}

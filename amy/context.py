@@ -20,6 +20,16 @@ if TYPE_CHECKING:
 _MAX_EVENTS = 100
 _CONTEXT_WINDOW = 20   # events shown in get_context()
 
+# Locale layer (R7B): the display symbol is configuration, not code. Default
+# comes from AMY_CURRENCY_SYMBOL (falls back to ₹ for existing installs);
+# per-user formatting flows through amy/locale_fmt.py + jurisdiction packs.
+import os as _os
+CURRENCY_SYMBOL = _os.getenv("AMY_CURRENCY_SYMBOL", "₹")
+
+
+def _money(amount: float) -> str:
+    return f"{CURRENCY_SYMBOL}{abs(amount):,.0f}"
+
 
 class ContextModule:
     """Maintains a rolling window of recent events for agent context injection."""
@@ -93,7 +103,7 @@ def _format_payload(etype: str, p: dict) -> str:
     if etype == "finance.transaction_added":
         amt = p.get("amount", 0)
         sign = "+" if amt > 0 else ""
-        return f"{p.get('merchant', '?')} {sign}₹{abs(amt):,.0f} [{p.get('category', '?')}]"
+        return f"{p.get('merchant', '?')} {sign}{_money(amt)} [{p.get('category', '?')}]"
     if etype == "finance.csv_imported":
         return f"{p.get('imported', 0)} tx from {p.get('bank_name', '?')} CSV"
     if etype == "finance.pdf_imported":
@@ -101,11 +111,11 @@ def _format_payload(etype: str, p: dict) -> str:
     if etype == "finance.gmail_synced":
         return f"{p.get('imported', 0)} tx imported, {p.get('accounts_synced', 0)} accounts"
     if etype == "finance.budget_set":
-        return f"{p.get('category', '?')} → ₹{p.get('monthly_limit', 0):,.0f}/month"
+        return f"{p.get('category', '?')} → {_money(p.get('monthly_limit', 0))}/month"
     if etype == "finance.subscription_added":
-        return f"{p.get('name', '?')} ₹{p.get('monthly_cost', 0):,.0f}/month"
+        return f"{p.get('name', '?')} {_money(p.get('monthly_cost', 0))}/month"
     if etype == "finance.investment_added":
-        return f"{p.get('name', '?')} ({p.get('type', '?')}) ₹{p.get('current_value', 0):,.0f}"
+        return f"{p.get('name', '?')} ({p.get('type', '?')}) {_money(p.get('current_value', 0))}"
     if etype == "vault.note_edited":
         return p.get("path", "?")
     if etype == "goal.created":
@@ -120,21 +130,21 @@ def _finance_from_engine(fe) -> str:
     lines = []
     try:
         overview = fe.overview()
-        lines.append(f"Balance (30d): income ₹{overview.get('income_30d', 0):,.0f},"
-                     f" spend ₹{overview.get('spend_30d', 0):,.0f}")
+        lines.append(f"Balance (30d): income {_money(overview.get('income_30d', 0))},"
+                     f" spend {_money(overview.get('spend_30d', 0))}")
     except Exception:
         pass
     try:
         budgets = fe.budget_status()
         for b in (budgets or [])[:5]:
             pct = b.get("pct_used", 0)
-            lines.append(f"Budget {b['category']}: {pct:.0f}% of ₹{b['monthly_limit']:,.0f}")
+            lines.append(f"Budget {b['category']}: {pct:.0f}% of {_money(b['monthly_limit'])}")
     except Exception:
         pass
     try:
         subs = fe.list_subscriptions()
         total = fe.subscription_total_monthly()
-        lines.append(f"Subscriptions: {len(subs)} active, ₹{total:,.0f}/month")
+        lines.append(f"Subscriptions: {len(subs)} active, {_money(total)}/month")
     except Exception:
         pass
     return "\n".join(lines) if lines else "Finance data unavailable."

@@ -30,8 +30,8 @@ Commit after each phase. Present a short file-mapped plan before each phase.
 | R2 | Reactive agents on the event bus | DONE | 7d2d2f2 |
 | R7A-6 | Audit export | DONE | ba52cdf |
 | R4 | Orchestrator agent | DONE | 16b0a40 |
-| R7A-3 | Calendar abstraction | DONE | (this commit) |
-| R7B | Jurisdiction packs + FX + locale | pending | |
+| R7A-3 | Calendar abstraction | DONE | 0061f6c |
+| R7B | Jurisdiction packs + FX + locale | DONE | (this commit) |
 | R7A-2 | Obligations engine | pending | |
 | R7A-1 | Values screening engine | pending | |
 | R7A-4 | Financing-model interface | pending | |
