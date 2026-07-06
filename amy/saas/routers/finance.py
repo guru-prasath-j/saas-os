@@ -112,6 +112,11 @@ class IncomeBody(BaseModel):
 class AffordBody(BaseModel):
     amount: float
     description: str = ""
+    # optional financing comparison (R7A-4): when months is set, the response
+    # compares total cost across the financing models enabled by the user's
+    # jurisdiction pack (values profiles may flag models)
+    financing_months: int | None = None
+    financing_annual_rate: float = 0.12
 
 
 class AccountBody(BaseModel):
@@ -554,7 +559,25 @@ def can_afford(body: AffordBody, user: User = Depends(current_user)):
     fe = _finance_db(user)
     cdb = _open_collab(user)
     try:
-        return _can_afford(body.amount, body.description, fe, collab_db=cdb)
+        result = _can_afford(body.amount, body.description, fe, collab_db=cdb)
+        if body.financing_months and body.financing_months > 0:
+            try:
+                from ...financing import compare, flagged_models_from_profiles
+                from ...values import list_profiles
+                from .jurisdictions import home_pack
+                pack = home_pack(user)
+                result["financing_options"] = compare(
+                    body.amount, body.financing_months,
+                    body.financing_annual_rate,
+                    enabled_models=pack.get("financing_models"),
+                    flagged_models=flagged_models_from_profiles(
+                        list_profiles(fe, enabled_only=True)))
+                result["financing_note"] = (
+                    f"Models enabled by the '{pack['id']}' jurisdiction pack; "
+                    "totals assume the given rate/markup. Estimates only.")
+            except Exception:
+                pass   # financing comparison is additive; never break afford
+        return result
     finally:
         fe.close()
         cdb.close()
