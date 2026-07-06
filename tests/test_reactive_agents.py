@@ -59,6 +59,66 @@ def test_budget_agent_full_flow(env):
     assert notes and "budget" in notes[0].read_text(encoding="utf-8")
 
 
+def test_budget_agent_reacts_to_single_manual_transaction_add(env):
+    """Entering ONE transaction manually (finance.transaction_added, no
+    'imported' count) must trigger the same budget check an import does —
+    this was the gap: only screening_agent reacted to manual adds before."""
+    ctx, es, _ = env
+    fe = ctx.open_finance()
+    try:
+        fe.set_budget("Food", 1000)
+        tid = fe.add_transaction(-1500, "Food", "BIG RESTAURANT")
+    finally:
+        fe.close()
+
+    es.emit("finance.transaction_added",
+            {"id": tid, "amount": -1500, "category": "Food",
+             "merchant": "BIG RESTAURANT", "source": "manual"}, source="finance")
+
+    insights = es.recent("agent.insight")
+    assert insights, "budget agent produced no insight on manual add"
+    p = insights[0]["payload"]
+    assert p["agent"] == "budget" and p["category"] == "Food"
+    assert "you just added a transaction" in p["reasoning"].lower()
+    notifs = ctx.notify_store().list()
+    assert any(n["type"] == "agent_budget_check" for n in notifs)
+
+
+def test_budget_agent_manual_add_scopes_to_affected_category_only(env):
+    """A manual add for category A must not re-notify about an unrelated
+    category B that also happens to be over budget from earlier activity."""
+    ctx, es, _ = env
+    fe = ctx.open_finance()
+    try:
+        fe.set_budget("Food", 1000)
+        fe.set_budget("Shopping", 1000)
+        fe.add_transaction(-1500, "Shopping", "ALREADY OVER")   # pre-existing
+        tid = fe.add_transaction(-100, "Food", "SMALL COFFEE")  # well under cap
+    finally:
+        fe.close()
+
+    es.emit("finance.transaction_added",
+            {"id": tid, "amount": -100, "category": "Food",
+             "merchant": "SMALL COFFEE", "source": "manual"}, source="finance")
+
+    insights = es.recent("agent.insight")
+    assert insights == [], (
+        "manual add for Food must not surface Shopping's pre-existing overage")
+
+
+def test_budget_agent_manual_add_no_budget_set_is_quiet(env):
+    ctx, es, _ = env
+    fe = ctx.open_finance()
+    try:
+        tid = fe.add_transaction(-50, "Food", "NO BUDGET SET")
+    finally:
+        fe.close()
+    es.emit("finance.transaction_added",
+            {"id": tid, "amount": -50, "category": "Food",
+             "merchant": "NO BUDGET SET", "source": "manual"}, source="finance")
+    assert es.recent("agent.insight") == []
+
+
 def test_budget_agent_quiet_when_nothing_imported(env):
     ctx, es, _ = env
     fe = ctx.open_finance()

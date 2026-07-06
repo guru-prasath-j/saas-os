@@ -6,7 +6,10 @@ JobCtx.events() in the automation layer call register_reactive_agents), so
 reactions fire no matter which code path imported the data.
 
 Agents:
-  budget       — after an import, re-checks caps vs actual spend
+  budget       — after an import OR a single manual transaction add,
+                 re-checks caps vs actual spend (scoped to the affected
+                 category on a manual add, so entering one transaction
+                 doesn't re-notify about unrelated categories)
   subscription — after an import, proactively detects new recurring charges
                  and proposes them through the approval queue
   compliance   — after a ledger post, runs compliance suggestions for
@@ -29,6 +32,10 @@ _BUDGET_WARN_PCT = 0.90       # insight when a category crosses 90% of its cap
 _SUB_MIN_CONFIDENCE = 0.75    # propose only confident subscription candidates
 _IMPORT_EVENTS = ("finance.gmail_synced", "finance.csv_imported",
                   "finance.pdf_imported")
+# Anything that adds transactions to the ledger — bulk imports plus a single
+# manually-entered transaction (finance.transaction_added has no "imported"
+# count; its presence alone means one row was just added).
+_TRANSACTION_EVENTS = _IMPORT_EVENTS + ("finance.transaction_added",)
 
 
 def _get_llm(ctx):
@@ -85,26 +92,36 @@ def _report_error(events, agent: str, exc: Exception) -> None:
 # ---------------------------------------------------------------------------
 
 def _budget_agent(events, ctx):
-    def on_import(ev):
+    def on_transaction_activity(ev):
         try:
-            if not (ev.get("payload") or {}).get("imported"):
-                return   # nothing new came in
+            p = ev.get("payload") or {}
+            is_manual_add = ev.get("type") == "finance.transaction_added"
+            if not is_manual_add and not p.get("imported"):
+                return   # bulk import brought in nothing new
             fe = ctx.open_finance()
             try:
                 statuses = fe.budget_status()
             finally:
                 fe.close()
             ns = ctx.notify_store()
+            # A manual single add only needs to re-check the ONE category
+            # that changed — otherwise entering one Food transaction would
+            # re-notify about every other already-over-budget category too.
+            # A bulk import may have touched several, so check them all.
+            target_category = p.get("category") if is_manual_add else None
             for b in statuses:
                 if not b.get("limit"):
+                    continue
+                if target_category and b["category"] != target_category:
                     continue
                 spent, limit = b["spent"], b["limit"]
                 if spent < limit * _BUDGET_WARN_PCT:
                     continue
                 over = spent > limit
                 state = "over budget" if over else f"at {spent / limit:.0%} of budget"
-                reasoning = (f"Import event {ev.get('id')} added transactions; "
-                             f"'{b['category']}' now {state} "
+                trigger = ("You just added a transaction" if is_manual_add
+                           else f"Import event {ev.get('id')} added transactions")
+                reasoning = (f"{trigger}; '{b['category']}' now {state} "
                              f"(spent {spent:,.0f} of {limit:,.0f}).")
                 summary = f"{b['category']} {state}"
                 _emit_insight(events, ctx, "budget", summary, reasoning,
@@ -121,8 +138,8 @@ def _budget_agent(events, ctx):
         except Exception as exc:
             _report_error(events, "budget", exc)
 
-    for etype in _IMPORT_EVENTS:
-        events.subscribe(etype, on_import)
+    for etype in _TRANSACTION_EVENTS:
+        events.subscribe(etype, on_transaction_activity)
 
 
 def _subscription_agent(events, ctx):
@@ -224,7 +241,7 @@ def _screening_agent(events, ctx):
         except Exception as exc:
             _report_error(events, "screening", exc)
 
-    for etype in _IMPORT_EVENTS + ("finance.transaction_added",):
+    for etype in _TRANSACTION_EVENTS:
         events.subscribe(etype, on_new_transactions)
 
 
