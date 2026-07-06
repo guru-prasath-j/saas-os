@@ -3469,7 +3469,7 @@ async function resetAllTransactions(){
   const m=document.getElementById('resetMsg');
   m.textContent='Deleting…';
   try{
-    const r=await api('/api/finance/transactions',{method:'DELETE'});
+    const r=await api('/api/finance/transactions?confirm=DELETE-ALL-TRANSACTIONS',{method:'DELETE'});
     const d=await r.json();
     if(r.ok){
       m.textContent=`Deleted ${d.deleted} transactions.`;

@@ -217,13 +217,22 @@ def auto_remove_duplicates(user: User = Depends(current_user)):
 
 
 @router.delete("/api/finance/transactions")
-def reset_all_transactions(user: User = Depends(current_user)):
-    """Delete ALL transactions for this user (irreversible reset)."""
+def reset_all_transactions(confirm: str = "", user: User = Depends(current_user)):
+    """Delete ALL transactions for this user (irreversible reset).
+
+    Destructive full-wipe: requires the explicit confirmation token
+    ?confirm=DELETE-ALL-TRANSACTIONS so no single unqualified call (from the
+    UI, an agent, or a mistyped script) can erase the ledger."""
+    if confirm != "DELETE-ALL-TRANSACTIONS":
+        raise HTTPException(
+            status_code=400,
+            detail="Full wipe requires ?confirm=DELETE-ALL-TRANSACTIONS")
     fe = _finance_db(user)
     try:
         count = fe.conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
         fe.conn.execute("DELETE FROM transactions")
         fe.conn.commit()
+        _emit_fin(user, "finance.transactions_reset", {"deleted": count})
         return {"deleted": count}
     finally:
         fe.close()

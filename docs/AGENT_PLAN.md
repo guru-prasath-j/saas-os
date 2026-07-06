@@ -23,8 +23,8 @@ Commit after each phase. Present a short file-mapped plan before each phase.
 | Step | Description | Status | Commit |
 |---|---|---|---|
 | 0.1 | Commit pre-existing automation layer as rollback boundary | DONE | 900c539 |
-| 0.2 | This plan file | DONE | (this commit) |
-| 0.3 | Security: JWT secret ≥32B + gate DELETE all-transactions | pending | |
+| 0.2 | This plan file | DONE | dbcd716 |
+| 0.3 | Security: JWT secret ≥32B + gate DELETE all-transactions | DONE | (this commit) |
 | R1 | Tool registry (amy/tools/) | pending | |
 | R3 | Unified approval queue (extend existing approvals) | pending | |
 | R2 | Reactive agents on the event bus | pending | |
