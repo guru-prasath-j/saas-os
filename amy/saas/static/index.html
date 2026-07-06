@@ -91,6 +91,12 @@
   .card .card{box-shadow:none;background:var(--surface-2)}
   .row{display:flex;gap:10px}.row>*{flex:1}
 
+  /* expense/income toggle (add-transaction form) */
+  .tx-type-btn{background:var(--surface);color:var(--muted);border:1px solid var(--border-2);border-radius:9px;padding:9px 13px;font-size:13px;font-weight:600;box-shadow:none;cursor:pointer}
+  .tx-type-btn:hover{box-shadow:none;transform:none}
+  .tx-type-btn.tx-expense.active{background:rgba(251,113,133,.15);color:var(--danger);border-color:var(--danger)}
+  .tx-type-btn.tx-income.active{background:rgba(52,211,153,.15);color:var(--success);border-color:var(--success)}
+
   /* controls */
   button{font-family:var(--font);background:var(--grad);color:#06121a;border:0;border-radius:11px;padding:10px 16px;cursor:pointer;font-size:14px;font-weight:600;transition:transform .15s,box-shadow .15s,opacity .15s}
   button:hover{box-shadow:0 6px 22px rgba(34,211,238,.35);transform:translateY(-1px)}
@@ -620,6 +626,10 @@
           <div class="card">
             <h3 style="margin-top:0">Add transaction</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
+              <div style="display:flex;gap:6px;flex:0 0 auto">
+                <button type="button" class="tx-type-btn tx-expense active" id="txTypeExpense" onclick="setTxType('expense')">− Expense</button>
+                <button type="button" class="tx-type-btn tx-income" id="txTypeIncome" onclick="setTxType('income')">+ Income</button>
+              </div>
               <input id="txAmount" placeholder="Amount" type="number" min="0" style="flex:0 0 130px"/>
               <input id="txCategory" placeholder="Category (e.g. Food)" style="flex:1;min-width:110px"/>
               <input id="txMerchant" placeholder="Merchant (e.g. Swiggy)" style="flex:1;min-width:110px"/>
@@ -2986,9 +2996,23 @@ async function autoCategorize(){
   }catch(e){btn.textContent='✦ Categorize';btn.disabled=false;alert(e.message);}
 }
 
+// Expense/Income toggle: the amount field always holds a positive
+// magnitude; this decides its sign before the transaction is saved.
+// Found via manual testing — the amount input alone (min="0") made it
+// impossible to ever record an expense, so every manually-added
+// transaction was silently treated as income and never counted toward
+// any budget.
+let txType = 'expense';
+function setTxType(type){
+  txType = type;
+  document.getElementById('txTypeExpense').classList.toggle('active', type==='expense');
+  document.getElementById('txTypeIncome').classList.toggle('active', type==='income');
+}
+
 async function addTransaction(){
-  const amount=parseFloat(document.getElementById('txAmount').value);
-  if(!amount){document.getElementById('txMsg').textContent='Enter an amount.';return;}
+  const raw=parseFloat(document.getElementById('txAmount').value);
+  if(!raw){document.getElementById('txMsg').textContent='Enter an amount.';return;}
+  const amount = txType==='expense' ? -Math.abs(raw) : Math.abs(raw);
   const m=document.getElementById('txMsg'); m.textContent='adding…';
   try{
     await jpost('/api/finance/transactions',{
