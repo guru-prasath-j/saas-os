@@ -145,6 +145,17 @@ def submit_action(ctx: JobCtx, tier: int, action_type: str, title: str,
     return {"approval_id": aid, "status": status, "result": result}
 
 
+def _clear_approval_notification(ctx: JobCtx, approval_id: str) -> None:
+    """Bug found via manual testing: rejecting/approving an item in the
+    Approval Inbox left its 'approval needed' bell notification unread
+    forever — the badge stayed stuck even after the user had already acted
+    on it. Best-effort; never blocks the decision itself."""
+    try:
+        ctx.notify_store().mark_read_by_related_id(approval_id)
+    except Exception:
+        pass
+
+
 def approve(ctx: JobCtx, approval_id: str) -> dict:
     """Execute a pending tier-2 approval. Records the decision for learning."""
     ap = ctx.store.get_approval(approval_id)
@@ -161,6 +172,7 @@ def approve(ctx: JobCtx, approval_id: str) -> dict:
         ctx.store.set_approval_status(approval_id, "failed", result)
         status = "failed"
     _record_decision(ctx, ap, approved=True)
+    _clear_approval_notification(ctx, approval_id)
     return {"status": status, "result": result}
 
 
@@ -172,6 +184,7 @@ def reject(ctx: JobCtx, approval_id: str, reason: str = "") -> dict:
         raise ValueError(f"approval is {ap['status']}, not pending")
     ctx.store.set_approval_status(approval_id, "rejected", {"reason": reason})
     _record_decision(ctx, ap, approved=False, reason=reason)
+    _clear_approval_notification(ctx, approval_id)
     return {"status": "rejected"}
 
 

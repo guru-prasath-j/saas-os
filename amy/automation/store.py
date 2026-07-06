@@ -292,13 +292,29 @@ class AutomationStore:
         return aid
 
     def expire_stale(self) -> int:
-        """Mark pending approvals past their expires_at as expired."""
-        c = self.conn.execute(
-            "UPDATE approvals SET status='expired', decided_at=?"
+        """Mark pending approvals past their expires_at as expired, and
+        clear their 'approval needed' bell notifications (an expired item
+        is no longer actionable — same reasoning as approve()/reject()
+        clearing theirs, so the badge never gets permanently stuck)."""
+        now = _now_iso()
+        expired_ids = [r["id"] for r in self.conn.execute(
+            "SELECT id FROM approvals"
             " WHERE status='pending' AND expires_at IS NOT NULL AND expires_at<?",
-            (_now_iso(), _now_iso()))
+            (now,)).fetchall()]
+        if not expired_ids:
+            return 0
+        self.conn.executemany(
+            "UPDATE approvals SET status='expired', decided_at=? WHERE id=?",
+            [(now, aid) for aid in expired_ids])
         self.conn.commit()
-        return c.rowcount
+        try:
+            from ..notifications import NotificationStore
+            ns = NotificationStore(self.db)
+            for aid in expired_ids:
+                ns.mark_read_by_related_id(aid)
+        except Exception:
+            pass   # notification cleanup is best-effort; expiry itself already committed
+        return len(expired_ids)
 
     def get_approval(self, aid: str) -> dict | None:
         r = self.conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()

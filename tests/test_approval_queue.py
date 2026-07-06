@@ -93,6 +93,69 @@ def test_expiry_sweep(ctx):
         executors.approve(ctx, aid)
 
 
+def test_approve_clears_its_approval_needed_notification(ctx):
+    """Bug found via manual testing: acting on an approval left its bell
+    notification unread forever - the badge stayed stuck at 1 even after
+    the user had already approved/rejected the item."""
+    out = _agent_invoke(ctx, "set_budget",
+                        {"category": "Food", "monthly_limit": 1800})
+    ns = ctx.notify_store()
+    unread_before = [n for n in ns.list() if n["type"] == "approval_needed"
+                     and n["read_at"] is None]
+    assert len(unread_before) == 1
+    assert ns.unread_count() == 1
+
+    executors.approve(ctx, out["approval_id"])
+
+    unread_after = [n for n in ns.list() if n["type"] == "approval_needed"
+                    and n["read_at"] is None]
+    assert unread_after == []
+    assert ns.unread_count() == 0
+
+
+def test_reject_clears_its_approval_needed_notification(ctx):
+    out = _agent_invoke(ctx, "set_budget",
+                        {"category": "Games", "monthly_limit": 100})
+    assert ctx.notify_store().unread_count() == 1
+
+    executors.reject(ctx, out["approval_id"], reason="not now")
+
+    assert ctx.notify_store().unread_count() == 0
+
+
+def test_other_unread_notifications_are_not_touched(ctx):
+    """Clearing one approval's notification must not mark unrelated
+    notifications as read."""
+    ctx.notify_store().create(type="custodial_nudge", title="unrelated",
+                              body="should stay unread", priority="normal")
+    out = _agent_invoke(ctx, "set_budget",
+                        {"category": "Food", "monthly_limit": 1800})
+    assert ctx.notify_store().unread_count() == 2
+
+    executors.approve(ctx, out["approval_id"])
+
+    assert ctx.notify_store().unread_count() == 1
+    remaining = [n for n in ctx.notify_store().list() if n["read_at"] is None]
+    assert remaining[0]["type"] == "custodial_nudge"
+
+
+def test_expire_stale_clears_notification_too(ctx):
+    out = _agent_invoke(ctx, "set_budget",
+                        {"category": "Food", "monthly_limit": 1800})
+    assert ctx.notify_store().unread_count() == 1
+
+    # force the approval into the past so the sweep picks it up
+    ctx.collab.conn.execute(
+        "UPDATE approvals SET expires_at='2000-01-01T00:00:00+00:00' WHERE id=?",
+        (out["approval_id"],))
+    ctx.collab.conn.commit()
+
+    n = ctx.store.expire_stale()
+    assert n == 1
+    assert ctx.store.get_approval(out["approval_id"])["status"] == "expired"
+    assert ctx.notify_store().unread_count() == 0
+
+
 def test_destructive_tier_hard_pinned(monkeypatch):
     monkeypatch.setenv("AMY_AGENT_WRITE_TIER", "0")
     assert executors._tier_for("destructive") == 2
