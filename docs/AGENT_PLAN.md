@@ -35,7 +35,11 @@ Commit after each phase. Present a short file-mapped plan before each phase.
 | R7A-2 | Obligations engine | DONE | 1f2a064 |
 | R7A-1 | Values screening engine | DONE | 5b528d0 |
 | R7A-4 | Financing-model interface | DONE | e4b13e9 |
-| R5 | Briefing upgrades (final integration) | DONE | (this commit) |
+| R5 | Briefing upgrades (final integration) | DONE | 7b390d1 |
+
+**ALL PHASES COMPLETE** (R6 deferred by decision). Docs updated in the
+final commit: API_ENDPOINTS.md (5 new sections), CLAUDE.md (layout, agent
+events, quirks 15–19), docs/jurisdictions.md.
 
 ## Approved decisions
 
