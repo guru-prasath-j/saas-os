@@ -57,7 +57,17 @@ def build_ctx(user_id: str, user_email: str, collab_db, index_dir,
               llm_router=None) -> JobCtx:
     """collab_db stays owned by the caller (caller closes it)."""
     store = AutomationStore(collab_db)
-    llm = TrackedLLM(llm_router, store) if llm_router is not None else None
+    # per-user "local-only" LLM routing: prefs key llm_local_only='1' forces
+    # every call for this user through the sensitive (Ollama-only) path
+    local_only = False
+    try:
+        row = collab_db.conn.execute(
+            "SELECT value FROM prefs WHERE key='llm_local_only'").fetchone()
+        local_only = bool(row and str(row["value"]) == "1")
+    except Exception:
+        local_only = False
+    llm = (TrackedLLM(llm_router, store, force_local=local_only)
+           if llm_router is not None else None)
     return JobCtx(
         user_id=user_id,
         user_email=user_email,

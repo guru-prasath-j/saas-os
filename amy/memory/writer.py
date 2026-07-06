@@ -44,6 +44,12 @@ _KIND = {
     "finance.budget_set": ("finance", False),
     "finance.subscription_added": ("finance", False),
     "finance.investment_added": ("finance", False),
+    # Agent activity (reactive agents / orchestrator / screening)
+    "agent.insight": ("agent", False),
+    "agent.action_proposed": ("agent", False),
+    "agent.action_executed": ("agent", True),
+    "agent.goal_planned": ("agent", True),
+    "agent.error": ("agent", False),
 }
 
 
@@ -250,6 +256,17 @@ class MemoryWriter:
             value = p.get("current_value", 0)
             return (f"Investment added: {name} ({itype}, ₹{value:,.0f})",
                     None, "", [], ["finance", "investment"])
+        # Agent activity — always carries who + reasoning
+        if etype.startswith("agent."):
+            agent = p.get("agent", "agent")
+            kind = etype.split(".", 1)[1].replace("_", " ")
+            summary = p.get("summary") or p.get("title") or kind
+            reasoning = p.get("reasoning", "")
+            txt = f"[{agent}] {summary}" + (f"\n  - Why: {reasoning}" if reasoning else "")
+            title = f"{agent} — {summary}"
+            body = (f"- Agent: {agent}\n- Event: {etype}\n"
+                    f"- Reasoning: {reasoning or '(none given)'}")
+            return txt, title, body, [], ["agent", agent]
         # generic
         summary = ", ".join(f"{k}={v}" for k, v in list(p.items())[:4])
         return f"{etype}: {summary}", None, "", [], tags

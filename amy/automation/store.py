@@ -357,15 +357,22 @@ class TrackedLLM:
 
     Safe to hand to any existing code that calls llm.generate(...) — it
     returns the same (text, provider_name) tuple.
+
+    force_local=True implements the per-user "local-only" routing flag:
+    EVERY call is made with sensitive=True, so LLMRouter.pick() only ever
+    returns Ollama (or the offline template) — no cloud provider sees the
+    user's data regardless of per-call sensitivity classification.
     """
 
-    def __init__(self, router, store: AutomationStore, purpose: str = "automation"):
+    def __init__(self, router, store: AutomationStore, purpose: str = "automation",
+                 force_local: bool = False):
         self._router = router
         self._store = store
         self.purpose = purpose
+        self.force_local = force_local
 
     def pick(self, sensitive: bool):
-        return self._router.pick(sensitive)
+        return self._router.pick(sensitive or self.force_local)
 
     def status(self) -> dict:
         return self._router.status()
@@ -373,7 +380,9 @@ class TrackedLLM:
     def generate(self, system, prompt, context="", sensitive=False):
         t0 = time.monotonic()
         try:
-            text, name = self._router.generate(system, prompt, context, sensitive=sensitive)
+            text, name = self._router.generate(
+                system, prompt, context,
+                sensitive=sensitive or self.force_local)
             ms = int((time.monotonic() - t0) * 1000)
             try:
                 self._store.log_llm_call(name, self.purpose, True, ms)
