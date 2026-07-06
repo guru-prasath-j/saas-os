@@ -30,6 +30,12 @@ FINANCE_SUBSCRIPTION_ADDED = "finance.subscription_added"
 FINANCE_INVESTMENT_ADDED = "finance.investment_added"
 FINANCE_INCOME_ADDED = "finance.income_added"
 
+# Agent events (reactive agents / orchestrator / screening)
+AGENT_INSIGHT = "agent.insight"
+AGENT_ACTION_PROPOSED = "agent.action_proposed"
+AGENT_ACTION_EXECUTED = "agent.action_executed"
+AGENT_ERROR = "agent.error"
+
 # Business entity events
 BUSINESS_ENTITY_CREATED = "business.entity_created"
 FINANCE_LEDGER_ENTRY_POSTED = "finance.ledger_entry_posted"

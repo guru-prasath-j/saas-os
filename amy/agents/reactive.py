@@ -1,0 +1,223 @@
+"""Reactive agents — subscribers that act the moment data arrives (Phase R2).
+
+Registered in the amy/events/triggers.py style onto whichever EventStore
+instance is about to emit (both _emit_fin in the finance router and
+JobCtx.events() in the automation layer call register_reactive_agents), so
+reactions fire no matter which code path imported the data.
+
+Agents:
+  budget       — after an import, re-checks caps vs actual spend
+  subscription — after an import, proactively detects new recurring charges
+                 and proposes them through the approval queue
+  compliance   — after a ledger post, runs compliance suggestions for
+                 'close'-tracked business entities (advisory rows only)
+
+Rules honored here:
+  - every insight/action carries an explicit reasoning string
+  - kill switches: AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE (default ON)
+  - agent errors are reported as agent.error events, never raised into the
+    emitting route (the bus additionally retries once + dead-letters)
+  - all proposals go through the tool registry with actor="agent", so the
+    R3 approval gate applies; nothing here writes user data directly
+  - journaling via MemoryWriter.log_event is idempotent on event id
+"""
+from __future__ import annotations
+
+from .. import config
+
+_BUDGET_WARN_PCT = 0.90       # insight when a category crosses 90% of its cap
+_SUB_MIN_CONFIDENCE = 0.75    # propose only confident subscription candidates
+_IMPORT_EVENTS = ("finance.gmail_synced", "finance.csv_imported",
+                  "finance.pdf_imported")
+
+
+def _get_llm(ctx):
+    """Lazy LLM: route-driven emissions build ctx without an LLM; agents that
+    need one construct it once and cache it on the ctx."""
+    if ctx.llm is not None:
+        return ctx.llm
+    cached = ctx._extras.get("lazy_llm")
+    if cached is not None:
+        return cached
+    try:
+        from ..llm import LLMRouter
+        from ..automation.store import TrackedLLM
+        llm = TrackedLLM(LLMRouter(use_global_keys=True), ctx.store,
+                         purpose="reactive_agent")
+    except Exception:
+        llm = None
+    ctx._extras["lazy_llm"] = llm
+    return llm
+
+
+def _journal(ctx, ev: dict) -> None:
+    """Idempotent vault journaling of an agent event. Never raises."""
+    try:
+        from ..memory.writer import MemoryWriter
+        from ..saas import paths
+        vault = paths.vault_dir(ctx.user_id)
+        vault.mkdir(parents=True, exist_ok=True)
+        MemoryWriter(vault).log_event(ev)
+    except Exception:
+        pass   # journaling is best-effort; the event row is the record
+
+
+def _emit_insight(events, ctx, agent: str, summary: str, reasoning: str,
+                  extra: dict | None = None) -> None:
+    payload = {"agent": agent, "summary": summary, "reasoning": reasoning}
+    payload.update(extra or {})
+    eid = events.emit("agent.insight", payload, source=f"{agent}_agent")
+    _journal(ctx, {"id": eid, "type": "agent.insight", "payload": payload,
+                   "ts": None, "source": f"{agent}_agent"})
+
+
+def _report_error(events, agent: str, exc: Exception) -> None:
+    try:
+        events.emit("agent.error", {"agent": agent, "error": str(exc)[:400],
+                                    "reasoning": "handler raised; see error"},
+                    source=f"{agent}_agent")
+    except Exception:
+        pass   # the bus dead-letters the original failure regardless
+
+
+# ---------------------------------------------------------------------------
+# Agents
+# ---------------------------------------------------------------------------
+
+def _budget_agent(events, ctx):
+    def on_import(ev):
+        try:
+            if not (ev.get("payload") or {}).get("imported"):
+                return   # nothing new came in
+            fe = ctx.open_finance()
+            try:
+                statuses = fe.budget_status()
+            finally:
+                fe.close()
+            ns = ctx.notify_store()
+            for b in statuses:
+                if not b.get("limit"):
+                    continue
+                spent, limit = b["spent"], b["limit"]
+                if spent < limit * _BUDGET_WARN_PCT:
+                    continue
+                over = spent > limit
+                state = "over budget" if over else f"at {spent / limit:.0%} of budget"
+                reasoning = (f"Import event {ev.get('id')} added transactions; "
+                             f"'{b['category']}' now {state} "
+                             f"(spent {spent:,.0f} of {limit:,.0f}).")
+                summary = f"{b['category']} {state}"
+                _emit_insight(events, ctx, "budget", summary, reasoning,
+                              {"category": b["category"], "spent": spent,
+                               "limit": limit, "source_event_id": ev.get("id")})
+                ref = f"agent_budget_{b['category']}"
+                if not ns.exists_today("agent_budget_check", ref):
+                    ns.create(type="agent_budget_check",
+                              title=f"Budget check: {summary}",
+                              body=reasoning,
+                              priority="high" if over else "normal",
+                              related_entity={"id": ref, "entity_type": "budget",
+                                              "category": b["category"]})
+        except Exception as exc:
+            _report_error(events, "budget", exc)
+
+    for etype in _IMPORT_EVENTS:
+        events.subscribe(etype, on_import)
+
+
+def _subscription_agent(events, ctx):
+    def on_import(ev):
+        try:
+            if not (ev.get("payload") or {}).get("imported"):
+                return
+            from ..finance.subscription_detect import detect_subscriptions
+            from .. import tools
+            fe = ctx.open_finance()
+            try:
+                candidates = detect_subscriptions(fe, _get_llm(ctx))
+            finally:
+                fe.close()
+            for c in candidates:
+                if (c.get("confidence") or 0) < _SUB_MIN_CONFIDENCE:
+                    continue
+                reasoning = (f"Detected a recurring charge: '{c['name']}' "
+                             f"~{c['amount']:,.0f}/{c.get('billing_cycle', 'monthly')}, "
+                             f"seen {c.get('occurrences', '?')}x, last {c.get('last_date')}, "
+                             f"confidence {c.get('confidence', 0):.0%}. Tracking it "
+                             "enables renewal alerts and price-hike detection.")
+                _emit_insight(events, ctx, "subscription",
+                              f"New subscription detected: {c['name']}", reasoning,
+                              {"name": c["name"], "amount": c["amount"],
+                               "source_event_id": ev.get("id")})
+                # propose through the registry → R3 gate parks it for approval
+                ctx._extras["agent_name"] = "subscription_agent"
+                ctx._extras["agent_reasoning"] = reasoning
+                tools.invoke(ctx, "add_subscription",
+                             {"name": c["name"], "monthly_cost": c["amount"],
+                              "renewal_date": c.get("next_due")},
+                             actor="agent")
+        except Exception as exc:
+            _report_error(events, "subscription", exc)
+
+    for etype in _IMPORT_EVENTS:
+        events.subscribe(etype, on_import)
+
+
+def _compliance_agent(events, ctx):
+    def on_ledger_posted(ev):
+        try:
+            p = ev.get("payload") or {}
+            entity_id = p.get("entity_id") or p.get("business_entity_id")
+            if not entity_id:
+                return
+            fe = ctx.open_finance()
+            try:
+                entity = fe.get_business_entity(entity_id)
+                if entity is None:
+                    return
+                if entity.get("tracking_closeness") != "close":
+                    # loose tracking: the user asked for a lighter touch —
+                    # do not run anything automatically (same gate the
+                    # Auditor honors)
+                    return
+                pending = fe.ledger_entries_without_suggestions(entity_id)
+                if not pending:
+                    return
+                from ..finance.business.compliance import generate_suggestions
+                suggestions = generate_suggestions(fe, entity, _get_llm(ctx))
+            finally:
+                fe.close()
+            reasoning = (f"Ledger entry posted for '{entity.get('name')}' "
+                         f"(event {ev.get('id')}); entity is tracked 'close' and had "
+                         f"{len(pending)} entr(y/ies) without compliance review — "
+                         f"generated {len(suggestions)} advisory suggestion(s). "
+                         "Suggestions are estimates, not professional tax advice.")
+            _emit_insight(events, ctx, "compliance",
+                          f"Compliance review: {entity.get('name')}", reasoning,
+                          {"entity_id": entity_id,
+                           "suggestions": len(suggestions),
+                           "source_event_id": ev.get("id")})
+        except Exception as exc:
+            _report_error(events, "compliance", exc)
+
+    events.subscribe("finance.ledger_entry_posted", on_ledger_posted)
+
+
+# ---------------------------------------------------------------------------
+# Registration
+# ---------------------------------------------------------------------------
+
+def register_reactive_agents(events, ctx) -> list[str]:
+    """Wire enabled reactive agents onto this EventStore instance.
+    Returns the list of agents registered (for tests/observability)."""
+    registered = []
+    if config.agent_enabled("budget"):
+        _budget_agent(events, ctx)
+        registered.append("budget")
+    if config.agent_enabled("subscription"):
+        _subscription_agent(events, ctx)
+        registered.append("subscription")
+    if config.agent_enabled("compliance"):
+        _compliance_agent(events, ctx)
+        registered.append("compliance")
+    return registered

@@ -39,8 +39,17 @@ class JobCtx:
         return FinanceEngine(self.finance_path)
 
     def events(self):
+        """EventStore with reactive agents wired on (agents also react to
+        job-driven imports). Wiring failures degrade to a bare store."""
         from ..events.store import EventStore
-        return EventStore(self.collab)
+        es = EventStore(self.collab)
+        if not self._extras.get("no_reactive_agents"):
+            try:
+                from ..agents.reactive import register_reactive_agents
+                register_reactive_agents(es, self)
+            except Exception:
+                pass
+        return es
 
     def notify_store(self):
         from ..notifications import NotificationStore

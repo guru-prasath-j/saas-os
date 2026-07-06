@@ -27,12 +27,25 @@ def _open_collab(user: "User"):
 
 
 def _emit_fin(user: "User", event_type: str, payload: dict) -> None:
-    """Fire-and-forget finance event. Never raises — bad event must not break the route."""
+    """Fire-and-forget finance event. Never raises — bad event must not break the route.
+
+    Reactive agents (amy/agents/reactive.py) are wired onto the store before
+    emitting so they react synchronously to route-driven imports too; wiring
+    failures degrade to a plain emit."""
     try:
         from ...events.store import EventStore
         cdb = _open_collab(user)
         try:
-            EventStore(cdb).emit(event_type, payload, source="finance")
+            es = EventStore(cdb)
+            try:
+                from ...agents.reactive import register_reactive_agents
+                from ...automation.jobs import build_ctx
+                ctx = build_ctx(user.id, user.email, cdb,
+                                paths.index_dir(user.id), llm_router=None)
+                register_reactive_agents(es, ctx)
+            except Exception:
+                pass   # agents are optional; the event itself must still emit
+            es.emit(event_type, payload, source="finance")
         finally:
             cdb.close()
     except Exception:
