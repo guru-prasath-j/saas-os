@@ -37,8 +37,18 @@ amy/
       gmail_import.py    Gmail sync: 3-pass (parse → NVIDIA enrich → dedup insert)
       bank_presets.py    Named presets (HDFC, ICICI, SBI…)
       gmail_sensor.py    GmailSensor extends Sensor, polls + emits finance.gmail_synced
+  automation/
+    store.py             AutomationStore: jobs/runs/approvals/llm_calls tables (collab.db) + TrackedLLM
+    executors.py         JobCtx + tier router (submit_action) + approval executors
+    jobs.py              Handler registry, DEFAULT_JOBS, run_due (called by app loop)
+    ingest.py            Hybrid Gmail statement-attachment auto-ingest + LLM column-map proposal
+    learning.py          Learned categorizer rules (corrections → rules, finance.db)
+    sentinels.py         Anomaly sentinel (dupes/large debits/price hikes/run-rate) + goal drift
+    closers.py           Monthly close, custodial autopilot, morning briefing, daily Autopilot
+    assistant.py         AI chat console: JSON tool loop over internal engines
   events/
     store.py             EventStore: persist to collab.db events table + pub/sub
+                         (failing subscribers retried once → event_dead_letters)
     triggers.py          Default subscribers (goal, vault, all finance events)
   memory/writer.py       MemoryWriter: idempotent vault journaling (daily + atomic notes)
   knowledge_graph/store.py  GraphStore: typed nodes+edges, edge UPSERT with timestamps
@@ -49,6 +59,7 @@ amy/
     paths.py             saas_data/index/{uid}/
     routers/
       finance.py         ~60 finance endpoints (main active router, ~1300 lines)
+      automation.py      Jobs/runs/Approval Inbox/llm-stats/dead-letters + /api/assistant/chat
       auth.py            JWT login, OpenAI key, private folder
       connectors.py      Google OAuth flow + disconnect
       [11 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
@@ -165,6 +176,32 @@ POST              /api/business/entities/{entity_id}/compliance/run
 GET/PATCH         /api/business/rates[/{rate_id}]
 ```
 
+## Automation Layer
+
+App loop ticks every 60s (`AMY_AUTOMATION_TICK_SECONDS`), runs due jobs per user,
+logs every run to `automation_runs`. All automated writes go through
+`submit_action(ctx, tier, …)` — **tier 0** auto, **tier 1** auto+notify,
+**tier 2** parked in the Approval Inbox until approved. Executors:
+`import_statement` · `custodial_disburse` · `add_subscription` · `set_budget` ·
+`add_transaction`. Approve/reject decisions are recorded via DecisionEngine.
+
+Default jobs: `gmail_statement_ingest` (6h, hybrid: saved-map/preset/pdfplumber
+→ auto-import tier 1; auto-detect/LLM-map/ambiguous → tier 2 approval, map saved
+on approve) · `auto_categorize` (12h, learned rules first) · `anomaly_sentinel` ·
+`cashflow_alerts` · `morning_briefing` (07:00, email if SMTP set) ·
+`custodial_autopilot` (proposes prefilled cycle as tier 2) · `autopilot` (05:00) ·
+`monthly_close` (1st, CFO report + subscription proposals + compliance refresh).
+
+```
+GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
+PATCH             /api/automation/jobs/{name}            # enable/disable/schedule
+POST              /api/automation/jobs/{name}/run
+GET               /api/automation/approvals?status=pending|all
+POST              /api/automation/approvals/{aid}/approve | reject
+POST              /api/automation/pause | resume          # global kill switch
+POST              /api/assistant/chat                     # {message, history} → JSON tool loop
+```
+
 ## Event System
 
 ```python
@@ -218,6 +255,9 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 9. Custodial accounts excluded from income/spend — `account_type='custodial'` is the flag.
 10. `tracking_closeness` gates both Auditor execution and Accountant auto-post threshold on a business entity — check this before assuming the Auditor ran.
 11. Image/screenshot ledger uploads are not yet supported — convert to PDF/CSV first (see `BUSINESS.md`).
+12. Automation tables (jobs/runs/approvals/llm_calls) are created lazily by `AutomationStore.__init__` in collab.db; `learned_category_rules` lives in finance.db (created by `amy/automation/learning.py`).
+13. PATCH `/transactions/{tid}/category` also saves a learned rule — the categorizer converges from corrections; check `learned_category_rules` before assuming a static rule matched.
+14. The assistant (`/api/assistant/chat`) expects ONE JSON object per LLM turn; `_parse_step` takes the first complete object (models sometimes emit several tool calls at once).
 
 ## Common Pattern
 

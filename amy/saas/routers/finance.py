@@ -262,13 +262,23 @@ def auto_categorize(user: User = Depends(current_user)):
 
 @router.patch("/api/finance/transactions/{tid}/category")
 def set_category(tid: str, body: dict, user: User = Depends(current_user)):
-    """Manually set category for a single transaction."""
+    """Manually set category for a single transaction. The correction is also
+    saved as a learned rule so future imports categorize this merchant right."""
     cat = body.get("category", "Uncategorized")
     fe = _finance_db(user)
     try:
+        row = fe.conn.execute(
+            "SELECT merchant FROM transactions WHERE id=?", (tid,)).fetchone()
         fe.conn.execute("UPDATE transactions SET category=? WHERE id=?", (cat, tid))
         fe.conn.commit()
-        return {"ok": True}
+        learned = None
+        if row and row["merchant"]:
+            try:
+                from ...automation.learning import learn_from_correction
+                learned = learn_from_correction(fe, row["merchant"], cat)
+            except Exception:
+                pass
+        return {"ok": True, "learned_pattern": learned}
     finally:
         fe.close()
 

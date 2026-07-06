@@ -22,7 +22,7 @@ from . import paths
 from .routers import (
     auth, vault, knowledge, collab, intelligence,
     twin, events, memory, connectors, product, captures, habits, finance,
-    notifications, mcp_connectors, business,
+    notifications, mcp_connectors, business, automation,
 )
 
 app = FastAPI(title="PersonalOS SaaS", version="0.1.0")
@@ -44,6 +44,7 @@ app.include_router(finance.router)
 app.include_router(notifications.router)
 app.include_router(mcp_connectors.router)
 app.include_router(business.router)
+app.include_router(automation.router)
 
 _INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 
@@ -261,6 +262,54 @@ async def _gmail_poll_loop():
         await asyncio.sleep(interval)
 
 
+# ---------------------------------------------------------------------------
+# Automation scheduler — ticks every minute, runs due jobs per user, with a
+# run ledger + Approval Inbox (see amy/automation/). Replaces nothing: the
+# legacy digest/consolidation/gmail loops keep running unchanged.
+# ---------------------------------------------------------------------------
+
+def _run_automation_tick():
+    from ..automation import build_ctx, run_due
+    from ..collab import CollabDB
+    from ..llm import LLMRouter
+
+    s = SessionLocal()
+    try:
+        users = [(u.id, u.email) for u in s.query(User).all()]
+    finally:
+        s.close()
+
+    for uid, email in users:
+        index_dir = paths.index_dir(uid)
+        collab_path = index_dir / "collab.db"
+        if not collab_path.exists():
+            continue
+        cdb = CollabDB(str(collab_path))
+        try:
+            try:
+                llm = LLMRouter(use_global_keys=True)
+            except Exception:
+                llm = None
+            ctx = build_ctx(uid, email, cdb, index_dir, llm_router=llm)
+            run_due(ctx)
+        except Exception:
+            pass   # per-user failure must never kill the scheduler
+        finally:
+            cdb.close()
+
+
+async def _automation_loop():
+    import asyncio
+    interval = float(os.getenv("AMY_AUTOMATION_TICK_SECONDS", "60"))
+    await asyncio.sleep(30)   # let startup finish first
+    while True:
+        try:
+            await asyncio.to_thread(_run_automation_tick)
+        except Exception:
+            pass
+        await asyncio.sleep(max(10.0, interval))
+
+
 @app.on_event("startup")
 async def _startup():
     import asyncio
@@ -268,3 +317,4 @@ async def _startup():
     asyncio.create_task(_digest_loop())
     asyncio.create_task(_consolidation_loop())
     asyncio.create_task(_gmail_poll_loop())
+    asyncio.create_task(_automation_loop())
