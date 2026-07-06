@@ -366,6 +366,10 @@
 
       <!-- TAB: AGENT (approval inbox + activity; R4 adds the goal planner here) -->
       <div class="tab hidden" id="tab-agent">
+        <div class="card" id="briefingCard" style="display:none">
+          <h3>Latest briefing</h3>
+          <div id="briefingBody" class="muted"></div>
+        </div>
         <div class="card">
           <h3>Give the agent a goal</h3>
           <p class="muted">e.g. "cut my spending 10% this quarter" — the orchestrator plans, reads your data, and parks any changes below for your approval.</p>
@@ -2199,7 +2203,16 @@ async function loadTimeline(period='week'){
 // ---- agent approval inbox ----
 const RISK_COLORS = {read:'var(--cyan)', write:'var(--warn)', destructive:'var(--danger)'};
 async function loadAgentTab(){
-  await Promise.all([loadAgentPending(), loadAgentHistory(), loadAgentGoals(), loadValuesPanel()]);
+  await Promise.all([loadAgentPending(), loadAgentHistory(), loadAgentGoals(), loadValuesPanel(), loadBriefing()]);
+}
+async function loadBriefing(){
+  try{
+    const d=await jget('/api/notifications');
+    const b=(d.notifications||[]).find(n=>n.type==='morning_briefing');
+    if(!b) return;
+    document.getElementById('briefingCard').style.display='';
+    document.getElementById('briefingBody').innerHTML=`<div class="faint" style="font-size:11px;margin-bottom:4px">${(b.created_at||'').slice(0,16).replace('T',' ')}</div>${b.body}`;
+  }catch(e){/* optional panel */}
 }
 async function loadValuesPanel(){
   try{

@@ -280,11 +280,14 @@ def _run_automation_tick():
 
     s = SessionLocal()
     try:
-        users = [(u.id, u.email) for u in s.query(User).all()]
+        users = [(u.id, u.email,
+                  (u.home_jurisdiction or "india"),
+                  (u.active_jurisdictions or ""), u.language)
+                 for u in s.query(User).all()]
     finally:
         s.close()
 
-    for uid, email in users:
+    for uid, email, home, active, language in users:
         index_dir = paths.index_dir(uid)
         collab_path = index_dir / "collab.db"
         if not collab_path.exists():
@@ -295,7 +298,11 @@ def _run_automation_tick():
                 llm = LLMRouter(use_global_keys=True)
             except Exception:
                 llm = None
-            ctx = build_ctx(uid, email, cdb, index_dir, llm_router=llm)
+            jurisdictions = list(dict.fromkeys(
+                [home.lower()] + [j.strip().lower()
+                                  for j in active.split(",") if j.strip()]))
+            ctx = build_ctx(uid, email, cdb, index_dir, llm_router=llm,
+                            jurisdictions=jurisdictions, language=language)
             run_due(ctx)
         except Exception:
             pass   # per-user failure must never kill the scheduler

@@ -44,8 +44,14 @@ def _ctx(user: "User", with_llm: bool = True):
                                    use_global_keys=True)
         except Exception:
             llm_router = None
+    home = (getattr(user, "home_jurisdiction", None) or "india").lower()
+    active = [j.strip().lower()
+              for j in (getattr(user, "active_jurisdictions", None) or "").split(",")
+              if j.strip()]
     ctx = build_ctx(user.id, user.email, cdb, paths.index_dir(user.id),
-                    llm_router=llm_router)
+                    llm_router=llm_router,
+                    jurisdictions=list(dict.fromkeys([home] + active)),
+                    language=getattr(user, "language", None))
     return cdb, ctx
 
 

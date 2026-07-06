@@ -34,8 +34,8 @@ Commit after each phase. Present a short file-mapped plan before each phase.
 | R7B | Jurisdiction packs + FX + locale | DONE | 53060e9 |
 | R7A-2 | Obligations engine | DONE | 1f2a064 |
 | R7A-1 | Values screening engine | DONE | 5b528d0 |
-| R7A-4 | Financing-model interface | DONE | (this commit) |
-| R5 | Briefing upgrades (final integration) | pending | |
+| R7A-4 | Financing-model interface | DONE | e4b13e9 |
+| R5 | Briefing upgrades (final integration) | DONE | (this commit) |
 
 ## Approved decisions
 

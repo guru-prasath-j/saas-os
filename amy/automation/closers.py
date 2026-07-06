@@ -171,28 +171,120 @@ def custodial_autopilot(ctx: JobCtx) -> dict:
 # ---------------------------------------------------------------------------
 
 def morning_briefing(ctx: JobCtx) -> dict:
+    """R5: locale-rendered, jurisdiction-aware daily briefing — money in the
+    user's base currency (multi-currency breakdown when present), upcoming
+    deadlines across ALL active jurisdictions, obligation statuses, agent
+    insights from the last day, approvals, goals, seasonal awareness."""
     from ..notifications.email import send_email, smtp_configured
 
-    today = _dt.date.today().isoformat()
+    today = _dt.date.today()
+    today_s = today.isoformat()
     lines: list[str] = []
 
+    # locale + packs from ctx (home first)
+    jurisdictions = ctx._extras.get("jurisdictions") or ["india"]
+    from ..jurisdictions import load_pack, upcoming_deadlines, PackError
+    try:
+        home = load_pack(jurisdictions[0])
+    except PackError:
+        home = load_pack("india")
+    currency = home["currency"]
+    from ..locale_fmt import format_money
+    _m = lambda v: format_money(v, currency, decimals=0)   # noqa: E731
+
+    # 1 — money (base currency; per-jurisdiction breakdown when multi)
     fe = ctx.open_finance()
     try:
-        spent = sum(fe.this_month_spend().values())
-        lines.append(f"Balance est. ₹{fe.balance_estimate():,.0f}; "
-                     f"this month's spend ₹{spent:,.0f}.")
-    except Exception:
-        pass
+        try:
+            from ..fx import FxConverter, multi_currency_summary
+            from ..saas import paths as _paths
+            summary = multi_currency_summary(
+                fe, currency["code"], jurisdictions[0],
+                FxConverter(cache_dir=_paths.SAAS_DATA))
+            month_out = sum(b.get("month_out", 0)
+                            for b in summary["by_jurisdiction_in_base"].values())
+            lines.append(f"Balance est. {_m(summary['balance_estimate_base'])}; "
+                         f"this month's spend {_m(month_out)}.")
+            juris_bits = [f"{jid}: {_m(b['balance'])}"
+                          for jid, b in summary["by_jurisdiction_in_base"].items()]
+            if len(juris_bits) > 1:
+                lines.append("By jurisdiction — " + "; ".join(juris_bits) + ".")
+        except Exception:
+            spent = sum(fe.this_month_spend().values())
+            lines.append(f"Balance est. {_m(fe.balance_estimate())}; "
+                         f"this month's spend {_m(spent)}.")
+
+        # 2 — obligations (R7A-2)
+        try:
+            from ..obligations import all_statuses
+            for st in all_statuses(fe, today):
+                if st.get("state") == "accruing" and st.get("estimated_liability"):
+                    lines.append(
+                        f"{st['name']}: est. liability "
+                        f"{st['currency']} {st['estimated_liability']:,.0f}, "
+                        f"due {st.get('next_due')}.")
+                elif st.get("state") == "scheduled" and st.get("amount_due_by_next"):
+                    lines.append(
+                        f"{st['name']}: {st['currency']} "
+                        f"{st['amount_due_by_next']:,.0f} due by {st.get('next_due')} "
+                        f"({st.get('next_label')}).")
+                elif st.get("state") == "needs_estimate":
+                    lines.append(f"{st['name']}: set an annual estimate to "
+                                 "get installment figures.")
+        except Exception:
+            pass
+
+        # 3 — renewals in the next 7 days
+        try:
+            bills = fe.upcoming_bills(days=7)
+            if bills:
+                lines.append("Renewals this week: " + "; ".join(
+                    f"{b['name']} ({_m(b['monthly_cost'])}, {b['renewal_date']})"
+                    for b in bills[:4]) + ".")
+        except Exception:
+            pass
     finally:
         fe.close()
 
+    # 4 — deadlines across ALL active jurisdictions (R7B)
+    try:
+        dls = []
+        for jid in jurisdictions:
+            try:
+                dls.extend(upcoming_deadlines(load_pack(jid), after=today,
+                                              horizon_days=30))
+            except PackError:
+                continue
+        dls.sort(key=lambda d: d["date"])
+        if dls:
+            lines.append("Deadlines: " + "; ".join(
+                f"{d['name']} in {d['jurisdiction']} in {d['days_away']} day(s)"
+                for d in dls[:4]) + ".")
+    except Exception:
+        pass
+
+    # 5 — agent insights from the last 24h (R2)
+    try:
+        cutoff = (_dt.datetime.now(_dt.timezone.utc)
+                  - _dt.timedelta(hours=24)).isoformat()
+        rows = ctx.collab.conn.execute(
+            "SELECT payload FROM events WHERE type='agent.insight' AND ts>=?"
+            " ORDER BY ts DESC LIMIT 3", (cutoff,)).fetchall()
+        if rows:
+            import json as _json
+            summaries = [(_json.loads(r["payload"] or "{}")).get("summary", "")
+                         for r in rows]
+            lines.append("Agent insights: " + "; ".join(s for s in summaries if s) + ".")
+    except Exception:
+        pass
+
+    # 6 — approvals + goals + unread
     pending = ctx.store.list_approvals("pending", limit=5)
     if pending:
         lines.append(f"{ctx.store.pending_count()} approval(s) waiting: "
                      + "; ".join(p["title"] for p in pending) + ".")
     else:
         lines.append("No approvals waiting.")
-
     try:
         from ..autonomous import ExecutiveAgent
         brief = ExecutiveAgent(ctx.collab, llm=None,
@@ -207,6 +299,25 @@ def morning_briefing(ctx: JobCtx) -> dict:
     except Exception:
         pass
 
+    # 7 — pack-defined seasonal awareness
+    try:
+        for jid in jurisdictions:
+            try:
+                pack = load_pack(jid)
+            except PackError:
+                continue
+            for note in pack.get("seasonal_notes", []):
+                if today.month in (note.get("months") or []):
+                    lines.append(f"[{pack['name']}] {note['note']}")
+                elif note.get("hijri_months"):
+                    from ..calendars import get_calendar
+                    h = get_calendar("hijri")
+                    hm = int(h.to_display(today).split("-")[1])
+                    if hm in note["hijri_months"]:
+                        lines.append(f"[{pack['name']}] {note['note']}")
+    except Exception:
+        pass
+
     ns = ctx.notify_store()
     try:
         unread = ns.unread_count()
@@ -216,15 +327,25 @@ def morning_briefing(ctx: JobCtx) -> dict:
         pass
 
     body = " ".join(lines)
-    ref = f"briefing_{today}"
+    ref = f"briefing_{today_s}"
     created = None
     if not ns.exists_today("morning_briefing", ref):
         created = ns.create(type="morning_briefing",
-                            title=f"Morning briefing — {today}",
+                            title=f"Morning briefing — {today_s}",
                             body=body, priority="normal",
                             related_entity={"entity_type": "briefing", "id": ref})
         if smtp_configured() and ctx.user_email:
-            send_email(ctx.user_email, f"[Amy] Morning briefing — {today}", body)
+            send_email(ctx.user_email, f"[Amy] Morning briefing — {today_s}", body)
+        try:
+            eid = ctx.events().emit("digest.generated",
+                                    {"summary": body, "kind": "morning_briefing"},
+                                    source="briefing")
+            from ..agents.reactive import _journal
+            _journal(ctx, {"id": eid, "type": "digest.generated",
+                           "payload": {"summary": body}, "ts": None,
+                           "source": "briefing"})
+        except Exception:
+            pass   # fire-and-forget; the notification is already the record
     return {"created": bool(created), "summary": body}
 
 

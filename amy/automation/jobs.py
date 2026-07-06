@@ -43,17 +43,26 @@ HANDLERS: dict[str, callable] = {
     "obligation_check": _obligation_check,
 }
 
-DEFAULT_JOBS: list[tuple[str, dict]] = [
-    ("gmail_statement_ingest", {"every_hours": 6}),
-    ("auto_categorize",        {"every_hours": 12}),
-    ("anomaly_sentinel",       {"daily_at": "08:00"}),
-    ("cashflow_alerts",        {"daily_at": "08:10"}),
-    ("monthly_close",          {"monthly_day": 1, "at": "06:00"}),
-    ("custodial_autopilot",    {"daily_at": "07:30"}),
-    ("morning_briefing",       {"daily_at": "07:00"}),
-    ("autopilot",              {"daily_at": "05:00"}),
-    ("obligation_check",       {"daily_at": "07:15"}),
-]
+def _default_jobs() -> list[tuple[str, dict]]:
+    """Env-configurable initial schedules (config.py pattern — remember
+    .env.personal loads first with override=False). Existing job rows are
+    never overridden; edit via PATCH /api/automation/jobs/{name}."""
+    from .. import config
+    briefing_at = config._env("AMY_BRIEFING_AT", "07:00")
+    return [
+        ("gmail_statement_ingest", {"every_hours": 6}),
+        ("auto_categorize",        {"every_hours": 12}),
+        ("anomaly_sentinel",       {"daily_at": "08:00"}),
+        ("cashflow_alerts",        {"daily_at": "08:10"}),
+        ("monthly_close",          {"monthly_day": 1, "at": "06:00"}),
+        ("custodial_autopilot",    {"daily_at": "07:30"}),
+        ("morning_briefing",       {"daily_at": briefing_at}),
+        ("autopilot",              {"daily_at": "05:00"}),
+        ("obligation_check",       {"daily_at": "07:15"}),
+    ]
+
+
+DEFAULT_JOBS: list[tuple[str, dict]] = _default_jobs()
 
 
 # ---------------------------------------------------------------------------
@@ -61,8 +70,11 @@ DEFAULT_JOBS: list[tuple[str, dict]] = [
 # ---------------------------------------------------------------------------
 
 def build_ctx(user_id: str, user_email: str, collab_db, index_dir,
-              llm_router=None) -> JobCtx:
-    """collab_db stays owned by the caller (caller closes it)."""
+              llm_router=None, jurisdictions: list[str] | None = None,
+              language: str | None = None) -> JobCtx:
+    """collab_db stays owned by the caller (caller closes it).
+    jurisdictions: home-first pack ids (R7B); briefings and obligation
+    deadlines read them from ctx._extras."""
     store = AutomationStore(collab_db)
     # per-user "local-only" LLM routing: prefs key llm_local_only='1' forces
     # every call for this user through the sensitive (Ollama-only) path
@@ -75,7 +87,7 @@ def build_ctx(user_id: str, user_email: str, collab_db, index_dir,
         local_only = False
     llm = (TrackedLLM(llm_router, store, force_local=local_only)
            if llm_router is not None else None)
-    return JobCtx(
+    ctx = JobCtx(
         user_id=user_id,
         user_email=user_email,
         finance_path=str(index_dir / "finance.db"),
@@ -84,6 +96,9 @@ def build_ctx(user_id: str, user_email: str, collab_db, index_dir,
         connector_dir=index_dir / "connectors",
         llm=llm,
     )
+    ctx._extras["jurisdictions"] = jurisdictions or ["india"]
+    ctx._extras["language"] = language
+    return ctx
 
 
 def ensure_defaults(store: AutomationStore):

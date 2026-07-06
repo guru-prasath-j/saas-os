@@ -133,58 +133,13 @@ def overview_fx(user: User = Depends(current_user)):
     base = pack["currency"]["code"]
     home_id = (user.home_jurisdiction or "india").lower()
 
+    from ...fx import multi_currency_summary
     fe = FinanceEngine(str(paths.index_dir(user.id) / "finance.db"))
     try:
-        accounts = {a["id"]: a for a in fe.list_accounts()}
-        rows = fe.conn.execute(
-            "SELECT account_id, currency, amount, date FROM transactions").fetchall()
+        summary = multi_currency_summary(
+            fe, base, home_id, FxConverter(cache_dir=paths.SAAS_DATA))
     finally:
         fe.close()
-
-    month_start = _dt.date.today().replace(day=1).isoformat()
-    fx = FxConverter(cache_dir=paths.SAAS_DATA)
-
-    def _bucket_add(bucket: dict, key: str, amt: float, in_month: bool):
-        b = bucket.setdefault(key, {"balance": 0.0, "month_in": 0.0,
-                                    "month_out": 0.0})
-        b["balance"] += amt
-        if in_month:
-            b["month_in" if amt > 0 else "month_out"] += abs(amt)
-
-    by_currency: dict[str, dict] = {}     # native amounts per currency
-    by_jurisdiction: dict[str, dict] = {} # BASE-converted amounts per pack
-    unconvertible: set[str] = set()
-    for r in rows:
-        acc = accounts.get(r["account_id"]) or {}
-        if acc.get("account_type") == "custodial":
-            continue   # never counts toward the user's own money
-        cur = (r["currency"] or acc.get("currency") or base).upper()
-        jur = (acc.get("jurisdiction") or home_id).lower()
-        amt = float(r["amount"] or 0)
-        in_month = (r["date"] or "") >= month_start
-        _bucket_add(by_currency, cur, amt, in_month)
-        try:
-            _bucket_add(by_jurisdiction, jur, fx.convert(amt, cur, base), in_month)
-        except ValueError:
-            unconvertible.add(cur)
-
-    currencies = {}
-    total_base = 0.0
-    for cur, b in by_currency.items():
-        out = {k: round(v, 2) for k, v in b.items()}
-        try:
-            rate = fx.rate(cur, base)
-            out["in_base"] = {k: round(v * rate, 2) for k, v in b.items()}
-            total_base += out["in_base"]["balance"]
-        except ValueError:
-            out["in_base"] = None
-        currencies[cur] = out
-    jur_out = {jid: {k: round(v, 2) for k, v in b.items()}
-               for jid, b in by_jurisdiction.items()}
-
-    return {"base_currency": base, "balance_estimate_base": round(total_base, 2),
-            "by_currency": currencies,
-            "by_jurisdiction_in_base": jur_out,
-            "unconvertible_currencies": sorted(unconvertible),
-            "fx_note": "converted with daily-cached rates (seed fallback); "
-                       "see amy/jurisdictions/fx_seed.json"}
+    summary["fx_note"] = ("converted with daily-cached rates (seed fallback); "
+                          "see amy/jurisdictions/fx_seed.json")
+    return summary
