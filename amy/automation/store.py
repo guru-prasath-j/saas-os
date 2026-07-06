@@ -136,6 +136,16 @@ class AutomationStore:
             """
         )
         self.conn.commit()
+        # Idempotent column upgrades (R3): reasoning/risk/affected_entity/expires_at
+        for col, decl in (("reasoning", "TEXT DEFAULT ''"),
+                          ("risk", "TEXT DEFAULT ''"),
+                          ("affected_entity", "TEXT DEFAULT ''"),
+                          ("expires_at", "TEXT")):
+            try:
+                self.conn.execute(f"ALTER TABLE approvals ADD COLUMN {col} {decl}")
+                self.conn.commit()
+            except Exception:
+                pass   # column already exists
 
     # --- global pause -------------------------------------------------------
 
@@ -255,7 +265,10 @@ class AutomationStore:
                         body: str = "", payload: dict | None = None,
                         source: str = "", status: str = "pending",
                         dedup_key: str | None = None,
-                        result: dict | None = None) -> str | None:
+                        result: dict | None = None,
+                        reasoning: str = "", risk: str = "",
+                        affected_entity: str = "",
+                        expires_at: str | None = None) -> str | None:
         """Insert an approval row. Returns None if an open row with the same
         dedup_key already exists (so daily jobs don't re-propose the same thing)."""
         if dedup_key:
@@ -268,13 +281,24 @@ class AutomationStore:
         aid = _uuid()
         self.conn.execute(
             "INSERT INTO approvals(id,created_at,tier,action_type,title,body,"
-            " payload,status,source,dedup_key,result)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            " payload,status,source,dedup_key,result,reasoning,risk,"
+            " affected_entity,expires_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (aid, _now_iso(), tier, action_type, title, body,
              json.dumps(payload or {}), status, source, dedup_key,
-             json.dumps(result) if result is not None else None))
+             json.dumps(result) if result is not None else None,
+             reasoning, risk, affected_entity, expires_at))
         self.conn.commit()
         return aid
+
+    def expire_stale(self) -> int:
+        """Mark pending approvals past their expires_at as expired."""
+        c = self.conn.execute(
+            "UPDATE approvals SET status='expired', decided_at=?"
+            " WHERE status='pending' AND expires_at IS NOT NULL AND expires_at<?",
+            (_now_iso(), _now_iso()))
+        self.conn.commit()
+        return c.rowcount
 
     def get_approval(self, aid: str) -> dict | None:
         r = self.conn.execute("SELECT * FROM approvals WHERE id=?", (aid,)).fetchone()
@@ -286,6 +310,10 @@ class AutomationStore:
         return d
 
     def list_approvals(self, status: str | None = "pending", limit: int = 100) -> list[dict]:
+        try:
+            self.expire_stale()
+        except Exception:
+            pass   # listing must still work even if the expiry sweep fails
         if status:
             rows = self.conn.execute(
                 "SELECT * FROM approvals WHERE status=?"

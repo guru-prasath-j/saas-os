@@ -197,6 +197,9 @@
 
       <!-- ── AI SYSTEMS ── -->
       <div class="nav-sector">AI Systems</div>
+      <button data-tab="agent">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 12l2 2 4-4"/><path d="M12 3l7 4v5c0 4.5-3 8.5-7 9-4-.5-7-4.5-7-9V7z" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="label">Agent Approvals</span><span class="chip hidden" id="agentPendingBadge" style="margin-left:auto"></span></button>
       <button data-tab="intelligence">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><circle cx="12" cy="12" r="10"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
         <span class="label">Intelligence</span></button>
@@ -358,6 +361,21 @@
           <div id="decHistory"><p class="muted">Loading…</p></div>
           <div id="decAnalysis" class="hidden"></div>
           <div id="decRecs" class="hidden"></div>
+        </div>
+      </div>
+
+      <!-- TAB: AGENT (approval inbox + activity; R4 adds the goal planner here) -->
+      <div class="tab hidden" id="tab-agent">
+        <div class="card hidden" id="agentGoalCard"></div>
+        <div class="card">
+          <h3>Approval inbox <span class="muted">— actions agents want to take</span></h3>
+          <p class="muted">Every agent-proposed write waits here with its reasoning. Nothing runs until you approve it; items expire automatically if ignored.</p>
+          <span class="meta" id="agentMsg"></span>
+          <div id="agentPending"><p class="muted">Loading…</p></div>
+        </div>
+        <div class="card">
+          <h3>Recent agent activity</h3>
+          <div id="agentHistory"><p class="muted">Loading…</p></div>
         </div>
       </div>
 
@@ -1122,6 +1140,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   document.getElementById('onboard').classList.add('hidden');
   document.querySelectorAll('.tab').forEach(t=>t.classList.add('hidden'));
   document.getElementById('tab-'+tab).classList.remove('hidden');
+  if(tab==='agent') loadAgentTab();
   if(tab==='goals') loadGoals();
   if(tab==='finance') loadFinance();
   if(tab==='business') loadBizEntities();
@@ -2142,6 +2161,64 @@ async function loadTimeline(period='week'){
 }
 
 // ---- decisions ----
+// ---- agent approval inbox ----
+const RISK_COLORS = {read:'var(--cyan)', write:'var(--warn)', destructive:'var(--danger)'};
+async function loadAgentTab(){
+  await Promise.all([loadAgentPending(), loadAgentHistory()]);
+}
+async function loadAgentPending(){
+  try{
+    const d=await jget('/api/automation/approvals?status=pending');
+    const list=d.approvals||[];
+    const badge=document.getElementById('agentPendingBadge');
+    if(badge){badge.textContent=list.length; badge.classList.toggle('hidden', !list.length);}
+    if(!list.length){document.getElementById('agentPending').innerHTML='<p class="muted">Nothing waiting — agents will park proposed actions here.</p>';return;}
+    document.getElementById('agentPending').innerHTML=list.map(a=>`
+      <div class="toggle">
+        <div style="min-width:0;flex:1">
+          <b>${a.title}</b>
+          ${a.risk?`<span class="chip" style="color:${RISK_COLORS[a.risk]||'var(--text)'}">${a.risk}</span>`:''}
+          <span class="chip">tier ${a.tier}</span>
+          ${a.affected_entity?`<span class="chip">${a.affected_entity}</span>`:''}
+          <div class="faint" style="font-size:11px">${(a.created_at||'').slice(0,16).replace('T',' ')}${a.expires_at?` · expires ${(a.expires_at||'').slice(0,10)}`:''} · from ${a.source||'agent'}</div>
+          ${a.reasoning||a.body?`<div class="muted" style="font-size:12px;margin-top:3px"><b>Why:</b> ${a.reasoning||a.body}</div>`:''}
+          ${a.payload&&a.payload.tool?`<div class="faint" style="font-size:11px;margin-top:2px"><code>${a.payload.tool}(${JSON.stringify(a.payload.args||{})})</code></div>`:''}
+        </div>
+        <div style="display:flex;gap:6px;flex-direction:column">
+          <button class="sm" onclick="agentDecide('${a.id}','approve')">Approve</button>
+          <button class="ghost sm" onclick="agentDecide('${a.id}','reject')">Reject</button>
+        </div>
+      </div>`).join('');
+  }catch(e){document.getElementById('agentPending').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+async function agentDecide(id, verb){
+  const m=document.getElementById('agentMsg');
+  m.textContent=verb==='approve'?'Executing…':'Rejecting…';
+  try{
+    const r=await api(`/api/automation/approvals/${id}/${verb}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const d=await r.json();
+    m.textContent=r.ok?(verb==='approve'?`Done — ${d.status}.`:'Rejected.'):(d.detail||'Error');
+  }catch(e){m.textContent=e.message;}
+  loadAgentTab();
+}
+async function loadAgentHistory(){
+  try{
+    const d=await jget('/api/automation/approvals?status=all&limit=25');
+    const list=(d.approvals||[]).filter(a=>a.status!=='pending');
+    if(!list.length){document.getElementById('agentHistory').innerHTML='<p class="muted">No agent activity yet.</p>';return;}
+    const stColor={executed:'var(--success)',auto_executed:'var(--success)',rejected:'var(--danger)',failed:'var(--danger)',expired:'var(--warn)'};
+    document.getElementById('agentHistory').innerHTML=list.map(a=>`
+      <div class="toggle">
+        <div style="min-width:0;flex:1">
+          <b>${a.title}</b>
+          <span class="chip" style="color:${stColor[a.status]||'var(--text)'}">${a.status}</span>
+          ${a.risk?`<span class="chip">${a.risk}</span>`:''}
+          <div class="faint" style="font-size:11px">${(a.decided_at||a.created_at||'').slice(0,16).replace('T',' ')} · from ${a.source||'automation'}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){document.getElementById('agentHistory').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
 async function loadDecisions(){
   await Promise.all([loadDecHistory(), loadDecAnalysis(), loadDecRecs()]);
 }

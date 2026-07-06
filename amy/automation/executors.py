@@ -80,7 +80,10 @@ def execute(ctx: JobCtx, action_type: str, payload: dict) -> dict:
 
 def submit_action(ctx: JobCtx, tier: int, action_type: str, title: str,
                   body: str = "", payload: dict | None = None,
-                  source: str = "", dedup_key: str | None = None) -> dict:
+                  source: str = "", dedup_key: str | None = None,
+                  reasoning: str = "", risk: str = "",
+                  affected_entity: str = "",
+                  expires_at: str | None = None) -> dict:
     """Tier router: tier<=1 executes now (1 also notifies); tier 2 parks
     a pending approval + notification. Returns {approval_id, status, result?}."""
     payload = payload or {}
@@ -88,7 +91,9 @@ def submit_action(ctx: JobCtx, tier: int, action_type: str, title: str,
     if tier >= 2:
         aid = ctx.store.create_approval(
             tier=tier, action_type=action_type, title=title, body=body,
-            payload=payload, source=source, status="pending", dedup_key=dedup_key)
+            payload=payload, source=source, status="pending", dedup_key=dedup_key,
+            reasoning=reasoning, risk=risk, affected_entity=affected_entity,
+            expires_at=expires_at)
         if aid is None:
             return {"approval_id": None, "status": "duplicate"}
         try:
@@ -114,7 +119,8 @@ def submit_action(ctx: JobCtx, tier: int, action_type: str, title: str,
     aid = ctx.store.create_approval(
         tier=tier, action_type=action_type, title=title, body=body,
         payload=payload, source=source, status=status, dedup_key=dedup_key,
-        result=result)
+        result=result, reasoning=reasoning, risk=risk,
+        affected_entity=affected_entity)
     if aid is None:
         return {"approval_id": None, "status": "duplicate"}
     if tier == 1 and status == "auto_executed":
@@ -313,6 +319,73 @@ def _exec_set_budget(ctx: JobCtx, payload: dict) -> dict:
                 "monthly_limit": float(payload["monthly_limit"])}
     finally:
         fe.close()
+
+
+# ---------------------------------------------------------------------------
+# R3: agent gate — every registry write/destructive tool invoked by an agent
+# parks in the Approval Inbox instead of executing.
+# ---------------------------------------------------------------------------
+
+# Which entity-ish arg names identify what an action touches (for the queue UI)
+_ENTITY_ARGS = ("entity_id", "account_id", "approval_id", "tid", "sid",
+                "goal_id", "category", "name", "title")
+
+_DEFAULT_EXPIRY_DAYS = 7
+
+
+def _tier_for(risk: str) -> int:
+    """Explicit tier policy for AGENT-initiated actions.
+
+    destructive is hard-pinned to tier 2 — no config can lower it.
+    write defaults to tier 2 (park for approval); AMY_AGENT_WRITE_TIER=1
+    restores execute-then-notify for installs that want it.
+    """
+    if risk == "destructive":
+        return 2
+    from .. import config
+    try:
+        t = int(config._env("AMY_AGENT_WRITE_TIER", "2"))
+    except ValueError:
+        t = 2
+    return min(max(t, 0), 2)
+
+
+def agent_gate(ctx: JobCtx, tool, args: dict) -> dict:
+    """Installed as amy.tools.registry.AGENT_GATE (see amy/automation/__init__).
+
+    Agents set ctx._extras['agent_name'] / ['agent_reasoning'] before
+    invoking a tool so the queue entry carries who proposed it and why.
+    """
+    reasoning = str(ctx._extras.get("agent_reasoning") or
+                    "Proposed autonomously by an agent (no reasoning supplied).")
+    agent = str(ctx._extras.get("agent_name") or "agent")
+    affected = next((f"{k}={args[k]}" for k in _ENTITY_ARGS if args.get(k)), "")
+    expires = (_dt.datetime.now(_dt.timezone.utc)
+               + _dt.timedelta(days=_DEFAULT_EXPIRY_DAYS)).isoformat()
+    return submit_action(
+        ctx,
+        tier=_tier_for(tool.risk),
+        action_type="tool_call",
+        title=f"{agent}: {tool.name}",
+        body=reasoning,
+        payload={"tool": tool.name, "args": args},
+        source=agent,
+        reasoning=reasoning,
+        risk=tool.risk,
+        affected_entity=affected,
+        expires_at=expires)
+
+
+@register("tool_call")
+def _exec_tool_call(ctx: JobCtx, payload: dict) -> dict:
+    """Execute an approved (or tier<=1) registry tool call. Runs the tool
+    handler directly — approval IS the human consent, so no re-gating, and
+    the handler sees a human actor."""
+    from ..tools import get_tool, validate_args
+    tool = get_tool(payload["tool"])
+    args = validate_args(tool, payload.get("args") or {})
+    ctx._extras["tool_actor"] = "human"
+    return tool.handler(ctx, args)
 
 
 @register("add_transaction")

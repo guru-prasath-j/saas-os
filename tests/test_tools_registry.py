@@ -87,8 +87,15 @@ def test_agent_gate_hook_intercepts_agent_writes(ctx):
 
 
 def test_approve_action_is_human_only(ctx):
-    with pytest.raises(Exception, match="human-only"):
-        tools.invoke(ctx, "approve_action", {"approval_id": "x"}, actor="agent")
+    """Handler-level guard: even with no gate installed, an agent actor can
+    never reach the approve handler."""
+    old = registry.AGENT_GATE
+    registry.AGENT_GATE = None
+    try:
+        with pytest.raises(Exception, match="human-only"):
+            tools.invoke(ctx, "approve_action", {"approval_id": "x"}, actor="agent")
+    finally:
+        registry.AGENT_GATE = old
 
 
 def test_agent_kill_switch_env(monkeypatch):
