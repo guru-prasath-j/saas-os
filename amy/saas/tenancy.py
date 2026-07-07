@@ -39,10 +39,26 @@ def vault_settings_path(user_id: str):
 
 def _resolve_vault(user_id: str):
     """Active vault folder = cloud folder if cloud-sync is on, else local folder,
-    falling back to the user's default managed vault."""
+    falling back to AMY_DEFAULT_LOCAL_VAULT (.env — set-and-forget for a
+    single-user deployment), then the internal managed vault."""
     from ..vault_settings import VaultSettings
-    return VaultSettings(vault_settings_path(user_id)).active_path(
-        default=paths.vault_dir(user_id))
+    env_default = os.getenv("AMY_DEFAULT_LOCAL_VAULT", "").strip()
+    default = (env_default if env_default and os.path.exists(env_default)
+               else paths.vault_dir(user_id))
+    return VaultSettings(vault_settings_path(user_id)).active_path(default=default)
+
+
+def resolve_vault_dir(user_id: str) -> "Path":
+    """Public Path-typed wrapper around _resolve_vault — use this (not
+    paths.vault_dir directly) anywhere that reads/writes the vault a user is
+    ACTUALLY using, so a linked external/cloud vault (Account -> vault
+    settings) is respected instead of silently falling back to the internal
+    managed folder. paths.vault_dir() remains correct for the handful of
+    call sites that must always mean the internal managed folder regardless
+    of linking (ensure_dirs above; delete_user_data below — deleting an
+    account must never rmtree a user's real external vault)."""
+    from pathlib import Path
+    return Path(_resolve_vault(user_id))
 
 
 def get_engine(user_id: str, openai_key: str | None = None,

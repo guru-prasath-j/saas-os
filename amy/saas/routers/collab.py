@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..db import User
-from .. import paths, security
+from .. import paths, security, tenancy
 from ..deps import (
     current_user, Query,
     _engine_for, _user_key, _collab_db_path, _collab_light, _journal_user,
@@ -74,7 +74,7 @@ def collab_ask_stream(q: Query, user: User = Depends(current_user)):
 
     def gen():
         yield _sse({"type": "status", "data": "thinking"})
-        vault = str(paths.vault_dir(user.id))
+        vault = str(tenancy.resolve_vault_dir(user.id))
         cm = CollabMaster(notes, db_path,
                           llm=LLMRouter(openai_api_key=key, use_global_keys=False),
                           vault_path=vault,
@@ -105,7 +105,7 @@ def collab_ask(q: Query, user: User = Depends(current_user)):
     eng = _engine_for(user)
     cm = CollabMaster(eng.notes, _collab_db_path(user),
                       llm=LLMRouter(openai_api_key=_user_key(user), use_global_keys=False),
-                      vault_path=str(paths.vault_dir(user.id)),
+                      vault_path=str(tenancy.resolve_vault_dir(user.id)),
                       finance_db_path=str(paths.index_dir(user.id) / "finance.db"),
                       connector_dir=str(paths.index_dir(user.id) / "connectors"),
                       mcp_connectors=_user_mcp_connectors(user))

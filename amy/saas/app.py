@@ -18,7 +18,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 
 from .db import SessionLocal, User, init_db
-from . import paths
+from . import paths, tenancy
 from .routers import (
     auth, vault, knowledge, collab, intelligence,
     twin, events, memory, connectors, product, captures, habits, finance,
@@ -227,6 +227,58 @@ async def _mcp_poll_loop():
             pass
 
 
+_vault_watchers: dict = {}   # user_id -> VaultWatcher (holds mtime baselines)
+
+
+def _run_vault_watch():
+    """Detect .md files changed OUTSIDE the app (Obsidian desktop, Obsidian
+    Sync from mobile, the Flutter app) in each user's ACTIVE vault: emit
+    vault.note_edited events and invalidate the cached engine so the next
+    query re-reads the vault — external edits show up without a restart."""
+    from ..collab import CollabDB
+    from ..events.store import EventStore
+    from ..vault_watcher import VaultWatcher
+
+    s = SessionLocal()
+    try:
+        user_ids = [u.id for u in s.query(User).all()]
+    finally:
+        s.close()
+    for uid in user_ids:
+        vault = tenancy.resolve_vault_dir(uid)
+        collab_path = str(paths.index_dir(uid) / "collab.db")
+        if not vault.exists() or not os.path.exists(collab_path):
+            continue
+        cdb = CollabDB(collab_path)
+        try:
+            watcher = _vault_watchers.get(uid)
+            # vault re-linked to a different folder -> fresh baseline
+            if watcher is None or str(watcher.vault) != str(vault):
+                watcher = VaultWatcher(EventStore(cdb), vault)
+                _vault_watchers[uid] = watcher
+            else:
+                watcher.events = EventStore(cdb)   # this sweep's connection
+            if watcher.check():
+                tenancy.invalidate(uid)
+        except Exception:
+            pass
+        finally:
+            cdb.close()
+
+
+async def _vault_watch_loop():
+    import asyncio
+    seconds = float(os.getenv("AMY_VAULT_WATCH_SECONDS", "60"))
+    if seconds <= 0:
+        return   # opt-out
+    while True:
+        await asyncio.sleep(max(10.0, seconds))
+        try:
+            await asyncio.to_thread(_run_vault_watch)
+        except Exception:
+            pass
+
+
 def _run_all_consolidations():
     from ..memory.consolidate import Consolidator
     s = SessionLocal()
@@ -235,7 +287,7 @@ def _run_all_consolidations():
     finally:
         s.close()
     for uid in user_ids:
-        vault_path = paths.vault_dir(uid)
+        vault_path = tenancy.resolve_vault_dir(uid)
         if not vault_path.exists():
             continue
         try:
@@ -423,3 +475,4 @@ async def _startup():
     asyncio.create_task(_gmail_poll_loop())
     asyncio.create_task(_automation_loop())
     asyncio.create_task(_mcp_poll_loop())
+    asyncio.create_task(_vault_watch_loop())

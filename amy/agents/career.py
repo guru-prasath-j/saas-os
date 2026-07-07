@@ -4,7 +4,7 @@ import datetime
 from pathlib import Path
 from .base import SubAgent, AgentResult
 from ..vault import Note
-from .. import tools
+from .. import agent_writeback as tools
 from ..intelligence.career import normalizer, discovery, matcher, resume
 
 class CareerAgent(SubAgent):

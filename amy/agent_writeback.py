@@ -1,6 +1,14 @@
 """Phase 8 write-back tools. Every write is a *proposal* that needs explicit
 human confirmation before it touches a note, and every applied write is logged
-to the relevant Audit Log. Money is never moved — writes only record/notes."""
+to the relevant Audit Log. Money is never moved — writes only record/notes.
+
+Renamed from amy/tools.py (was a bare top-level module) because amy/tools/
+now also exists as a package (the agent tool registry — RISK_READ/WRITE,
+register_tool, invoke). Both named "tools" would collide: Python resolves
+`from . import tools` to whichever wins the package-vs-module race, silently
+breaking the other. This module keeps the OLD single-user write-proposal
+behavior (WriteProposal/propose/apply/is_write_request) under a name that
+can't collide; amy/agents/{base,career,master}.py import it explicitly."""
 from __future__ import annotations
 import re, uuid, datetime
 from dataclasses import dataclass, field

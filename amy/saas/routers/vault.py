@@ -89,7 +89,7 @@ def list_notes(limit: int = 100, offset: int = 0, user: User = Depends(current_u
 
 @router.get("/api/vault/tree")
 def vault_tree(user: User = Depends(current_user)):
-    vault = paths.vault_dir(user.id)
+    vault = tenancy.resolve_vault_dir(user.id)
     if not vault.exists():
         return {"tree": []}
     tree = []

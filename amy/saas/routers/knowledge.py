@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from ..db import User
-from .. import paths
+from .. import paths, tenancy
 from ..deps import current_user, _engine_for, _knowledge_for, _collab_db_path, _connector_dir
 
 router = APIRouter()
@@ -36,7 +36,7 @@ def knowledge_build(user: User = Depends(current_user)):
     eng = _engine_for(user)
     kb = _knowledge_for(user)
     try:
-        return kb.build(eng.notes, vault_root=str(paths.vault_dir(user.id)))
+        return kb.build(eng.notes, vault_root=str(tenancy.resolve_vault_dir(user.id)))
     finally:
         kb.close()
 

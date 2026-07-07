@@ -94,6 +94,6 @@ def _journal_user(user: "User") -> dict:
     db = CollabDB(_collab_db_path(user))
     try:
         notes = _engine_for(user).notes
-        return JournalSync(db, paths.vault_dir(user.id), notes=notes).sync()
+        return JournalSync(db, tenancy.resolve_vault_dir(user.id), notes=notes).sync()
     finally:
         db.close()

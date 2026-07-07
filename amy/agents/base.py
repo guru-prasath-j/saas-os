@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from .. import config, tools
+from .. import config
+from .. import agent_writeback as tools
 from ..retrieval import Retriever
 from ..llm import LLMRouter
 from ..vault import Note

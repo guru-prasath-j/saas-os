@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..db import User
-from .. import paths
+from .. import paths, tenancy
 from ..deps import current_user, _engine_for, _collab_db_path, _journal_user, _connector_dir
 
 router = APIRouter()
@@ -22,7 +22,7 @@ def memory_daily(date: str | None = None, user: User = Depends(current_user)):
     import datetime as _dt
     from ...memory import DAILY_DIR
     d = date or _dt.datetime.now(_dt.timezone.utc).date().isoformat()
-    path = Path(paths.vault_dir(user.id)) / DAILY_DIR / f"{d}.md"
+    path = tenancy.resolve_vault_dir(user.id) / DAILY_DIR / f"{d}.md"
     if not path.exists():
         return {"date": d, "exists": False, "content": ""}
     return {"date": d, "exists": True,
@@ -45,13 +45,13 @@ def memory_recall(q: str, k: int = 3, user: User = Depends(current_user)):
 @router.post("/api/memory/consolidate")
 def memory_consolidate(user: User = Depends(current_user)):
     from ...memory import Consolidator
-    return Consolidator(paths.vault_dir(user.id)).weekly()
+    return Consolidator(tenancy.resolve_vault_dir(user.id)).weekly()
 
 
 @router.get("/api/memory/patterns")
 def memory_patterns(user: User = Depends(current_user)):
     from ...memory import Consolidator
-    return Consolidator(paths.vault_dir(user.id)).patterns()
+    return Consolidator(tenancy.resolve_vault_dir(user.id)).patterns()
 
 
 @router.get("/api/memory/verify")
@@ -60,7 +60,7 @@ def memory_verify(user: User = Depends(current_user)):
     from ...collab import CollabDB
     db = CollabDB(_collab_db_path(user))
     try:
-        return VaultReindex(paths.vault_dir(user.id)).verify(db)
+        return VaultReindex(tenancy.resolve_vault_dir(user.id)).verify(db)
     finally:
         db.close()
 
@@ -71,7 +71,7 @@ def memory_reindex(user: User = Depends(current_user)):
     from ...collab import CollabDB
     db = CollabDB(_collab_db_path(user))
     try:
-        rx = VaultReindex(paths.vault_dir(user.id))
+        rx = VaultReindex(tenancy.resolve_vault_dir(user.id))
         return {"scan": rx.scan(), "decisions": rx.rebuild_decisions(db)}
     finally:
         db.close()
@@ -86,7 +86,7 @@ def memory_log(user: User = Depends(current_user)):
 def memory_index(user: User = Depends(current_user)):
     from ...memory import DAILY_DIR
     from ...memory.consolidate import WEEKLY_DIR
-    vault = Path(paths.vault_dir(user.id))
+    vault = tenancy.resolve_vault_dir(user.id)
     files = []
     for folder in (DAILY_DIR, WEEKLY_DIR, "09_Memory"):
         d = vault / folder
@@ -106,7 +106,7 @@ def memory_index(user: User = Depends(current_user)):
 
 @router.get("/api/memory/file")
 def memory_file(path: str, user: User = Depends(current_user)):
-    vault = Path(paths.vault_dir(user.id)).resolve()
+    vault = tenancy.resolve_vault_dir(user.id).resolve()
     target = (vault / path).resolve()
     if vault not in target.parents and target != vault:
         raise HTTPException(status_code=400, detail="invalid path")

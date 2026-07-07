@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..db import User
-from .. import paths
+from .. import paths, tenancy
 from ..deps import current_user, _collab_db_path
 
 router = APIRouter()
@@ -1325,7 +1325,7 @@ def _maybe_close_cycle(user: "User", fe, account: dict) -> None:
             llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
             title, body = cycle_narrative(fe, account, status, llm=llm)
             slug = _re.sub(r"[^\w -]", "", account.get("nickname") or "account").strip()
-            note_dir = paths.vault_dir(user.id) / "09_Memory"
+            note_dir = tenancy.resolve_vault_dir(user.id) / "09_Memory"
             note_dir.mkdir(parents=True, exist_ok=True)
             note = note_dir / f"Custodial Cycle - {slug} {today}.md"
             if not note.exists():

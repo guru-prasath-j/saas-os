@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from ..db import User
-from .. import paths
+from .. import paths, tenancy
 from ..deps import current_user, _engine_for, _user_key
 
 router = APIRouter()
@@ -39,7 +39,7 @@ async def create_capture(
     res = captures_mod.ingest(
         data, filename=file.filename or "", content_type=file.content_type,
         taken_at=taken_at, lat=lat, lon=lon, source=source, note=note, tags=tag_list,
-        vault=paths.vault_dir(user.id), openai_api_key=_user_key(user),
+        vault=tenancy.resolve_vault_dir(user.id), openai_api_key=_user_key(user),
     )
     if not res.duplicate:
         _engine_for(user).add_capture_note(res.note_path)
@@ -77,7 +77,7 @@ def capture_image(path: str, user: User = Depends(current_user)):
     from ... import captures as captures_mod
     if not path.startswith(captures_mod.CAPTURES_REL + "/"):
         raise HTTPException(status_code=400, detail="invalid path")
-    vroot = paths.vault_dir(user.id).resolve()
+    vroot = tenancy.resolve_vault_dir(user.id).resolve()
     abs_path = (vroot / path).resolve()
     if vroot not in abs_path.parents or not abs_path.exists():
         raise HTTPException(status_code=404, detail="not found")
@@ -106,7 +106,7 @@ def saas_clip_job(req: JobClipReq, user: User = Depends(current_user)):
     safe_title = "".join(c for c in job_info["title"]
                          if c.isalnum() or c in " -_").strip()
     note_path = f"06_Job_Search/{safe_company} - {safe_title}.md"
-    abs_path = Path(paths.vault_dir(user.id)) / note_path
+    abs_path = tenancy.resolve_vault_dir(user.id) / note_path
     abs_path.parent.mkdir(parents=True, exist_ok=True)
     abs_path.write_text(normalizer.generate_job_markdown(job_info), encoding="utf-8")
 

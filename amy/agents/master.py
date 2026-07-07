@@ -1,7 +1,8 @@
 """Master orchestrator: guardrails -> count -> route (with memory) -> read | propose write."""
 from __future__ import annotations
 from dataclasses import dataclass, field
-from .. import guardrails, tools, aggregate, config, security
+from .. import guardrails, aggregate, config, security
+from .. import agent_writeback as tools
 from ..retrieval import Retriever
 from ..llm import LLMRouter
 from ..classifier import IntentClassifier

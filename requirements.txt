@@ -16,6 +16,13 @@ google-api-python-client>=2.120
 mcp>=1.28
 starlette>=0.37.2,<0.38.0
 
+# mcp_servers/jobspy_server.py — self-hosted, spec-compliant MCP server for
+# job search (Indeed/LinkedIn/Naukri/Bayt/ZipRecruiter/Glassdoor in one
+# call). Third-party jobspy MCP forks use non-standard HTTP routes a real
+# MCP client can't talk to; this one uses FastMCP + streamable-http so it
+# works with amy/connectors/mcp.py out of the box.
+python-jobspy>=1.1
+
 # Core (Phase 1-3). All optional deps degrade gracefully if missing.
 fastapi>=0.110
 uvicorn[standard]>=0.29
