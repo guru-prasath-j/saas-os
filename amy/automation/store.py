@@ -421,12 +421,12 @@ class TrackedLLM:
     def status(self) -> dict:
         return self._router.status()
 
-    def generate(self, system, prompt, context="", sensitive=False):
+    def generate(self, system, prompt, context="", sensitive=False, fast=False):
         t0 = time.monotonic()
         try:
             text, name = self._router.generate(
                 system, prompt, context,
-                sensitive=sensitive or self.force_local)
+                sensitive=sensitive or self.force_local, fast=fast)
             ms = int((time.monotonic() - t0) * 1000)
             try:
                 self._store.log_llm_call(name, self.purpose, True, ms)

@@ -23,7 +23,10 @@ from .assistant import _catalog
 from .executors import JobCtx
 
 _MAX_TOOL_CALLS = 10
-_PLAN_MAX_STEPS = 6
+_PLAN_MAX_STEPS = 4     # was 6 — with a slow thinking-model each extra step
+                        # is 1-2 more long LLM calls; 4 keeps runs bounded
+_TIME_BUDGET_S = 300    # wall clock: past this, remaining steps are skipped
+                        # and the run summarizes what it did get done
 
 
 def _first_obj(raw: str) -> dict | None:
@@ -77,7 +80,9 @@ def list_goal_runs(ctx: JobCtx, limit: int = 20) -> list[dict]:
 def _gen(ctx: JobCtx, system: str, prompt: str) -> dict | None:
     for _ in range(2):   # one retry on provider flake
         try:
-            raw, _p = ctx.llm.generate(system, prompt, sensitive=False)
+            # fast=True: each call here is a one-JSON-object decision, not
+            # analysis — thinking mode made these 46s median (measured)
+            raw, _p = ctx.llm.generate(system, prompt, sensitive=False, fast=True)
             return _first_obj(raw)
         except Exception:
             continue
@@ -164,11 +169,27 @@ _SUMMARY_SYSTEM = (
 )
 
 
-def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS) -> dict:
-    if ctx.llm is None:
-        return {"error": "No LLM provider is available right now."}
+def _persist_run(ctx: JobCtx, run_id: str, goal: str, plan: list,
+                 steps: list, summary: str, status: str):
+    ctx.collab.conn.execute(
+        "INSERT OR REPLACE INTO agent_goals(id,ts,goal,plan,steps,summary,status)"
+        " VALUES(?,?,?,?,?,?,?)",
+        (run_id, _dt.datetime.now(_dt.timezone.utc).isoformat(), goal,
+         json.dumps(plan), json.dumps(steps, default=str), summary, status))
+    ctx.collab.conn.commit()
+
+
+def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS,
+             run_id: str | None = None) -> dict:
+    """When run_id is given (background mode), the caller pre-inserted a
+    status='running' row — every exit path below replaces it, so a poller
+    always sees the run finish (completed / failed)."""
     _ensure_table(ctx)
-    run_id = uuid.uuid4().hex[:12]
+    run_id = run_id or uuid.uuid4().hex[:12]
+    if ctx.llm is None:
+        _persist_run(ctx, run_id, goal, [], [],
+                     "No LLM provider is available right now.", "failed")
+        return {"error": "No LLM provider is available right now."}
     catalog = _catalog()
     context = _context_block(ctx)
 
@@ -177,22 +198,30 @@ def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS) -> d
                      f"Recent activity:\n{context}\n\nGoal: {goal}")
     if not plan_resp or not isinstance(plan_resp.get("plan"), list) \
             or not plan_resp["plan"]:
+        _persist_run(ctx, run_id, goal, [], [],
+                     "Could not produce a plan — try rephrasing the goal.", "failed")
         return {"error": "Could not produce a plan — try rephrasing the goal."}
     plan = [str(s) for s in plan_resp["plan"][:_PLAN_MAX_STEPS]]
     plan_reasoning = str(plan_resp.get("reasoning") or "")
     task_ids = _store_plan_graph(ctx, run_id, goal, plan)
 
     # --- 2. execute ------------------------------------------------------------
+    import time as _time
     from .. import tools
+    deadline = _time.monotonic() + _TIME_BUDGET_S
     steps_log: list[dict] = []
     calls_used = 0
     for i, step in enumerate(plan):
+        if _time.monotonic() > deadline:
+            if i < len(task_ids):
+                _mark_task(ctx, task_ids[i], step, "skipped (time budget)")
+            continue
         step_outcome = "skipped (tool budget exhausted)"
         transcript = [f"Goal: {goal}", f"Plan: {json.dumps(plan)}",
                       f"Current step ({i + 1}/{len(plan)}): {step}"]
         for log in steps_log[-4:]:
             transcript.append(f"Earlier: {json.dumps(log, default=str)[:400]}")
-        while calls_used < max_tool_calls:
+        while calls_used < max_tool_calls and _time.monotonic() <= deadline:
             resp = _gen(ctx, _STEP_SYSTEM.format(catalog=catalog),
                         "\n".join(transcript) + "\nassistant:")
             if resp is None:
@@ -242,12 +271,7 @@ def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS) -> d
                   f"Ran {len(plan)} step(s), {calls_used} tool call(s).")
     queued = sum(1 for s in steps_log if s.get("queued"))
     status = "completed" if calls_used or steps_log else "planned_only"
-    ctx.collab.conn.execute(
-        "INSERT INTO agent_goals(id,ts,goal,plan,steps,summary,status)"
-        " VALUES(?,?,?,?,?,?,?)",
-        (run_id, _dt.datetime.now(_dt.timezone.utc).isoformat(), goal,
-         json.dumps(plan), json.dumps(steps_log, default=str), summary, status))
-    ctx.collab.conn.commit()
+    _persist_run(ctx, run_id, goal, plan, steps_log, summary, status)
 
     try:
         payload = {"agent": "orchestrator", "summary": f"Goal run: {goal[:80]}",

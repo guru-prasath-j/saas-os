@@ -1249,6 +1249,7 @@ class DisburseBody(BaseModel):
     mode: str = "NEFT"
     category: str = "Custodial Disbursement"
     notes: str = ""
+    part: str | None = None   # split part label (e.g. "Personal" / "MJVR")
 
 
 class SheetLinkBody(BaseModel):
@@ -1262,6 +1263,7 @@ class SheetImportBody(BaseModel):
 class PrecheckBody(BaseModel):
     beneficiary_id: str
     amount: float
+    part: str | None = None
 
 
 class SuggestionConfirmBody(BaseModel):
@@ -1274,6 +1276,28 @@ def _require_custodial_account(fe, account_id: str) -> dict:
     if not acc or acc.get("account_type") != "custodial":
         raise HTTPException(status_code=404, detail="custodial account not found")
     return acc
+
+
+def _notify_low_balance(user: "User", fe, account: dict) -> dict | None:
+    """After money moves: raise the balance-driven refill notification
+    (deduped daily) and return the shortfall for the API response so the UI
+    can flag it immediately. Fire-and-forget — never breaks the route."""
+    try:
+        from ...finance.custodial import check_low_balance_refill, cycle_commitment
+        cdb = _open_collab(user)
+        try:
+            from ...notifications import NotificationStore
+            check_low_balance_refill(fe, NotificationStore(cdb), account)
+        finally:
+            cdb.close()
+        c = cycle_commitment(fe, account["id"])
+        bal = fe.custodial_balance(account["id"])
+        if c["total"] > 0 and bal < c["total"]:
+            return {"balance": bal, "commitment": c["total"],
+                    "shortfall": round(c["total"] - bal, 2)}
+    except Exception:
+        pass
+    return None
 
 
 def _maybe_close_cycle(user: "User", fe, account: dict) -> None:
@@ -1346,9 +1370,11 @@ def custodial_next_cycle_prefill(account_id: str, user: User = Depends(current_u
     from ...finance.custodial import next_cycle_prefill
     fe = _finance_db(user)
     try:
+        from ...finance.custodial import cycle_commitment
         _require_custodial_account(fe, account_id)
         prefill = next_cycle_prefill(fe, account_id)
         prefill["balance"] = fe.custodial_balance(account_id)
+        prefill["cycle_commitment"] = cycle_commitment(fe, account_id)["total"]
         return prefill
     finally:
         fe.close()
@@ -1397,8 +1423,8 @@ def custodial_disburse(account_id: str, body: DisburseBody,
             amount=-abs(body.amount), category=body.category,
             merchant=ben["name"], date=date, source="custodial_manual",
             notes=body.notes, account_id=account_id)
-        fe.conn.execute("UPDATE transactions SET beneficiary_id=? WHERE id=?",
-                        (body.beneficiary_id, tid))
+        fe.conn.execute("UPDATE transactions SET beneficiary_id=?, part=? WHERE id=?",
+                        (body.beneficiary_id, body.part, tid))
         fe.conn.commit()
 
         events = EventStore(cdb)
@@ -1406,18 +1432,21 @@ def custodial_disburse(account_id: str, body: DisburseBody,
             "account_id": account_id, "beneficiary_id": body.beneficiary_id,
             "beneficiary_name": ben["name"], "transaction_id": tid,
             "amount": body.amount, "date": date, "mode": body.mode,
+            "part": body.part,
         }, source="custodial_disburse_endpoint")
 
         token_path = str(_connector_dir(user) / TOKEN_FILENAME)
         creds = load_credentials(token_path)
         sheet_result = append_disbursement_row(
-            creds, acc, ben, date, body.mode, body.amount, body.category, body.notes)
+            creds, acc, ben, date, body.mode, body.amount, body.category,
+            body.notes, part=body.part)
 
         _maybe_close_cycle(user, fe, acc)
         return {
             "transaction_id": tid, "event_id": eid,
             "sheet_write": sheet_result,
             "balance": fe.custodial_balance(account_id),
+            "balance_warning": _notify_low_balance(user, fe, acc),
         }
     finally:
         fe.close()
@@ -1451,7 +1480,7 @@ def custodial_retry_sheet(account_id: str, transaction_id: str,
         creds = load_credentials(token_path)
         return append_disbursement_row(
             creds, acc, ben, row["date"], "NEFT", abs(row["amount"]),
-            row["category"], row["notes"] or "")
+            row["category"], row["notes"] or "", part=row["part"])
     finally:
         fe.close()
 
@@ -1527,6 +1556,8 @@ def custodial_analyze_sheet(account_id: str, user: User = Depends(current_user))
             ben = _match_beneficiary(beneficiaries, t["tab"])
             already = 0
             for r in rows:
+                if r["kind"] == "account_debit":
+                    continue   # import-time decision; not previewed row-by-row
                 signed = r["amount"] if r["kind"] == "refill" else -r["amount"]
                 bid = None if r["kind"] == "refill" else (ben["id"] if ben else None)
                 if ben or r["kind"] == "refill":
@@ -1536,6 +1567,10 @@ def custodial_analyze_sheet(account_id: str, user: User = Depends(current_user))
                 "tab": t["tab"],
                 "parsed": len(rows),
                 "skipped": t["skipped"],
+                "layout": t.get("layout", "simple"),
+                "refills": sum(1 for r in rows if r["kind"] == "refill"),
+                "debits_skipped": t.get("debits_skipped", 0),
+                "debit_total": t.get("debit_total", 0),
                 "already_imported": already,
                 "first_date": rows[0]["date"] if rows else None,
                 "last_date": rows[-1]["date"] if rows else None,
@@ -1557,6 +1592,7 @@ def custodial_import_sheet(account_id: str, body: SheetImportBody,
     (source='sheet_import'), skipping rows already in the ledger."""
     import uuid as _uuid
     from ...finance.custodial_sheets import SHEET_ID_META_KEY, fetch_sheet_data
+    from ...finance.custodial_ai import match_beneficiary as _ai_match
 
     fe = _finance_db(user)
     try:
@@ -1569,7 +1605,16 @@ def custodial_import_sheet(account_id: str, body: SheetImportBody,
             raise HTTPException(status_code=400, detail=data.get("error", "sheet read failed"))
 
         beneficiaries = fe.list_beneficiaries(account_id, active_only=False)
-        imported, skipped_existing, created = 0, 0, []
+        imported, skipped_existing, covered_skipped, created = 0, 0, 0, []
+        # tab names with data — a master-log debit whose party matches one of
+        # these is already covered by that tab's own rows (never double-count)
+        tab_keys = [t2["tab"].strip().lower() for t2 in data["tabs"] if t2["rows"]]
+
+        def _covered_by_tab(party: str, own_tab: str) -> bool:
+            p = (party or "").strip().lower()
+            return any(k != own_tab.strip().lower() and (k in p or p in k)
+                       for k in tab_keys if len(k) > 2)
+
         for t in data["tabs"]:
             if body.tabs is not None and t["tab"] not in body.tabs:
                 continue
@@ -1583,17 +1628,57 @@ def custodial_import_sheet(account_id: str, body: SheetImportBody,
                 created.append(t["tab"])
             for r in t["rows"]:
                 refill = r["kind"] == "refill"
+                if r["kind"] == "account_debit":
+                    # master-log outflow: skip parties that have their own tab
+                    # (Eswari, Sumathi); the rest (e.g. Guru IB) exist only
+                    # here and are real disbursements from this account
+                    if _covered_by_tab(r.get("party", ""), t["tab"]):
+                        covered_skipped += 1
+                        continue
+                    active = [b for b in beneficiaries if b.get("active")]
+                    dben, _score = _ai_match(active, r.get("party") or "")
+                    if dben is None:
+                        bid = fe.add_beneficiary(account_id, r["party"] or "Account outflow")
+                        dben = fe.get_beneficiary(bid)
+                        beneficiaries.append(dben)
+                        created.append(dben["name"])
+                    # same-party same-date dedup: master rows are sometimes
+                    # combined totals (e.g. "pay + Eswari part"), so an exact
+                    # amount match is too strict after a manual correction
+                    dup = fe.conn.execute(
+                        "SELECT 1 FROM transactions WHERE account_id=? AND date=?"
+                        " AND beneficiary_id=?", (account_id, r["date"], dben["id"])).fetchone()
+                    if dup:
+                        skipped_existing += 1
+                        continue
+                    notes = " · ".join(x for x in (r.get("party"), r["notes"]) if x)
+                    fe.conn.execute(
+                        "INSERT INTO transactions(id,date,amount,category,merchant,"
+                        "source,notes,account_id,beneficiary_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                        (_uuid.uuid4().hex, r["date"], -r["amount"], r["category"],
+                         dben["name"], "sheet_import", notes, account_id, dben["id"]))
+                    imported += 1
+                    continue
                 signed = r["amount"] if refill else -r["amount"]
                 bid = None if refill else ben["id"]
                 if _sheet_row_exists(fe, account_id, bid, r["date"], signed):
                     skipped_existing += 1
                     continue
+                # split part from the party prefix: "Eswari Personal" in the
+                # Eswari tab → part "Personal"
+                part = None
+                party = (r.get("party") or "").strip()
+                if (not refill and party
+                        and party.lower().startswith(ben["name"].strip().lower())
+                        and len(party) > len(ben["name"].strip())):
+                    part = party[len(ben["name"].strip()):].strip() or None
+                notes = " · ".join(x for x in (r.get("party"), r["notes"]) if x)
                 fe.conn.execute(
                     "INSERT INTO transactions(id,date,amount,category,merchant,"
-                    "source,notes,account_id,beneficiary_id) VALUES(?,?,?,?,?,?,?,?,?)",
+                    "source,notes,account_id,beneficiary_id,part) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (_uuid.uuid4().hex, r["date"], signed, r["category"],
-                     "Refill" if refill else ben["name"], "sheet_import",
-                     r["notes"], account_id, bid))
+                     (r.get("party") or "Refill") if refill else ben["name"],
+                     "sheet_import", notes, account_id, bid, part))
                 imported += 1
         fe.conn.commit()
 
@@ -1603,7 +1688,37 @@ def custodial_import_sheet(account_id: str, body: SheetImportBody,
             "beneficiaries_created": created,
         })
         return {"imported": imported, "skipped_existing": skipped_existing,
+                "covered_by_tabs": covered_skipped,
                 "beneficiaries_created": created,
+                "balance": fe.custodial_balance(account_id)}
+    finally:
+        fe.close()
+
+
+class BeneficiaryPatch(BaseModel):
+    name: str | None = None
+    sheet_tab: str | None = None
+    active: bool | None = None
+    tracking_only: bool | None = None
+    expected_amount: float | None = None   # static per-cycle commitment
+
+
+@router.patch("/api/finance/custodial/{account_id}/beneficiaries/{beneficiary_id}")
+def patch_custodial_beneficiary(account_id: str, beneficiary_id: str,
+                                body: BeneficiaryPatch,
+                                user: User = Depends(current_user)):
+    """Edit a beneficiary — notably tracking_only: records kept in the sheet
+    for bookkeeping (MJVR/VJPN-style) whose rows never count toward balance."""
+    fe = _finance_db(user)
+    try:
+        _require_custodial_account(fe, account_id)
+        ben = fe.get_beneficiary(beneficiary_id)
+        if not ben or ben["account_id"] != account_id:
+            raise HTTPException(status_code=404, detail="beneficiary not found")
+        fields = {k: (int(v) if isinstance(v, bool) else v)
+                  for k, v in body.model_dump(exclude_none=True).items()}
+        fe.update_beneficiary(beneficiary_id, **fields)
+        return {"beneficiary": fe.get_beneficiary(beneficiary_id),
                 "balance": fe.custodial_balance(account_id)}
     finally:
         fe.close()
@@ -1728,7 +1843,8 @@ def custodial_confirm_suggestion(account_id: str, transaction_id: str,
         _maybe_close_cycle(user, fe, acc)
         return {"transaction_id": transaction_id, "event_id": eid,
                 "sheet_write": sheet_result,
-                "balance": fe.custodial_balance(account_id)}
+                "balance": fe.custodial_balance(account_id),
+                "balance_warning": _notify_low_balance(user, fe, acc)}
     finally:
         fe.close()
         cdb.close()
@@ -1747,6 +1863,7 @@ def custodial_precheck(account_id: str, body: PrecheckBody,
         if not ben or ben["account_id"] != account_id:
             raise HTTPException(status_code=404, detail="beneficiary not found")
         return {"warnings": anomaly_precheck(fe, account_id,
-                                             body.beneficiary_id, body.amount)}
+                                             body.beneficiary_id, body.amount,
+                                             part=body.part)}
     finally:
         fe.close()

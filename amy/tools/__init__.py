@@ -10,3 +10,4 @@ from .registry import (
     validate_args,
 )
 from . import builtin  # noqa: F401  — registers all built-in tools on import
+from . import mcp_bridge  # noqa: F401  — registers the MCP source bridge tools

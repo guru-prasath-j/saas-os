@@ -135,6 +135,98 @@ async def _digest_loop():
         await asyncio.sleep(max(0.1, hours) * 3600)
 
 
+class _DedupEvents:
+    """EventStore proxy for repeat polls: GitHub's /events feed re-sends the
+    same items every fetch, so emitting blindly on a schedule would duplicate
+    them. Skips events whose type + url/title already landed recently."""
+
+    def __init__(self, cdb, days: int = 7):
+        import datetime as _dt
+        from ..events.store import EventStore
+        self._es = EventStore(cdb)
+        self._conn = cdb.conn
+        self._cut = (_dt.datetime.now(_dt.timezone.utc)
+                     - _dt.timedelta(days=days)).isoformat()
+        self.emitted = 0
+
+    def publish(self, etype, payload, source=None):
+        key = str((payload or {}).get("url") or (payload or {}).get("title") or "")[:80]
+        if key:
+            row = self._conn.execute(
+                "SELECT 1 FROM events WHERE type=? AND ts>=? AND payload LIKE ? LIMIT 1",
+                (etype, self._cut, f"%{key}%")).fetchone()
+            if row:
+                return None
+        self.emitted += 1
+        return self._es.publish(etype, payload, source=source)
+
+    def __getattr__(self, name):
+        return getattr(self._es, name)
+
+
+def _run_mcp_polls():
+    """Background Layer-2 sweep: every promoted MCP connector with a saved
+    default_target gets polled; new activity lands as events (timeline,
+    digest, reactive agents) plus one bell notification per user per sweep."""
+    from ..collab import CollabDB
+    from ..notifications import NotificationStore
+    from ..sensors.mcp_sensor import poll_one
+    from .db import McpConnector
+
+    s = SessionLocal()
+    try:
+        rows = s.query(McpConnector).filter(
+            McpConnector.promoted_to_sensor == True).all()  # noqa: E712
+        by_user: dict[str, list] = {}
+        for r in rows:
+            by_user.setdefault(r.user_id, []).append(r)
+    finally:
+        s.close()
+
+    for uid, conns in by_user.items():
+        path = str(paths.index_dir(uid) / "collab.db")
+        if not os.path.exists(path):
+            continue
+        cdb = CollabDB(path)
+        try:
+            events = _DedupEvents(cdb)
+            polled = []
+            for row in conns:
+                repos = [row.default_target] if (
+                    row.default_target and "/" in row.default_target) else []
+                if not repos:
+                    continue
+                try:
+                    n = poll_one(row, events, github_repos=repos)
+                    if n is not None:
+                        polled.append(row.default_target)
+                except Exception:
+                    continue
+            if events.emitted:
+                NotificationStore(cdb).create(
+                    type="mcp_activity",
+                    title=f"GitHub activity: {events.emitted} new event(s)",
+                    body="New activity on " + ", ".join(polled),
+                    related_entity={"entity_type": "mcp_poll"})
+        except Exception:
+            pass
+        finally:
+            cdb.close()
+
+
+async def _mcp_poll_loop():
+    import asyncio
+    minutes = float(os.getenv("AMY_MCP_POLL_MINUTES", "30"))
+    if minutes <= 0:
+        return   # opt-out
+    while True:
+        await asyncio.sleep(max(1.0, minutes) * 60)   # first sweep after one interval
+        try:
+            await asyncio.to_thread(_run_mcp_polls)
+        except Exception:
+            pass
+
+
 def _run_all_consolidations():
     from ..memory.consolidate import Consolidator
     s = SessionLocal()
@@ -330,3 +422,4 @@ async def _startup():
     asyncio.create_task(_consolidation_loop())
     asyncio.create_task(_gmail_poll_loop())
     asyncio.create_task(_automation_loop())
+    asyncio.create_task(_mcp_poll_loop())

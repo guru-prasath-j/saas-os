@@ -104,7 +104,7 @@ def chat(ctx: JobCtx, message: str, history: list[dict] | None = None) -> dict:
         for _attempt in range(2):   # one retry on provider timeout/flake
             try:
                 raw, _provider = ctx.llm.generate(
-                    _system_prompt(), prompt, sensitive=False)
+                    _system_prompt(), prompt, sensitive=False, fast=True)
                 break
             except Exception:
                 continue

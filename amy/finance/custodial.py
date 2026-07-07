@@ -55,6 +55,41 @@ def _infer_cadence(cycle_dates: list[str]) -> int:
     return max(1, round(median))
 
 
+def cycle_commitment(fe: "FinanceEngine", account_id: str) -> dict:
+    """What one full cycle costs from this account. Static per-beneficiary
+    expected amounts (user-declared) win; median of recent history is the
+    fallback. Tracking-only beneficiaries are excluded — their money doesn't
+    come from this pool.
+    Returns {"total": float, "rows": [{"name", "amount", "source"}]}."""
+    from .custodial_ai import beneficiary_history, suggest_amount
+    rows = []
+    for b in fe.list_beneficiaries(account_id):
+        if b.get("tracking_only"):
+            continue
+        if b.get("split_kind") == "parts" and (b.get("default_parts") or []):
+            for p in b["default_parts"]:
+                if not isinstance(p, dict) or not p.get("name"):
+                    continue
+                amt = p.get("amount")
+                src = "static"
+                if not amt:
+                    amt, _ = suggest_amount(
+                        beneficiary_history(fe, b["id"], part=p["name"]))
+                    src = "median"
+                if amt:
+                    rows.append({"name": f"{b['name']} · {p['name']}",
+                                 "amount": float(amt), "source": src})
+            continue
+        amt = b.get("expected_amount")
+        src = "static"
+        if not amt:
+            amt, _ = suggest_amount(beneficiary_history(fe, b["id"]))
+            src = "median"
+        if amt:
+            rows.append({"name": b["name"], "amount": float(amt), "source": src})
+    return {"total": round(sum(r["amount"] for r in rows), 2), "rows": rows}
+
+
 def run_validation(fe: "FinanceEngine", account_id: str) -> dict:
     """
     Three checks against the user's own custodial-account data (no second
@@ -70,10 +105,11 @@ def run_validation(fe: "FinanceEngine", account_id: str) -> dict:
 
     if latest_cycle_date:
         cycle_txns = fe.conn.execute(
-            "SELECT beneficiary_id, amount FROM transactions"
+            "SELECT beneficiary_id, amount, part FROM transactions"
             " WHERE account_id=? AND date=? AND beneficiary_id IS NOT NULL",
             (account_id, latest_cycle_date)).fetchall()
         logged_ids = {r["beneficiary_id"] for r in cycle_txns}
+        logged_parts = {(r["beneficiary_id"], r["part"] or "") for r in cycle_txns}
 
         # 1. Split-sum check — Eswari-prefixed beneficiaries this cycle vs
         # the expected total configured on the account (accounts.meta).
@@ -88,24 +124,32 @@ def run_validation(fe: "FinanceEngine", account_id: str) -> dict:
                     "expected": expected, "actual": round(total, 2),
                 })
 
-        # 2. Skipped-beneficiary check
+        # 2. Skipped-beneficiary check (part-level for split beneficiaries)
         for b in beneficiaries:
             if b["id"] not in logged_ids:
                 issues.append({"check": "beneficiary_skipped", "beneficiary": b["name"]})
+                continue
+            if b.get("split_kind") == "parts":
+                for p in (b.get("default_parts") or []):
+                    pname = p.get("name") if isinstance(p, dict) else None
+                    if pname and (b["id"], pname) not in logged_parts:
+                        issues.append({"check": "beneficiary_skipped",
+                                       "beneficiary": f"{b['name']} · {pname}"})
 
-    # 3. Overdue-refill check
-    cadence_days = _infer_cadence(cycle_dates)
-    if latest_cycle_date:
-        due = _dt.date.fromisoformat(latest_cycle_date) + _dt.timedelta(days=cadence_days)
-        if _dt.date.today() >= due:
-            last_refill = fe.conn.execute(
-                "SELECT MAX(date) d FROM transactions WHERE account_id=? AND amount>0",
-                (account_id,)).fetchone()["d"]
-            if not last_refill or last_refill < due.isoformat():
-                issues.append({
-                    "check": "refill_overdue", "due_date": due.isoformat(),
-                    "last_refill": last_refill,
-                })
+    # 3. Low-balance refill check — balance-driven, not date-driven (per user
+    # decision): a refill is only flagged when the pool can't cover one full
+    # cycle of committed sends (static expected amounts, median fallback).
+    # Ad-hoc extras (e.g. a sudden Guru IB send) drain the balance and
+    # trigger this naturally.
+    commitment = cycle_commitment(fe, account_id)
+    balance = fe.custodial_balance(account_id)
+    if commitment["total"] > 0 and balance < commitment["total"]:
+        issues.append({
+            "check": "balance_low_refill",
+            "balance": balance,
+            "commitment": commitment["total"],
+            "shortfall": round(commitment["total"] - balance, 2),
+        })
 
     return {"issues": issues, "checked_at": _dt.datetime.now(_dt.timezone.utc).isoformat()}
 
@@ -122,28 +166,75 @@ def next_cycle_prefill(fe: "FinanceEngine", account_id: str) -> dict:
 
     from .custodial_ai import beneficiary_history, suggest_amount
 
-    last_cycle = {r["beneficiary_id"]: r for r in fe.custodial_last_cycle(account_id)}
+    def _last_txn(bid: str, part: str | None):
+        q = ("SELECT id, date, ABS(amount) amt, screenshot_path FROM transactions"
+             " WHERE beneficiary_id=? AND amount<0")
+        params: list = [bid]
+        if part is not None:
+            q += " AND COALESCE(part,'')=?"
+            params.append(part)
+        return fe.conn.execute(q + " ORDER BY date DESC LIMIT 1", params).fetchone()
+
     beneficiaries = []
     for b in fe.list_beneficiaries(account_id):
-        last = last_cycle.get(b["id"])
-        suggested, trend_note = suggest_amount(beneficiary_history(fe, b["id"]))
-        beneficiaries.append({
-            "beneficiary_id": b["id"],
-            "name": b["name"],
-            "sheet_tab": b.get("sheet_tab"),
-            "last_amount": abs(last["amount"]) if last else None,
-            "last_date": last["date"] if last else None,
-            "suggested_amount": suggested,
-            "trend_note": trend_note,
-            "transaction_id": last["id"] if last else None,
-            "has_screenshot": bool(last and last.get("screenshot_path")),
-        })
+        # split beneficiaries (split_kind='parts') get one prefill row per
+        # part — e.g. Eswari · Personal and Eswari · MJVR, each with its own
+        # history, suggestion, and confirm
+        parts = ([p.get("name") for p in (b.get("default_parts") or [])
+                  if isinstance(p, dict) and p.get("name")]
+                 if b.get("split_kind") == "parts" else [])
+        for part in (parts or [None]):
+            last = _last_txn(b["id"], part)
+            suggested, trend_note = suggest_amount(
+                beneficiary_history(fe, b["id"], part=part))
+            beneficiaries.append({
+                "beneficiary_id": b["id"],
+                "name": f"{b['name']} · {part}" if part else b["name"],
+                "part": part,
+                "sheet_tab": b.get("sheet_tab"),
+                "tracking_only": bool(b.get("tracking_only")),
+                "last_amount": last["amt"] if last else None,
+                "last_date": last["date"] if last else None,
+                "suggested_amount": suggested,
+                "trend_note": trend_note,
+                "transaction_id": last["id"] if last else None,
+                "has_screenshot": bool(last and last["screenshot_path"]),
+            })
     return {"due_date": due_date, "cadence_days": cadence_days, "beneficiaries": beneficiaries}
+
+
+def check_low_balance_refill(fe: "FinanceEngine", notification_store,
+                             account: dict) -> str | None:
+    """Balance-driven refill notification (deduped per day): fires when the
+    pool can't cover one full cycle of committed sends. Called from the
+    digest loop and after every disbursement, so an ad-hoc extra send that
+    drains the balance alerts immediately."""
+    aid = account["id"]
+    commitment = cycle_commitment(fe, aid)
+    balance = fe.custodial_balance(aid)
+    if commitment["total"] <= 0 or balance >= commitment["total"]:
+        return None
+    ref_id = f"custodial_low_balance_{aid}"
+    if notification_store.exists_today("custodial_low_balance", ref_id):
+        return None
+    lines = ", ".join(f"{r['name']} {r['amount']:g}" for r in commitment["rows"])
+    return notification_store.create(
+        type="custodial_low_balance",
+        title=f"Custodial balance low — refill needed ({account.get('nickname', '')})",
+        body=(f"Balance {balance:g} can't cover the usual cycle of "
+              f"{commitment['total']:g} ({lines}). "
+              f"Short by {commitment['total'] - balance:g} — time to ask for a refill."),
+        priority="high",
+        related_entity={"id": ref_id, "entity_type": "custodial_account",
+                        "account_id": aid},
+    )
 
 
 def check_custodial_nudges(fe: "FinanceEngine", notification_store, account: dict) -> str | None:
     """Called from the existing digest loop (amy/saas/app.py _run_all_digests)
-    — creates a month-end nudge notification once, deduped per due date."""
+    — creates a month-end nudge notification once, deduped per due date.
+    Also runs the balance-driven refill check (the only refill alert)."""
+    check_low_balance_refill(fe, notification_store, account)
     aid = account["id"]
     cycle_dates = fe.custodial_cycle_dates(aid)
     if not cycle_dates:

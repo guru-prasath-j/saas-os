@@ -53,6 +53,7 @@ def _to_dict(row: McpConnector) -> dict:
         "server_url": row.server_url,
         "auth_type": row.auth_type,
         "auth_extra": row.auth_extra,
+        "default_target": row.default_target,
         "risk_tier": row.risk_tier,
         "promoted_to_sensor": row.promoted_to_sensor,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -62,6 +63,11 @@ def _to_dict(row: McpConnector) -> dict:
 def _client_for(row: McpConnector, transport: str = "http"):
     from ...connectors.mcp import MCPConnector
     auth_value = security.decrypt_secret(row.auth_ref) if row.auth_ref else None
+    # Legacy-SSE servers (e.g. jobspy-mcp-server) expose an /sse endpoint —
+    # the UI has no transport picker, so infer it from the URL when the
+    # caller didn't explicitly override.
+    if transport == "http" and row.server_url.rstrip("/").endswith("/sse"):
+        transport = "sse"
     return MCPConnector(row.server_url, auth_type=row.auth_type, auth_value=auth_value,
                          transport=transport, auth_extra=row.auth_extra)
 
@@ -111,6 +117,22 @@ def promote_connector(connector_id: str, promoted: bool = True,
     """Layer 2 toggle — separate and explicit from registering the connector."""
     row = _get_owned(db, user, connector_id)
     row.promoted_to_sensor = promoted
+    db.commit()
+    return _to_dict(row)
+
+
+class TargetBody(BaseModel):
+    target: str = ""   # e.g. "owner/repo"; empty clears it
+
+
+@router.patch("/api/mcp/connectors/{connector_id}/target")
+def set_connector_target(connector_id: str, body: TargetBody,
+                          user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Persist the source's primary target server-side so the background
+    poller and agent tools know what to act on (the UI keeps a localStorage
+    copy for prefills; this is the copy automation reads)."""
+    row = _get_owned(db, user, connector_id)
+    row.default_target = body.target.strip()[:300] or None
     db.commit()
     return _to_dict(row)
 

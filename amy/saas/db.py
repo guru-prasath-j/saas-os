@@ -94,6 +94,10 @@ class McpConnector(Base):
     # browser URL already). Some MCP servers need a second, non-secret auth
     # parameter beyond the token itself; see amy/connectors/mcp.py _headers().
     auth_extra: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    # The source's primary target, server-side (e.g. GitHub "owner/repo",
+    # Plane project_id) — what the background poller and agent tools act on.
+    # NOT auth_extra: that one becomes an auth header (see _headers()).
+    default_target: Mapped[str | None] = mapped_column(String(300), nullable=True)
 
 
 def _migrate_users_table() -> None:
@@ -132,6 +136,10 @@ def _migrate_mcp_connectors_table() -> None:
         if existing and "auth_extra" not in existing:
             conn.exec_driver_sql(
                 "ALTER TABLE mcp_connectors ADD COLUMN auth_extra VARCHAR(200)")
+            conn.commit()
+        if existing and "default_target" not in existing:
+            conn.exec_driver_sql(
+                "ALTER TABLE mcp_connectors ADD COLUMN default_target VARCHAR(300)")
             conn.commit()
 
 

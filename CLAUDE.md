@@ -11,7 +11,7 @@ python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
 
 ## What It Is
 
-FastAPI + single-page frontend. SQLite-per-user. One active user (`usergithub02@gmail.com`, uid `86878242670f411f87183bd5c20a5533`).
+FastAPI + single-page frontend. SQLite-per-user. One active user (`guruprasathjay@gmail.com`, uid `4cfcf80f85e944178e5b4c2d6493b9dd`).
 
 Primary: **Finance CFO** — CSV/XLS/PDF import, Gmail sync, budgets, subscriptions, investments, custodial accounts.
 
@@ -91,8 +91,8 @@ amy/
 | What | Path |
 |---|---|
 | User DB | `saas_data/amy_saas.db` |
-| Finance DB | `saas_data/index/86878242670f411f87183bd5c20a5533/finance.db` |
-| Google token | `saas_data/index/86878242670f411f87183bd5c20a5533/connectors/google_token.json` |
+| Finance DB | `saas_data/index/4cfcf80f85e944178e5b4c2d6493b9dd/finance.db` |
+| Google token | `saas_data/index/4cfcf80f85e944178e5b4c2d6493b9dd/connectors/google_token.json` |
 
 ## Finance DB Tables
 

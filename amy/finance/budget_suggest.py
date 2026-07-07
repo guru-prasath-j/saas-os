@@ -33,18 +33,25 @@ _SYSTEM = (
 
 
 def suggest_budgets(engine, location: str | None, llm) -> dict:
-    """Returns {"income": float, "suggestions": [...]} or a "reason" if income is 0."""
+    """Returns {"income": float, "suggestions": [...]} or a "reason" if income is 0.
+    A "note" is included when income is the recent-months estimate (salary
+    hasn't landed yet this month)."""
     income = engine.effective_monthly_income()
     if income <= 0:
         return {"income": 0, "suggestions": [],
                 "reason": "No income recorded yet — add an income source or "
                           "wait for salary transactions before requesting budgets."}
 
+    note = None
+    if engine.this_month_income_txn() <= 0:
+        note = (f"This month's salary hasn't landed yet — using "
+                f"₹{income:,.0f}/mo estimated from your recent months' credits.")
+
     spend = engine.this_month_spend()
     existing = {b["category"] for b in engine.list_budgets()}
     categories = sorted((set(_DEFAULT_SPLIT) | set(spend)) - existing)
     if not categories:
-        return {"income": income, "suggestions": []}
+        return {"income": income, "suggestions": [], "note": note}
 
     fallback = [
         {"category": cat,
@@ -54,7 +61,7 @@ def suggest_budgets(engine, location: str | None, llm) -> dict:
     ]
 
     if llm is None:
-        return {"income": income, "suggestions": fallback}
+        return {"income": income, "suggestions": fallback, "note": note}
 
     lines = "\n".join(
         f'{c["category"]}: current spend this month ₹{c["current_spend"]:.0f}'
@@ -83,8 +90,8 @@ def suggest_budgets(engine, location: str | None, llm) -> dict:
                     "current_spend": by_cat[cat]["current_spend"],
                 })
             if suggestions:
-                return {"income": income, "suggestions": suggestions}
+                return {"income": income, "suggestions": suggestions, "note": note}
     except Exception:
         pass  # degrade to rule-only fallback below
 
-    return {"income": income, "suggestions": fallback}
+    return {"income": income, "suggestions": fallback, "note": note}

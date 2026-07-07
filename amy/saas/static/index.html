@@ -942,7 +942,8 @@
 
           <div class="card">
             <div style="display:flex;align-items:center;gap:10px">
-              <b style="flex:1">Balance</b>
+              <b style="flex:1">Balance <span class="faint" style="font-size:10px;font-weight:400">excludes tracking-only beneficiaries</span></b>
+              <span id="custCommitment" class="faint" style="font-size:11px"></span>
               <span id="custBalance" class="chip" style="color:var(--success)"></span>
             </div>
           </div>
@@ -2015,6 +2016,9 @@ async function loadMcpDashboard(){
     }
     el.innerHTML=rows.map(c=>{
       _MCP_CONNECTOR_NAME_CACHE[c.id]=c.name;
+      // server-side target wins over a stale/empty localStorage copy
+      if(c.default_target && !_mcpGetDefaultParam(c.id))
+        localStorage.setItem(_mcpDefaultParamKey(c.id), c.default_target);
       const riskChip=`<span class="chip" style="color:${_RISK_COLOR[c.risk_tier]||'var(--muted)'}">${_RISK_LABEL[c.risk_tier]||c.risk_tier}</span>`;
       const core=_mcpCoreActionsFor(c.name);
       const repoPickerHtml=core?`<div id="mcpRepoBlock-${c.id}" style="margin-bottom:10px"></div>`:'';
@@ -2044,9 +2048,11 @@ async function _mcpLoadToolsFor(c){
     _MCP_TOOLS_CACHE[c.id]=tools;
     const core=_mcpCoreActionsFor(c.name);
     const paramCfg=core && _mcpDefaultParamConfigFor(c.name);
-    if(paramCfg && !_mcpGetDefaultParam(c.id)){
-      if(paramCfg.autoDiscover) paramCfg.autoDiscover(c); // fires in background, updates the field itself if it finds one
-      else _mcpRenderRepoBlock(c.id); // no auto-discovery for this source — straight to manual entry, no 'detecting' flash
+    if(paramCfg){
+      // always discover when supported — it now feeds the repo DROPDOWN, not
+      // just a first-time default; saved selection is kept, options appear
+      if(paramCfg.autoDiscover) paramCfg.autoDiscover(c);
+      else if(!_mcpGetDefaultParam(c.id)) _mcpRenderRepoBlock(c.id);
     }
     let html='';
     if(core){
@@ -2093,6 +2099,20 @@ function _mcpRenderRepoBlock(cid,state){
   const label=(cfg&&cfg.label)||'Repo';
   const placeholder=(cfg&&cfg.placeholder)||'owner/repo';
   const saved=_mcpGetDefaultParam(cid);
+  const options=_MCP_REPO_OPTIONS[cid];
+  if(options&&options.length){
+    // dropdown of every discovered repo — pick one, everything below uses it
+    const opts=[...new Set([...(saved?[saved]:[]),...options])];
+    el.innerHTML=`<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <label class="meta" style="white-space:nowrap">${label}:</label>
+      <select id="mcpRepoSelect-${cid}" onchange="_mcpPickRepo('${cid}')" style="flex:0 0 300px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:9px;padding:7px 10px;font-size:13px">
+        ${opts.map(n=>`<option value="${n}" ${n===saved?'selected':''}>${n}</option>`).join('')}
+      </select>
+      <span class="faint" style="font-size:11px">${opts.length} repos · used by all actions below + background polling</span>
+      <button class="ghost sm" onclick="_mcpShowRepoInput('${cid}')">type manually</button>
+    </div>`;
+    return;
+  }
   if(saved){
     el.innerHTML=`<span class="meta">${label}: <b style="color:var(--text)">${saved}</b></span> `
       +`<button class="ghost sm" onclick="_mcpShowRepoInput('${cid}')">change</button>`;
@@ -2126,8 +2146,7 @@ function _mcpShowRepoInput(cid){
 function _mcpSaveDefaultRepo(cid){
   const input=document.getElementById('mcpDefaultRepo-'+cid);
   const val=input?input.value.trim():'';
-  if(val) localStorage.setItem(_mcpDefaultParamKey(cid), val);
-  else localStorage.removeItem(_mcpDefaultParamKey(cid));
+  _mcpSetDefaultParam(cid, val);
   _mcpRenderRepoBlock(cid);
 }
 async function _mcpCallSilent(cid,toolName,args){
@@ -2141,16 +2160,16 @@ async function _mcpCallSilent(cid,toolName,args){
 // guessing field names. Runs in the background; on any failure it reveals the
 // manual "Repo" input as a fallback — never worse than before. GitHub-only:
 // Plane has no equivalent auto-discovery wired up yet (see _MCP_DEFAULT_PARAM_CONFIG).
+const _MCP_REPO_OPTIONS={}; // connector id -> [full_name,...] discovered from the source
 async function _mcpAutoDiscoverGithubRepo(c){
-  if(_mcpGetDefaultParam(c.id)) return;
   const tools=_MCP_TOOLS_CACHE[c.id]||[];
   const getMe=tools.find(t=>t.name==='get_me');
   const search=tools.find(t=>/^search_repositories$/i.test(t.name));
   if(!getMe||!search){
-    _mcpRenderRepoBlock(c.id,'failed:auto-detect not supported for this source');
+    if(!_mcpGetDefaultParam(c.id)) _mcpRenderRepoBlock(c.id,'failed:auto-detect not supported for this source');
     return;
   }
-  _mcpRenderRepoBlock(c.id,'detecting');
+  if(!_mcpGetDefaultParam(c.id)) _mcpRenderRepoBlock(c.id,'detecting');
   try{
     const meResult=await _mcpCallSilent(c.id,'get_me',{});
     const meBlob=(meResult.text||'')+JSON.stringify(meResult.structured||{});
@@ -2162,15 +2181,32 @@ async function _mcpAutoDiscoverGithubRepo(c){
     const queryField=required.find(p=>((props[p]&&props[p].type)||'string')==='string')
       ||Object.keys(props).find(p=>(props[p]&&props[p].type)==='string');
     if(!queryField) throw new Error('search_repositories has no string query field');
-    const searchResult=await _mcpCallSilent(c.id,'search_repositories',{[queryField]:'user:'+username});
+    const args={[queryField]:'user:'+username};
+    const perPageField=Object.keys(props).find(p=>/per_?page/i.test(p));
+    if(perPageField) args[perPageField]=100;
+    const searchResult=await _mcpCallSilent(c.id,'search_repositories',args);
     const searchBlob=(searchResult.text||'')+JSON.stringify(searchResult.structured||{});
-    const fullNameMatch=searchBlob.match(/"full_name"\s*:\s*"([^"]+)"/);
-    if(!fullNameMatch) throw new Error('no repos found for '+username);
-    localStorage.setItem(_mcpDefaultParamKey(c.id), fullNameMatch[1]);
+    // ALL repos, not just the first — dedupe, keep feed order (recently updated first)
+    const names=[...new Set([...searchBlob.matchAll(/"full_name"\s*:\s*"([^"]+)"/g)].map(m=>m[1]))];
+    if(!names.length) throw new Error('no repos found for '+username);
+    _MCP_REPO_OPTIONS[c.id]=names;
+    if(!_mcpGetDefaultParam(c.id)) _mcpSetDefaultParam(c.id, names[0]);
     _mcpRenderRepoBlock(c.id);
   }catch(e){
-    _mcpRenderRepoBlock(c.id,'failed:couldn\'t auto-detect ('+e.message+')');
+    if(!_mcpGetDefaultParam(c.id)) _mcpRenderRepoBlock(c.id,'failed:couldn\'t auto-detect ('+e.message+')');
   }
+}
+function _mcpSetDefaultParam(cid, val){
+  if(val) localStorage.setItem(_mcpDefaultParamKey(cid), val);
+  else localStorage.removeItem(_mcpDefaultParamKey(cid));
+  // server-side copy: the background poller + agent tools read this one
+  api('/api/mcp/connectors/'+cid+'/target',{method:'PATCH',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({target:val||''})}).catch(()=>{});
+}
+function _mcpPickRepo(cid){
+  const sel=document.getElementById('mcpRepoSelect-'+cid);
+  if(sel&&sel.value) _mcpSetDefaultParam(cid, sel.value);
+  _mcpRenderRepoBlock(cid);
 }
 function _mcpFieldInput(cid,prop,schema,required){
   const t=(schema&&schema.type)||'string';
@@ -2446,14 +2482,35 @@ async function runAgentGoal(){
   const inp=document.getElementById('agentGoalInput');
   const goal=(inp.value||'').trim(); if(!goal) return;
   const m=document.getElementById('agentGoalMsg');
-  m.textContent='Planning and executing… (this can take a minute)';
+  m.textContent='Starting…';
   try{
     const d=await jpost('/api/agent/goal',{goal});
-    if(d.error){m.textContent=d.error;return;}
-    m.textContent=d.queued_approvals?`Done — ${d.queued_approvals} action(s) waiting for your approval below.`:'Done.';
-    renderGoalRun(d);
-    loadAgentPending();
+    if(d.detail||d.error){m.textContent=d.detail||d.error;return;}
+    m.textContent='Running in background — plan appears here when ready. You can leave this tab.';
+    pollAgentRun(d.run_id, 0);
   }catch(e){m.textContent=e.message;}
+}
+async function pollAgentRun(runId, tries){
+  const m=document.getElementById('agentGoalMsg');
+  if(tries>150){ m.textContent='Still running — check "Recent agent activity" later.'; _agentPolling=false; return; }
+  await new Promise(r=>setTimeout(r,4000));
+  try{
+    const d=await jget('/api/agent/goals?limit=10');
+    const run=(d.runs||[]).find(r=>r.id===runId);
+    if(run&&run.status!=='running'){
+      renderGoalRun(run);
+      const queued=(run.steps||[]).filter(s=>s.queued).length;
+      m.textContent=run.status==='failed'
+        ? 'Run failed: '+(run.summary||'unknown error')
+        : (queued?`Done — ${queued} action(s) waiting for your approval below.`:'Done.');
+      _agentPolling=false;
+      loadAgentPending(); loadAgentHistory();
+      return;
+    }
+    m.textContent=`Planning and executing… ${(tries+1)*4}s (approvals appear below as they're proposed)`;
+    loadAgentPending();   // writes park in the inbox while the run progresses
+  }catch(e){/* transient — keep polling */}
+  pollAgentRun(runId, tries+1);
 }
 function renderGoalRun(d){
   document.getElementById('agentGoalResult').innerHTML=`
@@ -2469,11 +2526,18 @@ function renderGoalRun(d){
       <div class="muted" style="margin-top:8px"><b>Summary:</b> ${d.summary||''}</div>
     </div>`;
 }
+let _agentPolling=false;
 async function loadAgentGoals(){
   try{
     const d=await jget('/api/agent/goals?limit=5');
     const runs=d.runs||[];
-    if(runs.length&&!document.getElementById('agentGoalResult').innerHTML){
+    if(!runs.length) return;
+    if(runs[0].status==='running'){
+      document.getElementById('agentGoalMsg').textContent=`Run in progress — "${runs[0].goal}"…`;
+      if(!_agentPolling){ _agentPolling=true; pollAgentRun(runs[0].id, 0); }
+      return;
+    }
+    if(!document.getElementById('agentGoalResult').innerHTML){
       renderGoalRun({plan:runs[0].plan,steps:runs[0].steps,summary:runs[0].summary});
       document.getElementById('agentGoalMsg').textContent=`Last run: ${(runs[0].ts||'').slice(0,16).replace('T',' ')} — "${runs[0].goal}"`;
     }
@@ -3159,13 +3223,16 @@ async function loadBudgetSuggestions(){
     const d=await jpost('/api/finance/budgets/suggestions',{});
     if(d.reason){ el.innerHTML='<p class="muted">'+d.reason+'</p>'; _budgetSuggestions=[]; return; }
     _budgetSuggestions=d.suggestions||[];
+    _budgetIncomeNote=d.note||'';
     renderBudgetSuggestions();
   }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
 }
+let _budgetIncomeNote='';
 function renderBudgetSuggestions(){
   const el=document.getElementById('budgetSuggestList');
   if(!_budgetSuggestions.length){ el.innerHTML='<p class="muted">No new categories to suggest — all covered by existing budgets.</p>'; return; }
-  el.innerHTML=_budgetSuggestions.map((s,i)=>`
+  el.innerHTML=(_budgetIncomeNote?`<p class="faint" style="font-size:11.5px;margin:0 0 8px">✦ ${_budgetIncomeNote}</p>`:'')
+    +_budgetSuggestions.map((s,i)=>`
     <div class="toggle" id="budgetSuggest-${i}" style="flex-wrap:wrap;gap:8px">
       <div class="row" style="flex:1;min-width:220px;gap:8px">
         <input id="bg-cat-${i}" value="${s.category.replace(/"/g,'&quot;')}" style="flex:1;min-width:100px"/>
@@ -3271,7 +3338,9 @@ async function analyzeCustodialSheet(){
       ${tabs.map((t,i)=>{
         const importable=t.parsed>t.already_imported;
         const status=!t.parsed?'no data rows'
-          :(t.beneficiary?`→ ${t.beneficiary}`:'new — will create beneficiary')
+          :(t.layout==='master'
+             ?`account log — ${t.refills||0} refills + ${t.debits_skipped||0} outflows (own-tab parties deduped)`
+             :(t.beneficiary?`→ ${t.beneficiary}`:'new — will create beneficiary'))
            +(t.already_imported?` · ${t.already_imported}/${t.parsed} already in ledger`:'');
         return `<div class="toggle" style="flex-wrap:wrap;gap:8px">
           <label style="display:flex;align-items:center;gap:8px;flex:1;min-width:200px;cursor:pointer">
@@ -3318,6 +3387,8 @@ async function loadCustodialPrefill(){
   try{
     const d=await jget(`/api/finance/custodial/${aid}/next-cycle-prefill`);
     document.getElementById('custBalance').textContent=_fmt(d.balance||0);
+    const cc=document.getElementById('custCommitment');
+    if(cc) cc.textContent=d.cycle_commitment?`next cycle needs ~${_fmt(d.cycle_commitment)}`:'';
     document.getElementById('custDueDate').textContent=d.due_date?('due '+d.due_date):'';
     _custPrefill=d.beneficiaries||[];
     if(!_custPrefill.length){
@@ -3328,6 +3399,7 @@ async function loadCustodialPrefill(){
       <div class="toggle" id="custRow-${i}" style="flex-wrap:wrap;gap:8px">
         <div class="row" style="flex:1;min-width:220px;gap:8px">
           <span style="flex:0 0 140px;align-self:center;font-size:13px">${b.name}
+            ${b.tracking_only?'<span class="chip" style="font-size:9px;color:var(--muted);padding:1px 6px" title="Rows never count toward balance">tracking</span>':''}
             ${b.trend_note?`<br><span class="faint" style="font-size:10px" title="${b.trend_note}">✦ ${b.trend_note}</span>`:''}</span>
           <input id="cb-amt-${i}" type="number" min="0" step="1" placeholder="Amount" value="${b.suggested_amount||b.last_amount||''}" style="flex:0 0 110px"/>
           <select id="cb-mode-${i}" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
@@ -3339,15 +3411,30 @@ async function loadCustodialPrefill(){
         </div>
         <div style="display:flex;align-items:center;gap:8px">
           <span class="faint" style="font-size:11px">${b.last_date?('last '+b.last_date):'never logged'}</span>
+          <button class="ghost sm" style="font-size:10px;padding:4px 8px" onclick="toggleTrackingOnly(${i})" title="Tracking-only rows are recorded but never count toward the balance">${b.tracking_only?'⊘ tracking-only':'₹ counts'}</button>
           <button class="sm" onclick="confirmDisbursement(${i})">✓ Confirm sent</button>
         </div>
       </div>`).join('');
   }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
 }
 
-async function custodialPrecheckOk(aid, beneficiary_id, amount){
+async function toggleTrackingOnly(i){
+  const aid=document.getElementById('custAccountPicker').value;
+  const b=_custPrefill[i];
   try{
-    const pc=await jpost(`/api/finance/custodial/${aid}/precheck`,{beneficiary_id, amount});
+    const r=await api(`/api/finance/custodial/${aid}/beneficiaries/${b.beneficiary_id}`,
+      {method:'PATCH',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({tracking_only:!b.tracking_only})});
+    const d=await r.json();
+    if(d.detail){ alert(d.detail); return; }
+    document.getElementById('custBalance').textContent=_fmt(d.balance||0);
+    loadCustodialPrefill();
+  }catch(e){ alert(e.message); }
+}
+
+async function custodialPrecheckOk(aid, beneficiary_id, amount, part){
+  try{
+    const pc=await jpost(`/api/finance/custodial/${aid}/precheck`,{beneficiary_id, amount, part:part||null});
     const ws=(pc.warnings||[]).map(w=>w.message);
     if(ws.length) return confirm('⚠ '+ws.join('\n⚠ ')+'\n\nLog anyway?');
   }catch(e){}
@@ -3361,17 +3448,18 @@ async function confirmDisbursement(i){
   const mode=document.getElementById('cb-mode-'+i).value;
   const notes=document.getElementById('cb-notes-'+i).value;
   if(!amount){ alert('Enter an amount.'); return; }
-  if(!await custodialPrecheckOk(aid, b.beneficiary_id, amount)) return;
+  if(!await custodialPrecheckOk(aid, b.beneficiary_id, amount, b.part)) return;
   try{
     const r=await api(`/api/finance/custodial/${aid}/disburse`,{method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({beneficiary_id:b.beneficiary_id, amount, mode, notes})});
+      body:JSON.stringify({beneficiary_id:b.beneficiary_id, amount, mode, notes, part:b.part||null})});
     const d=await r.json();
     if(!r.ok){ alert(d.detail||'Error confirming disbursement'); return; }
     const row=document.getElementById('custRow-'+i);
     if(row){
       const sheetMsg=d.sheet_write&&d.sheet_write.ok ? '✓ logged to Sheet' : '⚠ Sheet write failed — retry from Validation';
-      row.innerHTML=`<span class="muted">${b.name}: confirmed ✓ (${sheetMsg})</span>`;
+      const lowMsg=d.balance_warning?` <span style="color:var(--danger)">⚠ balance low — short ${_fmt(d.balance_warning.shortfall)} for this cycle</span>`:'';
+      row.innerHTML=`<span class="muted">${b.name}: confirmed ✓ (${sheetMsg})${lowMsg}</span>`;
     }
     document.getElementById('custBalance').textContent=_fmt(d.balance||0);
     loadCustodialValidation();
@@ -3394,6 +3482,8 @@ async function loadCustodialValidation(){
         return `<div class="chip" style="color:var(--warn);display:block;margin-bottom:6px">⚠ ${iss.beneficiary} not logged this cycle</div>`;
       if(iss.check==='refill_overdue')
         return `<div class="chip" style="color:var(--danger);display:block;margin-bottom:6px">⚠ Refill overdue since ${iss.due_date}</div>`;
+      if(iss.check==='balance_low_refill')
+        return `<div class="chip" style="color:var(--danger);display:block;margin-bottom:6px">⚠ Balance ${_fmt(iss.balance)} can't cover the usual cycle of ${_fmt(iss.commitment)} — short by ${_fmt(iss.shortfall)}. Ask for a refill.</div>`;
       return '';
     }).join('');
   }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
@@ -3495,7 +3585,8 @@ async function confirmParsedScreenshot(){
       }catch(e){ extra=' · screenshot attach failed'; }
     }
     const sheetMsg=d.sheet_write&&d.sheet_write.ok?'logged to Sheet ✓':'⚠ Sheet write failed';
-    m.textContent=`✓ logged — ${sheetMsg}${extra}`;
+    const lowMsg=d.balance_warning?` · ⚠ balance low (short ${_fmt(d.balance_warning.shortfall)})`:'';
+    m.textContent=`✓ logged — ${sheetMsg}${extra}${lowMsg}`;
     document.getElementById('custShotResult').innerHTML='';
     document.getElementById('custShotFile').value='';
     document.getElementById('custBalance').textContent=_fmt(d.balance||0);

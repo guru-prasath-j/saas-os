@@ -379,11 +379,31 @@ def _t_emit(ctx, args):
     return {"event_id": eid}
 
 
-@register_tool("add_goal_task", "Add a task under an existing goal.",
+@register_tool("create_goal",
+               "Create a new goal (returns its id — use it for add_goal_task).",
+               _obj({"title": {"type": "string"},
+                     "domain": {"type": "string"}}, ["title"]), RISK_WRITE)
+def _t_create_goal(ctx, args):
+    from ..autonomous import GoalEngine
+    gid = GoalEngine(ctx.collab).create_goal(
+        args["title"], domain=args.get("domain") or "general")
+    return {"id": gid}
+
+
+@register_tool("add_goal_task", "Add a task under an existing goal "
+               "(goal_id must come from list_goals or create_goal — never invent it).",
                _obj({"goal_id": {"type": "string"},
                      "title": {"type": "string"}}, ["goal_id", "title"]), RISK_WRITE)
 def _t_add_task(ctx, args):
     from ..autonomous import GoalEngine
+    # Found via manual testing: the orchestrator hallucinated a goal_id and
+    # this inserted an orphan task no UI ever showed. Validate the FK.
+    row = ctx.collab.conn.execute(
+        "SELECT id FROM goals WHERE id=?", (args["goal_id"],)).fetchone()
+    if row is None:
+        raise ValueError(
+            f"goal '{args['goal_id']}' does not exist — call list_goals for the "
+            "real id, or create_goal to make one first")
     return {"id": GoalEngine(ctx.collab).add_task(args["goal_id"], args["title"])}
 
 

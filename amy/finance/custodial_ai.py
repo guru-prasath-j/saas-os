@@ -186,12 +186,16 @@ def detect_disbursement_suggestions(fe: "FinanceEngine", account_id: str,
 # ---------------------------------------------------------------------------
 
 def beneficiary_history(fe: "FinanceEngine", beneficiary_id: str,
-                        limit: int = 6) -> list[dict]:
-    rows = fe.conn.execute(
-        "SELECT date, ABS(amount) amt FROM transactions"
-        " WHERE beneficiary_id=? AND amount<0 ORDER BY date DESC LIMIT ?",
-        (beneficiary_id, limit)).fetchall()
-    return [dict(r) for r in rows]
+                        limit: int = 6, part: str | None = None) -> list[dict]:
+    q = ("SELECT date, ABS(amount) amt FROM transactions"
+         " WHERE beneficiary_id=? AND amount<0")
+    params: list = [beneficiary_id]
+    if part is not None:
+        q += " AND COALESCE(part,'')=?"
+        params.append(part)
+    q += " ORDER BY date DESC LIMIT ?"
+    params.append(limit)
+    return [dict(r) for r in fe.conn.execute(q, params).fetchall()]
 
 
 def _median(vals: list[float]) -> float:
@@ -220,17 +224,22 @@ def suggest_amount(history: list[dict]) -> tuple[float | None, str]:
 
 
 def anomaly_precheck(fe: "FinanceEngine", account_id: str,
-                     beneficiary_id: str, amount: float) -> list[dict]:
-    """Soft warnings shown before confirm — never blocks."""
+                     beneficiary_id: str, amount: float,
+                     part: str | None = None) -> list[dict]:
+    """Soft warnings shown before confirm — never blocks. For split
+    beneficiaries, pass the part so history/duplicate checks stay per-part."""
     warnings: list[dict] = []
-    hist = beneficiary_history(fe, beneficiary_id)
+    hist = beneficiary_history(fe, beneficiary_id, part=part)
 
-    # 1. duplicate within this cycle (same beneficiary, last 20 days)
+    # 1. duplicate within this cycle (same beneficiary+part, last 20 days)
     recent_cut = (_dt.date.today() - _dt.timedelta(days=20)).isoformat()
-    dup = fe.conn.execute(
-        "SELECT date, ABS(amount) amt FROM transactions"
-        " WHERE beneficiary_id=? AND amount<0 AND date>=?"
-        " ORDER BY date DESC LIMIT 1", (beneficiary_id, recent_cut)).fetchone()
+    dq = ("SELECT date, ABS(amount) amt FROM transactions"
+          " WHERE beneficiary_id=? AND amount<0 AND date>=?")
+    dparams: list = [beneficiary_id, recent_cut]
+    if part is not None:
+        dq += " AND COALESCE(part,'')=?"
+        dparams.append(part)
+    dup = fe.conn.execute(dq + " ORDER BY date DESC LIMIT 1", dparams).fetchone()
     if dup:
         warnings.append({
             "check": "duplicate_recent",
@@ -256,6 +265,21 @@ def anomaly_precheck(fe: "FinanceEngine", account_id: str,
     still_due = 0.0
     for b in fe.list_beneficiaries(account_id):
         if b["id"] in recent_paid or b["id"] == beneficiary_id:
+            continue
+        if b.get("tracking_only"):
+            continue   # their money doesn't come from this account's pool
+        if b.get("split_kind") == "parts" and (b.get("default_parts") or []):
+            for p in b["default_parts"]:
+                if not isinstance(p, dict) or not p.get("name"):
+                    continue
+                amt = p.get("amount")
+                if not amt:
+                    ph = beneficiary_history(fe, b["id"], limit=3, part=p["name"])
+                    amt = _median([h["amt"] for h in ph]) if ph else 0
+                still_due += amt or 0
+            continue
+        if b.get("expected_amount"):
+            still_due += b["expected_amount"]
             continue
         bh = beneficiary_history(fe, b["id"], limit=3)
         if bh:
@@ -356,8 +380,9 @@ def chat_context(fe: "FinanceEngine", account: dict) -> str:
             (b["id"], f"{year}-01-01")).fetchone()
         hist = beneficiary_history(fe, b["id"], limit=1)
         last = f"last {hist[0]['amt']:g} on {hist[0]['date']}" if hist else "never logged"
+        tag = " [tracking-only, not from this balance]" if b.get("tracking_only") else ""
         lines.append(f"- {b['name']}: {tot_year['s']:g} across {tot_year['n']} "
-                     f"transfers in {year}; {last}")
+                     f"transfers in {year}; {last}{tag}")
     issues = run_validation(fe, aid).get("issues", [])
     if issues:
         lines.append("Open validation issues: " + "; ".join(

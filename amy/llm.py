@@ -25,7 +25,7 @@ class GroqLLM:
         from groq import Groq
         if not config.GROQ_API_KEY:
             raise RuntimeError("no GROQ_API_KEY")
-        self._c = Groq(api_key=config.GROQ_API_KEY, timeout=45.0)
+        self._c = Groq(api_key=config.GROQ_API_KEY, timeout=45.0, max_retries=0)
         self._model = config.GROQ_MODEL
 
     def generate(self, system, prompt, context=""):
@@ -43,7 +43,7 @@ class OpenAILLM:
         key = api_key or config.OPENAI_API_KEY
         if not key:
             raise RuntimeError("no OPENAI_API_KEY")
-        self._c = OpenAI(api_key=key, timeout=45.0)
+        self._c = OpenAI(api_key=key, timeout=45.0, max_retries=0)
         self._model = config.OPENAI_MODEL
 
     def generate(self, system, prompt, context=""):
@@ -88,9 +88,19 @@ class NvidiaLLM:
         # Thinking mode + a 4096-token reasoning budget can legitimately take a
         # while, but must still have a ceiling — otherwise a slow/overloaded
         # endpoint hangs the whole request (openai SDK default is 10 minutes).
-        self._c = OpenAI(base_url=config.NVIDIA_BASE_URL, api_key=key, timeout=75.0)
+        # max_retries=0: the SDK default of 2 silent retries turned one 75s
+        # timeout into ~290s observed; callers (orchestrator/_gen, router
+        # fallback) already do their own retry/degrade.
+        self._c = OpenAI(base_url=config.NVIDIA_BASE_URL, api_key=key,
+                         timeout=75.0, max_retries=0)
 
-    def generate(self, system: str, prompt: str, context: str = "") -> str:
+    def generate(self, system: str, prompt: str, context: str = "",
+                 fast: bool = False) -> str:
+        # fast=True: thinking OFF + small output cap. Agent step-loops
+        # (orchestrator/assistant) make 6-13 sequential calls per run and each
+        # only needs a one-line JSON decision — measured median 46s/call with
+        # thinking on vs seconds without. Quality-sensitive batch jobs (gmail
+        # enrich, budget suggestions) keep the default deep-reasoning mode.
         user_msg = f"{prompt}\n\n# Context\n{context}" if context.strip() else prompt
         stream = self._c.chat.completions.create(
             model="nvidia/nemotron-3-ultra-550b-a55b",
@@ -100,10 +110,10 @@ class NvidiaLLM:
             ],
             temperature=0.3,
             top_p=0.95,
-            max_tokens=4096,
+            max_tokens=700 if fast else 4096,
             extra_body={
-                "chat_template_kwargs": {"enable_thinking": True},
-                "reasoning_budget": 4096,
+                "chat_template_kwargs": {"enable_thinking": not fast},
+                **({} if fast else {"reasoning_budget": 4096}),
             },
             stream=True,
         )
@@ -171,6 +181,11 @@ class LLMRouter:
         s["general_order"] = config.GENERAL_PROVIDER_ORDER
         return s
 
-    def generate(self, system, prompt, context="", sensitive=False):
+    def generate(self, system, prompt, context="", sensitive=False, fast=False):
         llm = self.pick(sensitive)
+        if fast:
+            try:
+                return llm.generate(system, prompt, context, fast=True), llm.name
+            except TypeError:
+                pass   # provider without a fast path — normal call below
         return llm.generate(system, prompt, context), llm.name

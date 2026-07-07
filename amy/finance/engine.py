@@ -120,6 +120,8 @@ class FinanceEngine:
                 default_parts TEXT NOT NULL DEFAULT '[]',
                 sheet_tab     TEXT,
                 active        INTEGER NOT NULL DEFAULT 1,
+                tracking_only INTEGER NOT NULL DEFAULT 0,
+                expected_amount REAL,
                 created_at    TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS business_entities (
@@ -197,8 +199,11 @@ class FinanceEngine:
             "CREATE INDEX IF NOT EXISTS idx_txn_account ON transactions(account_id)")
         self.conn.commit()
         # Custodial-account support: which beneficiary a disbursement was for,
-        # and an optional path to an attached UPI/NEFT confirmation screenshot.
-        for col, coltype in (("beneficiary_id", "TEXT"), ("screenshot_path", "TEXT")):
+        # an optional attached UPI/NEFT confirmation screenshot, and which
+        # split part it covers (e.g. Eswari "Personal" vs "MJVR" — one
+        # beneficiary paid in two labelled transfers per cycle).
+        for col, coltype in (("beneficiary_id", "TEXT"), ("screenshot_path", "TEXT"),
+                             ("part", "TEXT")):
             try:
                 self.conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {coltype}")
                 self.conn.commit()
@@ -207,6 +212,18 @@ class FinanceEngine:
         self.conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_txn_beneficiary ON transactions(beneficiary_id)")
         self.conn.commit()
+        # Tracking-only beneficiaries: recorded for history/nudges but their
+        # rows never count toward the custodial balance (money not actually
+        # flowing through this account — e.g. MJVR/VJPN commitment trackers).
+        # expected_amount: the static per-cycle commitment (user-declared,
+        # beats the median guess) used by the low-balance refill alert.
+        for col, coltype in (("tracking_only", "INTEGER NOT NULL DEFAULT 0"),
+                             ("expected_amount", "REAL")):
+            try:
+                self.conn.execute(f"ALTER TABLE beneficiaries ADD COLUMN {col} {coltype}")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
         # Jurisdiction packs + multi-currency (R7B): optional jurisdiction on
         # accounts/business entities (default = user's home pack at read time)
         # and a native currency per account/transaction (default = home pack
@@ -551,11 +568,31 @@ class FinanceEngine:
         return d
 
     def custodial_balance(self, account_id: str) -> float:
-        """sum(refills) - sum(disbursements) — never hand-edited, always derived."""
+        """sum(refills) - sum(disbursements) — never hand-edited, always derived.
+        Rows linked to tracking-only beneficiaries are excluded: they're
+        records the user keeps in the same sheet, not money moving through
+        this account."""
         row = self.conn.execute(
-            "SELECT COALESCE(SUM(amount),0) bal FROM transactions WHERE account_id=?",
+            "SELECT COALESCE(SUM(amount),0) bal FROM transactions"
+            " WHERE account_id=? AND (beneficiary_id IS NULL OR beneficiary_id NOT IN"
+            "  (SELECT id FROM beneficiaries WHERE tracking_only=1))",
             (account_id,)).fetchone()
         return round(row["bal"], 2)
+
+    def update_beneficiary(self, bid: str, **kwargs) -> bool:
+        allowed = {"name", "sheet_tab", "active", "tracking_only", "split_kind",
+                   "expected_amount", "default_parts"}
+        if "default_parts" in kwargs and kwargs["default_parts"] is not None:
+            kwargs["default_parts"] = json.dumps(kwargs["default_parts"])
+        fields = {k: v for k, v in kwargs.items() if k in allowed and v is not None}
+        if not fields:
+            return False
+        sets = ", ".join(f"{k}=?" for k in fields)
+        c = self.conn.execute(
+            f"UPDATE beneficiaries SET {sets} WHERE id=?",
+            list(fields.values()) + [bid])
+        self.conn.commit()
+        return c.rowcount > 0
 
     def custodial_cycle_dates(self, account_id: str, limit: int = 6) -> list[str]:
         """Distinct disbursement dates for this account, most recent first."""
@@ -863,7 +900,37 @@ class FinanceEngine:
                 remaining.pop(match_idx)
             else:
                 unmatched += monthly_amt
-        return round(txn_total + unmatched, 2)
+        total = round(txn_total + unmatched, 2)
+        if total > 0:
+            return total
+        # Salary typically lands near month-end, so early in the month the
+        # current-month credit total is 0 and everything downstream (budget
+        # suggestions, afford checks) would wrongly see "no income" — fall
+        # back to what recent full months actually credited.
+        return self.detected_monthly_income()
+
+    def detected_monthly_income(self, months: int = 3) -> float:
+        """Median of total credits per calendar month over the last `months`
+        full months (current month excluded; custodial accounts excluded).
+        The estimate used before this month's salary actually arrives."""
+        import datetime as _dtm
+        cur = _dtm.date.today().replace(day=1)
+        yms = []
+        for _ in range(months):
+            cur = (cur - _dtm.timedelta(days=1)).replace(day=1)
+            yms.append(cur.strftime("%Y-%m"))
+        marks = ",".join("?" * len(yms))
+        totals = sorted(r["total"] for r in self.conn.execute(
+            f"SELECT SUBSTR(t.date,1,7) ym, COALESCE(SUM(t.amount),0) total"
+            f" FROM transactions t LEFT JOIN accounts a ON t.account_id=a.id"
+            f" WHERE t.amount>0"
+            f" AND (a.account_type IS NULL OR a.account_type!='custodial')"
+            f" AND SUBSTR(t.date,1,7) IN ({marks}) GROUP BY ym", yms).fetchall())
+        if not totals:
+            return 0.0
+        mid = len(totals) // 2
+        med = totals[mid] if len(totals) % 2 else (totals[mid - 1] + totals[mid]) / 2
+        return round(med, 2)
 
     def balance_estimate(self) -> float:
         return (self.effective_monthly_income()
