@@ -55,6 +55,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   style: TextStyle(color: Colors.white54)),
             ),
           const SizedBox(height: 24),
+          const Divider(),
+          const Text('Experimental', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          SwitchListTile(
+            title: const Text('Meta glasses live capture'),
+            subtitle: const Text(
+                'Capture photos straight from Ray-Ban Meta glasses into your '
+                'vault (needs a build with the Meta DAT SDK — internal/test '
+                'builds only for now)'),
+            value: Config.glassesLiveCapture,
+            onChanged: (v) async {
+              await Config.setGlassesLiveCapture(v);
+              setState(() {});
+            },
+          ),
+          const SizedBox(height: 12),
           const Text(
             'Tips:\n'
             '• Android emulator → use http://10.0.2.2:8848\n'

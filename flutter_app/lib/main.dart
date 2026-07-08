@@ -5,6 +5,7 @@ import 'api.dart';
 import 'config.dart';
 import 'capture_screen.dart';
 import 'captures_screen.dart';
+import 'glasses_live_screen.dart';
 import 'settings_screen.dart';
 import 'gallery_sync.dart';
 import 'share_handler.dart';
@@ -256,6 +257,16 @@ class _HomePageState extends State<HomePage> {
             onPressed: () =>
                 Navigator.push(context, MaterialPageRoute(builder: (_) => const CapturesScreen())),
           ),
+          // Feature-flagged (Settings → Experimental): Meta glasses live
+          // capture via the Wearables Device Access Toolkit. Flag OFF
+          // (default) = this button doesn't exist and nothing else changes.
+          if (Config.glassesLiveCapture)
+            IconButton(
+              tooltip: 'Glasses live capture',
+              icon: const Icon(Icons.remove_red_eye_outlined),
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const GlassesLiveScreen())),
+            ),
           IconButton(
             tooltip: 'Gallery sync',
             icon: const Icon(Icons.sync),

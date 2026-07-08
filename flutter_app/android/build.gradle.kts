@@ -19,6 +19,17 @@ subprojects {
     project.evaluationDependsOn(":app")
 }
 
+// Third-party plugin modules declare mismatched Java/Kotlin JVM targets
+// (receive_sharing_intent: Java 1.8, flutter_tts: Java 11) which Kotlin 2.x
+// rejects. The kotlin.jvm.target.validation.mode=warning line in
+// gradle.properties downgrades that check; this block just keeps every
+// module's *Kotlin* output on one consistent target.
+subprojects {
+    tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
+        compilerOptions.jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
+    }
+}
+
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }

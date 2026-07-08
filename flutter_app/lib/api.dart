@@ -126,10 +126,42 @@ class AmyApi {
     String note = '',
     String tags = '',
     String? linkDisbursementTxn,
+  }) async =>
+      _postCapture(await http.MultipartFile.fromPath('file', image.path),
+          lat: lat, lon: lon, takenAt: takenAt, source: source,
+          note: note, tags: tags, linkDisbursementTxn: linkDisbursementTxn);
+
+  /// Same upload, from in-memory bytes (Meta glasses live capture — the DAT
+  /// bridge hands us JPEG bytes, there is no file on disk).
+  Future<Map<String, dynamic>> uploadCaptureBytes(
+    List<int> bytes, {
+    String filename = 'glasses.jpg',
+    double? lat,
+    double? lon,
+    String? takenAt,
+    String source = 'meta-glasses',
+    String note = '',
+    String tags = '',
+  }) =>
+      _postCapture(http.MultipartFile.fromBytes('file', bytes, filename: filename),
+          lat: lat, lon: lon, takenAt: takenAt, source: source,
+          note: note, tags: tags);
+
+  /// Shared multipart POST for /api/captures — the single place that knows
+  /// the endpoint's field names.
+  Future<Map<String, dynamic>> _postCapture(
+    http.MultipartFile filePart, {
+    double? lat,
+    double? lon,
+    String? takenAt,
+    String source = 'mobile',
+    String note = '',
+    String tags = '',
+    String? linkDisbursementTxn,
   }) async {
     final req = http.MultipartRequest('POST', Uri.parse('$baseUrl/api/captures'));
     req.headers.addAll(Config.authHeaders());
-    req.files.add(await http.MultipartFile.fromPath('file', image.path));
+    req.files.add(filePart);
     if (lat != null) req.fields['lat'] = lat.toString();
     if (lon != null) req.fields['lon'] = lon.toString();
     if (takenAt != null) req.fields['taken_at'] = takenAt;

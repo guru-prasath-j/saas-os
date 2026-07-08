@@ -12,5 +12,11 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // Meta glasses live capture (DAT) — stub behavior until the MWDAT SPM
+    // package is added in Xcode; see flutter_app/META_GLASSES.md.
+    let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "MetaGlassesBridge")
+    if let messenger = registrar?.messenger() {
+      MetaGlassesBridge.register(messenger: messenger)
+    }
   }
 }

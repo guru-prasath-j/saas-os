@@ -10,10 +10,22 @@ class Config {
   static String baseUrl = 'http://10.0.2.2:8848';
   static String token = '';
 
+  /// Feature flag: Meta glasses live capture via the Wearables Device Access
+  /// Toolkit. Default OFF — opt-in from Settings. With the flag off the app
+  /// behaves exactly as before (the native DAT bridge is never touched).
+  static bool glassesLiveCapture = false;
+
   static Future<void> load() async {
     final p = await SharedPreferences.getInstance();
     baseUrl = p.getString('baseUrl') ?? baseUrl;
     token = p.getString('token') ?? '';
+    glassesLiveCapture = p.getBool('glassesLiveCapture') ?? false;
+  }
+
+  static Future<void> setGlassesLiveCapture(bool v) async {
+    glassesLiveCapture = v;
+    final p = await SharedPreferences.getInstance();
+    await p.setBool('glassesLiveCapture', v);
   }
 
   static Future<void> save(String url, String tok) async {

@@ -44,6 +44,14 @@
                 <data android:mimeType="image/*"/>
             </intent-filter>
         </activity>
+        <!-- Meta Wearables DAT (glasses live capture). Placeholders default to
+             "0" (development mode); inert when the SDK isn't bundled. -->
+        <meta-data
+            android:name="com.meta.wearable.mwdat.APPLICATION_ID"
+            android:value="${mwdat_application_id}" />
+        <meta-data
+            android:name="com.meta.wearable.mwdat.CLIENT_TOKEN"
+            android:value="${mwdat_client_token}" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
