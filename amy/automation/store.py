@@ -163,6 +163,17 @@ class AutomationStore:
                 self.conn.commit()
             except Exception:
                 pass   # column already exists
+        # Learning feed watch-progress upgrade (videos: resume + completion)
+        for col, decl in (("progress", "REAL DEFAULT 0"),
+                          ("position_sec", "INTEGER DEFAULT 0"),
+                          ("duration_sec", "INTEGER"),
+                          ("completed_at", "TEXT")):
+            try:
+                self.conn.execute(
+                    f"ALTER TABLE learning_feed_items ADD COLUMN {col} {decl}")
+                self.conn.commit()
+            except Exception:
+                pass   # column already exists
 
     # --- global pause -------------------------------------------------------
 

@@ -18,6 +18,14 @@ class FocusBody(BaseModel):
     focus: str
 
 
+class ProgressBody(BaseModel):
+    position_sec: float
+    duration_sec: float | None = None
+
+
+_COMPLETE_AT = 0.9   # ≥90% watched counts as completed
+
+
 def _open_collab(user: User):
     from ...collab import CollabDB
     from ...automation.store import AutomationStore
@@ -68,6 +76,73 @@ def set_focus(body: FocusBody, background: BackgroundTasks,
     # so the sensor's internal asyncio.run() is safe there
     background.add_task(refresh_for_user, user.id, focus[:200])
     return {"focus": focus[:200], "refresh": "scheduled"}
+
+
+@router.patch("/api/learning-feed/progress/{item_id}")
+def track_progress(item_id: str, body: ProgressBody,
+                   user: User = Depends(current_user)):
+    """Watch-progress heartbeat from the inline player. Stores the resume
+    position; the first time progress crosses 90% it writes a 'Watched'
+    vault note and emits learning.item_completed (fire-and-forget, same
+    stance as _emit_fin in finance.py)."""
+    pos = max(0.0, body.position_sec)
+    cdb = _open_collab(user)
+    try:
+        row = cdb.conn.execute(
+            "SELECT * FROM learning_feed_items WHERE id=? AND uid=?",
+            (item_id, user.id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="feed item not found")
+        item = dict(row)
+        duration = body.duration_sec or item.get("duration_sec") or 0
+        progress = min(1.0, pos / duration) if duration > 0 else item.get("progress") or 0
+        # a heartbeat can't regress completion (rewinding to the start
+        # shouldn't un-complete the video)
+        progress = max(progress, item.get("progress") or 0)
+        just_completed = (progress >= _COMPLETE_AT
+                          and not item.get("completed_at"))
+        import datetime as _dt
+        completed_at = (_dt.datetime.now(_dt.timezone.utc).isoformat()
+                        if just_completed else item.get("completed_at"))
+        cdb.conn.execute(
+            "UPDATE learning_feed_items SET position_sec=?, duration_sec=?,"
+            " progress=?, completed_at=? WHERE id=? AND uid=?",
+            (int(pos), int(duration) if duration else None, progress,
+             completed_at, item_id, user.id))
+        cdb.conn.commit()
+
+        if just_completed:
+            try:
+                from ...events.store import EventStore, LEARNING_ITEM_COMPLETED
+                EventStore(cdb).emit(LEARNING_ITEM_COMPLETED, {
+                    "title": item["title"], "url": item["url"],
+                    "source": item["source"], "focus": item.get("focus_tag"),
+                }, source="learning_feed")
+            except Exception:
+                pass
+    finally:
+        cdb.close()
+
+    note = None
+    if just_completed:
+        try:
+            from ...memory.writer import MemoryWriter
+            vault = tenancy.resolve_vault_dir(user.id)
+            if vault.exists():
+                body_md = (f"[{item['title']}]({item['url']})\n\n"
+                           f"- Source: `{item['source']}`\n"
+                           f"- Focus: {item.get('focus_tag') or ''}\n"
+                           f"- Completed: yes (≥90% watched)\n"
+                           + (f"\n{item['summary']}\n" if item.get("summary") else ""))
+                p = MemoryWriter(vault).write_atomic(
+                    "watched", (item["title"] or "feed item")[:50], body_md,
+                    eid=f"feedwatch-{item_id}", tags=["learning", "watched"])
+                note = str(p) if p else "already-written"
+        except Exception:
+            note = None   # progress is saved; the note is best-effort
+
+    return {"progress": round(progress, 3), "position_sec": int(pos),
+            "completed": bool(completed_at), "note": note}
 
 
 @router.post("/api/learning-feed/save/{item_id}")

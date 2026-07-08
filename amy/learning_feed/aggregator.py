@@ -25,7 +25,7 @@ SOURCE_TOOLS: list[tuple[str, tuple[str, ...]]] = [
     ("hackernews", ("search_stories", "search")),
     ("arxiv", ("search_papers",)),
     ("reddit", ("search_posts", "search_reddit", "search")),
-    ("youtube", ("search_videos", "search")),
+    ("youtube", ("search_videos", "searchVideos", "search")),
     ("bluesky", ("search_posts", "search")),
     ("dev.to", ("search_articles",)),
     ("devto", ("search_articles",)),
@@ -126,6 +126,13 @@ def _extract_items(result: dict) -> list[dict]:
 def _normalize(raw: dict, source: str) -> dict | None:
     title = _first(raw, _TITLE_KEYS)
     url = _first(raw, _URL_KEYS)
+    if not url:
+        # YouTube API shapes carry a video id, not a URL — build the watch link
+        vid = raw.get("videoId") or raw.get("video_id")
+        if not vid and isinstance(raw.get("id"), dict):     # raw API: id.videoId
+            vid = raw["id"].get("videoId")
+        if vid:
+            url = f"https://www.youtube.com/watch?v={vid}"
     if not title or not url:
         return None
     title, url = str(title).strip(), str(url).strip()

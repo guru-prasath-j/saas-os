@@ -38,6 +38,7 @@ AGENT_ERROR = "agent.error"
 
 # Learning feed events
 LEARNING_FEED_REFRESHED = "learning.feed_refreshed"
+LEARNING_ITEM_COMPLETED = "learning.item_completed"
 
 # Business entity events
 BUSINESS_ENTITY_CREATED = "business.entity_created"

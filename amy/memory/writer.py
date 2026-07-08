@@ -44,6 +44,10 @@ _KIND = {
     "finance.budget_set": ("finance", False),
     "finance.subscription_added": ("finance", False),
     "finance.investment_added": ("finance", False),
+    # Learning feed (atomic notes are written directly by the feed itself —
+    # daily-note lines only here, or the journal would duplicate them)
+    "learning.feed_refreshed": ("learning", False),
+    "learning.item_completed": ("learning", False),
     # Agent activity (reactive agents / orchestrator / screening)
     "agent.insight": ("agent", False),
     "agent.action_proposed": ("agent", False),
@@ -256,6 +260,16 @@ class MemoryWriter:
             value = p.get("current_value", 0)
             return (f"Investment added: {name} ({itype}, ₹{value:,.0f})",
                     None, "", [], ["finance", "investment"])
+        # Learning feed
+        if etype == "learning.feed_refreshed":
+            n = p.get("items", 0)
+            focus = p.get("focus", "")
+            return (f"Learning feed refreshed: {n} item(s) on **{focus}**"
+                    + (f" — top: {p.get('top_title','')}" if p.get("top_title") else ""),
+                    None, "", [], ["learning"])
+        if etype == "learning.item_completed":
+            return (f"Watched/read: **{p.get('title','')}** ({p.get('source','')})",
+                    None, "", [], ["learning", "completed"])
         # Agent activity — always carries who + reasoning
         if etype.startswith("agent."):
             agent = p.get("agent", "agent")

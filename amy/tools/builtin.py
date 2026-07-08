@@ -275,6 +275,36 @@ def _t_recent_captures(ctx, args):
     return rows[:min(int(args.get("limit") or 20), 50)]
 
 
+@register_tool("learning_feed",
+               "The user's learning feed: articles/videos aggregated from "
+               "their promoted MCP sources (HackerNews, YouTube, arXiv, ...) "
+               "and AI-ranked against their focus topic. Each item has "
+               "relevance (0-10), why, saved flag, and watch progress (0-1) "
+               "for videos. Use for 'what should I learn/read/watch', "
+               "'what did I save', or 'which videos are half-watched'.",
+               _obj({"limit": {"type": "integer", "description": "max rows (<=30)"},
+                     "source": {"type": "string", "description": "e.g. hackernews, youtube"},
+                     "saved_only": {"type": "boolean"},
+                     "in_progress_only": {"type": "boolean",
+                                          "description": "started but unfinished videos"}}),
+               RISK_READ)
+def _t_learning_feed(ctx, args):
+    q = ("SELECT id, source, title, url, summary, score, relevance, why,"
+         " focus_tag, saved, progress, completed_at, fetched_at"
+         " FROM learning_feed_items WHERE uid=?")
+    params: list = [ctx.user_id]
+    if args.get("source"):
+        q += " AND source=?"
+        params.append(str(args["source"]).strip().lower())
+    if args.get("saved_only"):
+        q += " AND saved=1"
+    if args.get("in_progress_only"):
+        q += " AND progress > 0 AND completed_at IS NULL"
+    q += " ORDER BY relevance DESC, fetched_at DESC LIMIT ?"
+    params.append(min(int(args.get("limit") or 15), 30))
+    return [dict(r) for r in ctx.collab.conn.execute(q, params).fetchall()]
+
+
 # ===========================================================================
 # WRITE tools (agent-invoked calls park in the approval queue once R3 gates)
 # ===========================================================================
