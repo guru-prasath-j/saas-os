@@ -117,6 +117,17 @@
   .card .card::before{display:none}
   .row{display:flex;gap:10px}.row>*{flex:1}
 
+  /* finance overview — KPI grid + two-column body */
+  .fin-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+  .kpi{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--r);padding:13px 15px 12px;overflow:hidden}
+  .kpi::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--kpi-accent,var(--border-2));opacity:.9}
+  .kpi-label{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .kpi-value{font-size:23px;font-weight:600;color:var(--text);line-height:1.25;margin-top:3px}
+  .kpi-sub{font-size:11.5px;color:var(--faint);margin-top:2px}
+  .fin-ov-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px;align-items:start}
+  .fin-ov-grid>.card{margin-bottom:0}
+  .fin-empty{grid-column:1/-1;display:flex;align-items:center;gap:12px;flex-wrap:wrap;background:rgba(191,255,10,.05);border:1px dashed rgba(191,255,10,.3);border-radius:var(--r);padding:12px 15px;font-size:13px;color:var(--muted)}
+
   /* expense/income toggle (add-transaction form) */
   .tx-type-btn{background:var(--surface);color:var(--muted);border:1px solid var(--border-2);border-radius:9px;padding:9px 13px;font-size:13px;font-weight:600;box-shadow:none;cursor:pointer}
   .tx-type-btn:hover{box-shadow:none;transform:none}
@@ -336,6 +347,14 @@
         <span class="label">Account</span></button>
 
     </nav>
+    <div style="padding:6px 8px;border-top:1px solid var(--border)">
+      <button class="ghost sm" id="geoShareBtn" onclick="toggleGeoShare()"
+        title="Post this browser's location to /api/context/location so errand reminders and spend warnings work (interim sensor until the mobile app)"
+        style="width:100%;justify-content:flex-start;display:flex;gap:8px;align-items:center">
+        <span id="geoShareDot" style="width:7px;height:7px;border-radius:50%;background:var(--faint);flex:0 0 auto"></span>
+        <span id="geoShareLabel">Share location: off</span>
+      </button>
+    </div>
     <div class="side-foot"><span class="dot"></span><span id="who">connecting…</span></div>
   </aside>
 
@@ -823,29 +842,28 @@
 
         <!-- OVERVIEW -->
         <div id="finPane-overview">
-          <div id="finOverviewCards" class="row" style="flex-wrap:wrap;gap:10px"></div>
-          <div class="card" style="max-width:480px">
-            <h3 style="margin-top:0;font-size:1.15rem">Can I afford this?</h3>
-            <p class="muted" style="margin:0 0 16px;font-size:13px">Amy checks your cashflow, subscriptions, and goals before answering.</p>
-            <div style="display:flex;flex-direction:column;gap:10px">
-              <input id="affordAmount" placeholder="Amount  e.g. 5000" type="number" min="0"
-                style="font-size:1.4rem;font-weight:600;padding:10px 14px;border-radius:10px"/>
-              <input id="affordDesc" placeholder="What for?  e.g. Air Fryer to cook without Oil"
-                style="padding:10px 14px;border-radius:10px"/>
-              <button onclick="checkAfford()"
-                style="padding:11px;border-radius:10px;font-size:15px;font-weight:600">
-                Ask Amy
-              </button>
-              <button onclick="document.getElementById('affordResult').innerHTML='';document.getElementById('affordAmount').value='';document.getElementById('affordDesc').value=''"
-                style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:13px;padding:2px">
-                Not right now?
-              </button>
+          <div id="finOverviewCards" class="fin-kpis"></div>
+          <div class="fin-ov-grid">
+            <div class="card">
+              <h3 style="margin-top:0;font-size:1.15rem">Can I afford this?</h3>
+              <p class="muted" style="margin:0 0 14px;font-size:13px">Amy checks your cashflow, subscriptions, and goals before answering.</p>
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <input id="affordAmount" placeholder="Amount  e.g. 5000" type="number" min="0"
+                  style="font-size:1.4rem;font-weight:600;padding:10px 14px;border-radius:10px"/>
+                <input id="affordDesc" placeholder="What for?  e.g. Air Fryer to cook without Oil"
+                  style="padding:10px 14px;border-radius:10px"/>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <button onclick="checkAfford()" style="flex:1;padding:11px;border-radius:10px;font-size:15px;font-weight:600">Ask Amy</button>
+                  <button class="ghost" onclick="document.getElementById('affordResult').innerHTML='';document.getElementById('affordAmount').value='';document.getElementById('affordDesc').value=''"
+                    style="padding:11px 14px;border-radius:10px;font-size:13px" title="Clear">Clear</button>
+                </div>
+              </div>
+              <div id="affordResult" style="margin-top:16px"></div>
             </div>
-            <div id="affordResult" style="margin-top:16px"></div>
-          </div>
-          <div class="card hidden" id="finCashflowCard">
-            <h3 style="margin-top:0">Cashflow forecast</h3>
-            <div id="finCashflowBody" class="muted"></div>
+            <div class="card hidden" id="finCashflowCard">
+              <h3 style="margin-top:0;font-size:1.15rem">Cashflow forecast</h3>
+              <div id="finCashflowBody" class="muted"></div>
+            </div>
           </div>
         </div>
 
@@ -1448,6 +1466,54 @@ async function api(path, opts={}){
 }
 async function jget(path){ const r=await api(path); return r.json(); }
 async function jpost(path, body){ const r=await api(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}); return r.json(); }
+
+// ---- context sensor (CONTEXT_PLAN C8 interim): browser geolocation → server
+// Posts at most once per 90s; the server turns fixes into place enter/leave
+// events that drive errand reminders and spend warnings.
+let _geoWatchId=null, _geoLastPost=0;
+function _geoUi(on, note){
+  const dot=document.getElementById('geoShareDot'), lab=document.getElementById('geoShareLabel');
+  if(dot){ dot.style.background = on ? 'var(--neon)' : 'var(--faint)';
+           dot.style.boxShadow = on ? '0 0 8px var(--neon)' : 'none'; }
+  if(lab) lab.textContent = 'Share location: ' + (on ? (note||'on') : (note||'off'));
+}
+function toggleGeoShare(){
+  if(_geoWatchId!=null){ localStorage.setItem('amyGeoShare','0'); stopGeoShare(); return; }
+  localStorage.setItem('amyGeoShare','1');
+  startGeoShare();
+}
+function startGeoShare(){
+  if(!navigator.geolocation){ _geoUi(false,'unsupported'); return; }
+  if(_geoWatchId!=null) return;
+  _geoWatchId=navigator.geolocation.watchPosition(async pos=>{
+    const now=Date.now();
+    if(now-_geoLastPost<90000) return;
+    _geoLastPost=now;
+    try{
+      const d=await jpost('/api/context/location',
+        {lat:pos.coords.latitude, lon:pos.coords.longitude,
+         accuracy_m:pos.coords.accuracy||0, source:'browser'});
+      const inside=(d.inside||[]).map(p=>p.name).join(', ');
+      _geoUi(true, inside ? ('at '+inside) : 'on');
+    }catch(e){ _geoUi(true,'error'); }
+  }, err=>{
+    _geoUi(false, err && err.code===1 ? 'denied' : 'error');
+    _geoWatchId=null; localStorage.setItem('amyGeoShare','0');
+  }, {enableHighAccuracy:false, maximumAge:60000});
+  _geoUi(true);
+}
+function stopGeoShare(){
+  if(_geoWatchId!=null){ try{navigator.geolocation.clearWatch(_geoWatchId);}catch(e){} _geoWatchId=null; }
+  _geoUi(false);
+}
+if(localStorage.getItem('amyGeoShare')==='1'){
+  const _geoResume=setInterval(()=>{
+    if(document.body.classList.contains('authed')){
+      clearInterval(_geoResume);
+      try{ startGeoShare(); }catch(e){}
+    }
+  }, 2000);
+}
 
 // ---- locale layer (R7B): currency symbol + grouping from the user's jurisdiction pack ----
 let LOCALE = {symbol:'₹', grouping:'indian', code:'INR'};
@@ -3920,21 +3986,36 @@ async function loadFinOverview(){
     const subTotal = subs.monthly_total || 0;
     const portTotal = (inv.portfolio||{}).total_value || 0;
     const alerts = (ov.alerts||[]).length;
-    el.innerHTML=`
-      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Monthly income</div><b style="font-size:22px;color:var(--success)">${_fmt(income)}</b></div>
-      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Spent this month</div><b style="font-size:22px;color:var(--danger)">${_fmt(spending)}</b></div>
-      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Net cashflow</div><b style="font-size:22px;color:${net>=0?'var(--success)':'var(--danger)'}">${_fmt(net)}</b></div>
-      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Subscriptions/mo</div><b style="font-size:22px;color:var(--warn)">${_fmt(subTotal)}</b></div>
-      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Portfolio value</div><b style="font-size:22px;color:var(--cyan)">${_fmt(portTotal)}</b></div>
-      <div class="card" style="min-width:140px;flex:1"><div class="muted" style="font-size:12px">Budget alerts</div><b style="font-size:22px;color:${alerts>0?'var(--danger)':'var(--success)'}">${alerts}</b></div>`;
+    const kpi=(label,value,accent,sub='',valueColor='')=>`
+      <div class="kpi" style="--kpi-accent:${accent}">
+        <div class="kpi-label">${label}</div>
+        <div class="kpi-value"${valueColor?` style="color:${valueColor}"`:''}>${value}</div>
+        ${sub?`<div class="kpi-sub">${sub}</div>`:''}
+      </div>`;
+    const netSigned=(net>=0?'+':'−')+_fmt(Math.abs(net));
+    const netCol=net>=0?'var(--success)':'var(--danger)';
+    const empty=!income && !spending && !subTotal && !portTotal;
+    el.innerHTML=
+      kpi('Monthly income', _fmt(income), 'var(--success)')+
+      kpi('Spent this month', _fmt(spending), 'var(--danger)')+
+      kpi('Net cashflow', netSigned, netCol, 'income − spend', netCol)+
+      kpi('Subscriptions/mo', _fmt(subTotal), 'var(--warn)')+
+      kpi('Portfolio value', _fmt(portTotal), 'var(--cyan)')+
+      kpi('Budget alerts', String(alerts), alerts>0?'var(--danger)':'var(--border-2)', alerts>0?'over budget':'all clear', alerts>0?'var(--danger)':'')+
+      (empty?`<div class="fin-empty">
+        <span>Nothing tracked this month yet — import a bank statement or sync Gmail to light this page up.</span>
+        <button class="ghost sm" onclick="switchFinView('import',document.getElementById('finTab-import'))">Go to Import</button>
+      </div>`:'');
     // cashflow card
     const fcard=document.getElementById('finCashflowCard');
     if(fc && fc.projected_week_spend!=null){
       fcard.classList.remove('hidden');
       document.getElementById('finCashflowBody').innerHTML=`
-        <div class="row"><div class="card"><div class="muted" style="font-size:12px">Projected (next 7 days)</div><b>${_fmt(fc.projected_week_spend)}</b></div>
-        <div class="card"><div class="muted" style="font-size:12px">Last 7-day avg</div><b>${_fmt(fc.last_week_avg)}</b></div>
-        <div class="card"><div class="muted" style="font-size:12px">Alert</div><b style="color:${fc.alert?'var(--danger)':'var(--success)'}">${fc.alert?'Over budget':'On track'}</b></div></div>`;
+        <div class="fin-kpis" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));margin-bottom:0">
+          ${kpi('Projected (7 days)', _fmt(fc.projected_week_spend), 'var(--cyan)')}
+          ${kpi('Last 7-day avg', _fmt(fc.last_week_avg), 'var(--border-2)')}
+          ${kpi('Status', fc.alert?'Over budget':'On track', fc.alert?'var(--danger)':'var(--success)', '', fc.alert?'var(--danger)':'var(--success)')}
+        </div>`;
     }
   }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
 }
