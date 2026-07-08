@@ -3457,22 +3457,14 @@ async function dashToggleAutomation(){
 }
 
 /* ── glance tiles ── */
-// overview.this_month_spend is a {category: amount} dict from FinanceEngine.overview()
-function _dashMonthlySpend(ov){
-  if(!ov) return 0;
-  if(ov.this_month_spend && typeof ov.this_month_spend === 'object')
-    return Object.values(ov.this_month_spend).reduce((s,v)=>s+(+v||0), 0);
-  return +ov.monthly_spending || 0;
-}
-function _dashMonthlyIncome(D){
-  return (D.overview && +D.overview.monthly_income) || (D.income && +D.income.monthly_total) || 0;
-}
 function dashRenderGlance(D){
   const habits = (D.habits && D.habits.habits) || [];
   const done = habits.filter(h=>h.checked_today).length;
   const streak = habits.length ? Math.max(...habits.map(h=>h.streak||0)) : 0;
   const srs = D.srs || {};
-  const net = _dashMonthlyIncome(D) - _dashMonthlySpend(D.overview);
+  const income = (D.income && D.income.monthly_total) || 0;
+  const spend = (D.overview && D.overview.monthly_spending) || 0;
+  const net = income - spend;
   const openDec = ((D.decisions && D.decisions.decisions) || []).filter(d=>(d.status||'open')==='open').length;
   const appr = ((D.approvals && D.approvals.approvals) || []).length;
   const briefing = ((D.notifs && D.notifs.notifications) || []).find(n=>n.type==='morning_briefing');
@@ -3651,7 +3643,9 @@ function dashRenderTimeline(){
 
 /* ── money overview ── */
 function dashRenderMoney(D){
-  const net = _dashMonthlyIncome(D) - _dashMonthlySpend(D.overview);
+  const income = (D.income && D.income.monthly_total) || 0;
+  const spend = (D.overview && D.overview.monthly_spending) || 0;
+  const net = income - spend;
   const month = new Date().toLocaleDateString(undefined,{month:'short'});
   document.getElementById('dashMoneyLabel').textContent = `Net Cash Flow (${month})`;
   const netEl = document.getElementById('dashMoneyNet');
@@ -3675,8 +3669,7 @@ function dashRenderMoney(D){
     </svg>`;
   } else sp.innerHTML = '<span class="faint" style="font-size:11px">not enough data yet</span>';
   // budget health: share of budgets still within their monthly limit
-  // (status also lists unbudgeted spend categories with limit:null — skip those)
-  const budgets = ((D.budgets && D.budgets.status) || []).filter(b=>b.limit != null && b.limit > 0);
+  const budgets = (D.budgets && D.budgets.status) || [];
   const hEl = document.getElementById('dashBudgetHealth');
   if(!budgets.length){
     hEl.textContent = '—';
@@ -3684,7 +3677,7 @@ function dashRenderMoney(D){
     document.getElementById('dashBudgetBar').style.width = '0%';
     return;
   }
-  const ok = budgets.filter(b=>!b.over_budget).length;
+  const ok = budgets.filter(b=>b.limit > 0 && b.spent <= b.limit).length;
   const health = Math.round(100 * ok / budgets.length);
   hEl.textContent = health + '%';
   hEl.style.color = health >= 70 ? 'var(--success)' : health >= 40 ? 'var(--warn)' : 'var(--danger)';
