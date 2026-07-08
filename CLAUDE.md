@@ -57,6 +57,20 @@ amy/
                          + fx_seed.json. New jurisdiction = new JSON only
   obligations/           Obligations engine + agent (R7A-2): zakat/advance tax/
                          quarterly estimates/savings as pack presets
+    zakat.py             Full zakat: live gold/silver nisab (gold-api.com,
+                         daily-cached, FX-converted), hawl from balance history
+                         on the Hijri calendar, wealth breakdown (custodial
+                         hard-excluded). GET /api/obligations/zakat +
+                         POST .../zakat/propose (parks payment in Approval
+                         Inbox); "zakat/nisab/hawl" in /api/ask intercepts
+                         (vault.py:_try_zakat_answer, local-only LLM);
+                         zakat_status registry tool for agents.
+                         Purification agent: incoming interest flagged by
+                         values screening → proposes donating the exact amount
+                         (reactive.py, dedup purify_{txn_id}). Audit report
+                         metadata.governance = AI-governance summary
+                         (oversight counts, tools-by-risk, data locality) —
+                         "Regulator report" download button on the Agent tab.
   values/                Values screening (R7A-1): presets.json + profiles +
                          screening_flags (collab.db, joined by audit)
   financing.py           Financing models (R7A-4): amortized|markup|zero|lease

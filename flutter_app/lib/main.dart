@@ -11,6 +11,8 @@ import 'share_handler.dart';
 import 'login_screen.dart';
 import 'account_screen.dart';
 import 'goals_screen.dart';
+import 'approvals_screen.dart';
+import 'zakat_screen.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 
 Future<void> main() async {
@@ -277,6 +279,18 @@ class _HomePageState extends State<HomePage> {
                 ),
               ),
             ),
+          ),
+          IconButton(
+            tooltip: 'Approvals — agent actions waiting on you',
+            icon: const Icon(Icons.fact_check),
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const ApprovalsScreen())),
+          ),
+          IconButton(
+            tooltip: 'Zakat',
+            icon: const Icon(Icons.volunteer_activism),
+            onPressed: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const ZakatScreen())),
           ),
           IconButton(
             tooltip: 'Goals',

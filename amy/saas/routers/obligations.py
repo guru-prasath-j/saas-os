@@ -42,6 +42,60 @@ def obligations_status(user: User = Depends(current_user)):
         fe.close()
 
 
+@router.get("/api/obligations/zakat")
+def zakat_full_report(jurisdiction: str | None = None,
+                      user: User = Depends(current_user)):
+    """The full zakat working: live gold/silver nisab, per-account wealth
+    breakdown (custodial hard-excluded), hawl from balance history on the
+    Hijri calendar, and the verdict with every rule shown."""
+    from ...obligations.zakat import zakat_report
+    jid = (jurisdiction or user.home_jurisdiction or "india").lower()
+    fe = _fe(user)
+    try:
+        return zakat_report(fe, jid, cache_dir=paths.index_dir(user.id))
+    finally:
+        fe.close()
+
+
+@router.post("/api/obligations/zakat/propose")
+def zakat_propose_payment(jurisdiction: str | None = None,
+                          user: User = Depends(current_user)):
+    """Park the computed zakat payment in the Approval Inbox — the same
+    human-gated rail every agent write uses. Never moves money."""
+    from ... import tools
+    from ...obligations.zakat import zakat_report
+    from .automation import _ctx
+    jid = (jurisdiction or user.home_jurisdiction or "india").lower()
+    fe = _fe(user)
+    try:
+        report = zakat_report(fe, jid, cache_dir=paths.index_dir(user.id))
+    finally:
+        fe.close()
+    if not report["zakat_due_now"] or report["estimated_liability"] <= 0:
+        raise HTTPException(status_code=400,
+                            detail=f"No zakat due to propose: {report['verdict']}")
+    reasoning = (f"{report['verdict']} Nisab: {report['currency']} "
+                 f"{report['threshold_used']:,.2f} ({report['threshold_standard']}); "
+                 f"hawl completed {report['hawl'].get('hawl_completes_on')} "
+                 f"({report['hawl'].get('hawl_completes_on_hijri')}). "
+                 f"{report['disclaimer']}")
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        ctx._extras["agent_name"] = "zakat"
+        ctx._extras["agent_reasoning"] = reasoning
+        ctx._extras["agent_dedup_key"] = f"zakat_{jid}_{report['computed_on']}"
+        out = tools.invoke(ctx, "add_transaction", {
+            "amount": -abs(report["estimated_liability"]),
+            "category": "Zakat",
+            "merchant": "Zakat payment",
+            "notes": f"computed {report['computed_on']} "
+                     f"({report['computed_on_hijri']})",
+        }, actor="agent")
+        return {"proposal": out, "report": report}
+    finally:
+        cdb.close()
+
+
 @router.get("/api/obligations/presets")
 def obligations_presets(user: User = Depends(current_user)):
     """Presets available across the user's active jurisdictions."""

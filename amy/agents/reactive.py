@@ -238,6 +238,34 @@ def _screening_agent(events, ctx):
                          {"goal_id": goal_id,
                           "title": f"Review flagged transaction: {worst['reasoning'][:120]}"},
                          actor="agent")
+
+            # Interest purification (tathir): when a flag is INCOMING pure
+            # interest (positive amount + interest-rule match), propose
+            # donating exactly that amount to charity — the standard remedy
+            # for money one may not keep. Proposal only: parks in the
+            # Approval Inbox, deduped per source transaction.
+            by_id = {t.get("id"): t for t in txns}
+            for f in flags:
+                txn = by_id.get(f["transaction_id"]) or {}
+                amt = float(txn.get("amount") or 0)
+                if amt <= 0 or "interest" not in (f.get("reasoning") or "").lower():
+                    continue
+                reasoning = (
+                    f"Incoming pure interest of {amt:,.2f} from "
+                    f"'{(txn.get('merchant') or '')[:60]}' on {txn.get('date')} "
+                    f"was flagged by the '{f['profile_name']}' profile. "
+                    "The standard remedy is purification: donate the exact "
+                    "interest amount to charity. Approving records the "
+                    "donation you make yourself — Amy never moves money.")
+                ctx._extras["agent_name"] = "purification_agent"
+                ctx._extras["agent_reasoning"] = reasoning
+                ctx._extras["agent_dedup_key"] = f"purify_{f['transaction_id']}"
+                tools.invoke(ctx, "add_transaction", {
+                    "amount": -abs(amt),
+                    "category": "Purification — interest donation",
+                    "merchant": "Charity (interest purification)",
+                    "notes": f"purifies txn {f['transaction_id']} ({txn.get('date')})",
+                }, actor="agent")
         except Exception as exc:
             _report_error(events, "screening", exc)
 

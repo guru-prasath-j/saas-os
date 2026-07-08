@@ -432,6 +432,15 @@
 
       <!-- TAB: AGENT (approval inbox + activity; R4 adds the goal planner here) -->
       <div class="tab hidden" id="tab-agent">
+        <div class="card" style="padding:14px 18px">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <div style="flex:1;min-width:220px">
+              <h3 style="margin:0">AI governance</h3>
+              <span class="faint" style="font-size:12px">every agent action reasoned, human-gated, and auditable — regulator-style export</span>
+            </div>
+            <button class="ghost sm" onclick="downloadRegulatorReport()">⬇ Regulator report</button>
+          </div>
+        </div>
         <div class="card" id="briefingCard" style="display:none">
           <h3>Latest briefing</h3>
           <div id="briefingBody" class="muted"></div>
@@ -2478,6 +2487,17 @@ async function dismissValuesFlag(fid){
   try{ await api('/api/values/flags/'+fid+'/dismiss',{method:'POST'}); }catch(e){}
   loadValuesPanel();
 }
+async function downloadRegulatorReport(){
+  try{
+    const d=await jget('/api/agent/audit');
+    const blob=new Blob([JSON.stringify(d,null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=`amy-governance-report-${new Date().toISOString().slice(0,10)}.json`;
+    a.click(); URL.revokeObjectURL(a.href);
+  }catch(e){ alert(e.message); }
+}
+
 async function runAgentGoal(){
   const inp=document.getElementById('agentGoalInput');
   const goal=(inp.value||'').trim(); if(!goal) return;

@@ -175,10 +175,61 @@ def _try_custodial_answer(query: str, user: User) -> dict | None:
         return None
 
 
+def _try_zakat_answer(query: str, user: User) -> dict | None:
+    """Zakat chat tool: 'calculate my zakat', 'am I above nisab', 'when does
+    my hawl complete' → the full deterministic report, phrased by the local
+    LLM (financial detail stays on-device), deterministic fallback. Returns
+    None for non-zakat questions. Never raises."""
+    low = (query or "").lower()
+    if not any(k in low for k in ("zakat", "nisab", "hawl")):
+        return None
+    try:
+        from ...finance import FinanceEngine
+        from ...llm import LLMRouter
+        from ...obligations.zakat import zakat_report
+        fe = FinanceEngine(str(paths.index_dir(user.id) / "finance.db"))
+        try:
+            report = zakat_report(fe, (user.home_jurisdiction or "india").lower(),
+                                  cache_dir=paths.index_dir(user.id))
+        finally:
+            fe.close()
+        w = report["wealth"]
+        facts = "\n".join([
+            report["verdict"],
+            f"Qualifying wealth: {report['currency']} {w['total']:,.2f} — "
+            + "; ".join(f"{a['account']} {a['balance']:,.2f}" for a in w["accounts"]),
+            f"Excluded: " + "; ".join(f"{e['account']} ({e['excluded_because']})"
+                                      for e in w["excluded"]) if w["excluded"] else "",
+            f"Nisab ({report['threshold_standard']}): {report['currency']} "
+            f"{report['threshold_used']:,.2f}"
+            + (" — live spot price" if report["nisab"].get("live") else ""),
+            f"Hawl: {report['hawl']}",
+            f"Today: {report['computed_on']} ({report['computed_on_hijri']})",
+            report["disclaimer"],
+        ])
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        answer, model = llm.generate(
+            "You are Amy's zakat assistant. Answer the user's question using "
+            "ONLY these computed facts. Show the working (wealth, nisab, hawl) "
+            "clearly. Keep the disclaimer. Never change any number.",
+            query, context=facts, sensitive=True)
+        if model == "template" or not (answer or "").strip():
+            answer = facts
+        src = ["obligations engine · live nisab · Hijri calendar"]
+        return {"query": query, "domains": ["zakat"], "answer": answer,
+                "sections": [{"domain": "zakat", "answer": answer, "sources": src}],
+                "sources": src, "zakat_report": report}
+    except Exception:
+        return None
+
+
 @router.post("/api/ask")
 def pkos_ask(q: Query, user: User = Depends(current_user)):
     from ...llm import LLMRouter
     from ...pkos import build_pkos
+    zak = _try_zakat_answer(q.text, user)
+    if zak is not None:
+        return zak
     cust = _try_custodial_answer(q.text, user)
     if cust is not None:
         return cust

@@ -192,4 +192,48 @@ class AmyApi {
   /// Full URL to a stored capture image (vault-relative [path]).
   String imageUrl(String path) =>
       '$baseUrl/api/captures/image?path=${Uri.encodeQueryComponent(path)}';
+
+  // --- agent approvals (AI governance: human approves every agent write) ---
+
+  /// Pending Approval Inbox items — actions agents proposed and are waiting on.
+  Future<List<Map<String, dynamic>>> pendingApprovals() async {
+    final r = await http.get(
+      Uri.parse('$baseUrl/api/automation/approvals?status=pending'),
+      headers: Config.authHeaders(),
+    );
+    if (r.statusCode >= 400) throw Exception('approvals ${r.statusCode}');
+    final d = jsonDecode(r.body) as Map<String, dynamic>;
+    return (d['approvals'] as List? ?? []).cast<Map<String, dynamic>>();
+  }
+
+  /// verb: 'approve' (executes the parked action) or 'reject'.
+  Future<Map<String, dynamic>> decideApproval(String id, String verb) async {
+    final r = await http.post(
+      Uri.parse('$baseUrl/api/automation/approvals/$id/$verb'),
+      headers: Config.authHeaders({'Content-Type': 'application/json'}),
+      body: '{}',
+    );
+    final d = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) throw Exception(d['detail'] ?? 'HTTP ${r.statusCode}');
+    return d;
+  }
+
+  // --- zakat (live nisab + hawl on the Hijri calendar) ----------------------
+
+  Future<Map<String, dynamic>> zakatReport() async {
+    final r = await http.get(Uri.parse('$baseUrl/api/obligations/zakat'),
+        headers: Config.authHeaders());
+    final d = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) throw Exception(d['detail'] ?? 'HTTP ${r.statusCode}');
+    return d;
+  }
+
+  /// Parks the computed zakat payment in the Approval Inbox.
+  Future<Map<String, dynamic>> zakatPropose() async {
+    final r = await http.post(Uri.parse('$baseUrl/api/obligations/zakat/propose'),
+        headers: Config.authHeaders({'Content-Type': 'application/json'}));
+    final d = jsonDecode(r.body) as Map<String, dynamic>;
+    if (r.statusCode >= 400) throw Exception(d['detail'] ?? 'HTTP ${r.statusCode}');
+    return d;
+  }
 }

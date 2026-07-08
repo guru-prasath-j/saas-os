@@ -379,6 +379,21 @@ def _t_emit(ctx, args):
     return {"event_id": eid}
 
 
+@register_tool("zakat_status",
+               "Full zakat report: live gold/silver nisab, wealth breakdown "
+               "(custodial excluded), hawl on the Hijri calendar, liability.",
+               _obj({"jurisdiction": {"type": "string"}}), RISK_READ)
+def _t_zakat(ctx, args):
+    from ..obligations.zakat import zakat_report
+    from pathlib import Path
+    fe = ctx.open_finance()
+    try:
+        return zakat_report(fe, (args.get("jurisdiction") or "india").lower(),
+                            cache_dir=Path(ctx.finance_path).parent)
+    finally:
+        fe.close()
+
+
 @register_tool("create_goal",
                "Create a new goal (returns its id — use it for add_goal_task).",
                _obj({"title": {"type": "string"},

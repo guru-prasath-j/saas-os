@@ -102,11 +102,51 @@ def build_audit_report(ctx, since: str | None = None,
         pass   # table ships with the values engine (R7A-1)
 
     agent_events = [e for e in events if (e["type"] or "").startswith("agent.")]
+
+    # AI-governance summary — the one-screen answer to "is this AI-native
+    # system controllable?": human oversight of every write, the enumerated
+    # action catalog, decision trail, and which class of model saw the data.
+    executed = sum(1 for a in approvals
+                   if a["status"] in ("executed", "auto_executed"))
+    rejected = sum(1 for a in approvals if a["status"] == "rejected")
+    from ..tools import list_tools as _registry_tools
+    risk_dist: dict[str, int] = {}
+    try:
+        for t in _registry_tools():
+            risk_dist[t["risk"]] = risk_dist.get(t["risk"], 0) + 1
+    except Exception:
+        pass
+    governance = {
+        "human_oversight": {
+            "model": "every agent-initiated write/destructive action is "
+                     "parked for explicit human approval; reads execute "
+                     "directly; destructive actions are hard-pinned to the "
+                     "approval tier",
+            "actions_proposed": len(approvals),
+            "approved_and_executed": executed,
+            "rejected_by_human": rejected,
+        },
+        "action_catalog": {
+            "note": "agents act only through the enumerated, risk-classified "
+                    "tool registry — no free-form execution path exists",
+            "tools_by_risk": risk_dist,
+        },
+        "data_locality": {
+            "note": "sensitive data (private folders, tax-ID patterns, "
+                    "in-trust accounts) is routed to a LOCAL model only — "
+                    "never a cloud API; llm_routing documents provider usage",
+        },
+        "reasoning_trail": "every proposal carries the proposing agent's "
+                           "reasoning; every approve/reject decision is in "
+                           "the decision journal",
+    }
+
     return {
         "metadata": {
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "period": {"from": since_iso, "to": until_iso},
             "user_id": ctx.user_id,
+            "governance": governance,
             "llm_routing": _llm_routing_doc(ctx),
             "disclaimer": ("Automated actions are recorded with the proposing "
                            "agent's reasoning. Obligation/tax figures anywhere "
