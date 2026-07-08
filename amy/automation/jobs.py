@@ -7,6 +7,8 @@ automation_runs ledger — no silent failures.
 from __future__ import annotations
 
 from . import closers, ingest, learning, sentinels
+from .capture_digest import capture_digest
+from ..learning_feed.sensor import learning_feed_refresh
 from .executors import JobCtx
 from .store import AutomationStore, TrackedLLM
 
@@ -41,6 +43,8 @@ HANDLERS: dict[str, callable] = {
     "morning_briefing": closers.morning_briefing,
     "autopilot": closers.autopilot_run,
     "obligation_check": _obligation_check,
+    "capture_digest": capture_digest,
+    "learning_feed_refresh": learning_feed_refresh,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -49,7 +53,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
     never overridden; edit via PATCH /api/automation/jobs/{name}."""
     from .. import config
     briefing_at = config._env("AMY_BRIEFING_AT", "07:00")
-    return [
+    jobs = [
         ("gmail_statement_ingest", {"every_hours": 6}),
         ("auto_categorize",        {"every_hours": 12}),
         ("anomaly_sentinel",       {"daily_at": "08:00"}),
@@ -59,7 +63,13 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("morning_briefing",       {"daily_at": briefing_at}),
         ("autopilot",              {"daily_at": "05:00"}),
         ("obligation_check",       {"daily_at": "07:15"}),
+        ("capture_digest",         {"daily_at": "20:30"}),
     ]
+    # Env-gated: the handler re-checks the flag too, because job rows persist
+    # in automation_jobs after the env is turned off (ensure_job never deletes).
+    if config._env("AMY_LEARNING_FEED_ENABLED", "false").strip().lower() == "true":
+        jobs.append(("learning_feed_refresh", {"every_hours": 6}))
+    return jobs
 
 
 DEFAULT_JOBS: list[tuple[str, dict]] = _default_jobs()

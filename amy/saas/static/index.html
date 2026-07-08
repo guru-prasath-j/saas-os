@@ -62,7 +62,11 @@
   body:not(.authed) .content{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;margin:0;padding:16px;max-width:none}
 
   .sidebar{position:sticky;top:0;height:100dvh;padding:18px 14px;display:flex;flex-direction:column;gap:8px;
+    overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--border-2) transparent;
     background:linear-gradient(180deg,rgba(255,255,255,.045),rgba(255,255,255,.015));border-right:1px solid var(--border);backdrop-filter:blur(14px)}
+  .sidebar::-webkit-scrollbar{width:5px}
+  .sidebar::-webkit-scrollbar-thumb{background:var(--border-2);border-radius:99px}
+  .sidebar::-webkit-scrollbar-track{background:transparent}
   .sidebar::after{content:"";position:absolute;top:0;bottom:0;right:-1px;width:1px;pointer-events:none;
     background:linear-gradient(180deg,var(--neon) 0%,transparent 26%,transparent 74%,rgba(0,224,255,.6) 100%);opacity:.35}
   .brand{display:flex;align-items:center;gap:11px;padding:8px 8px 14px}
@@ -162,12 +166,13 @@
 
   @media (max-width:820px){
     .app{grid-template-columns:1fr}
-    .sidebar{position:sticky;flex-direction:row;align-items:center;height:auto;gap:10px;overflow-x:auto;padding:10px 12px;top:0;z-index:6}
+    .sidebar{position:sticky;flex-direction:row;align-items:center;height:auto;gap:10px;overflow-x:auto;overflow-y:hidden;padding:10px 12px;top:0;z-index:6;-webkit-overflow-scrolling:touch}
+    .topbar{position:static}
     .sidebar::after{display:none}
     .brand{padding:0 6px 0 0}.brandsub{display:none}
-    nav#nav{flex-direction:row}
+    nav#nav{flex-direction:row;flex:0 0 auto}
     nav#nav button .label{display:none}
-    nav#nav button{padding:9px}
+    nav#nav button{padding:9px;width:auto;flex:0 0 auto}
     .nav-sector{display:none}
     .side-foot{display:none}
     .content{padding:16px}
@@ -1181,6 +1186,12 @@
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('reddit')">Reddit</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('gmeet')">Google Meet</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('gsheets')">Google Sheets</button>
+            <span class="meta" style="margin-left:6px">Learning Feed:</span>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('hackernews')">HackerNews</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('arxiv')">arXiv</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('youtube')">YouTube</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('bluesky')">Bluesky</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('devto')">Dev.to</button>
           </div>
           <div id="mcpPresetSteps" class="hidden" style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -1802,7 +1813,8 @@ const _MCP_PRESETS={
     steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
       'Register an app at <b>reddit.com/prefs/apps</b> for OAuth API access',
       'Deploy/run a Reddit MCP server configured with that app\'s credentials',
-      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"']},
+      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"',
+      'Learning Feed: if the server exposes a <b>search_posts</b> tool, flip "Also sync to vault" after adding and Reddit joins your feed']},
   gmeet:{name:'Google Meet',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
     steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
       'Create an OAuth client in <b>Google Cloud Console</b> with Meet/Calendar API access',
@@ -1814,6 +1826,38 @@ const _MCP_PRESETS={
       'Create an OAuth client in <b>Google Cloud Console</b> with Sheets API access',
       'Deploy/run a Google Sheets MCP server configured with that client',
       'Paste your server\'s URL into "Server URL", and an access token into "API key / token"']},
+  // Learning Feed sources — name must keep the source keyword (matched by
+  // substring); server must expose the listed tool taking a query argument.
+  hackernews:{name:'HackerNews',server_url:'',auth_type:'none',risk_tier:'scraping_backed',
+    steps:['Deploy/run a HackerNews MCP server yourself — it must expose a <b>search_stories</b> tool taking a <code>query</code> argument',
+      'Amy needs an HTTP or SSE URL — stdio-only servers must be bridged (e.g. supergateway) first',
+      'Paste your instance\'s URL into "Server URL" (a URL ending in <code>/sse</code> is auto-detected as SSE)',
+      'No token needed unless you added auth to your own deployment',
+      'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
+  arxiv:{name:'arXiv',server_url:'',auth_type:'none',risk_tier:'scraping_backed',
+    steps:['Deploy/run an arXiv MCP server yourself — it must expose a <b>search_papers</b> tool taking a <code>query</code> argument',
+      'Amy needs an HTTP or SSE URL — stdio-only servers must be bridged (e.g. supergateway) first',
+      'Paste your instance\'s URL into "Server URL"',
+      'No token needed unless you added auth to your own deployment',
+      'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
+  youtube:{name:'YouTube',server_url:'',auth_type:'api_key',risk_tier:'platform_api',
+    steps:['Create an API key in <b>Google Cloud Console</b> with YouTube Data API v3 enabled',
+      'Deploy/run a YouTube MCP server with that key — it must expose a <b>search_videos</b> tool taking a <code>query</code> argument',
+      'Amy needs an HTTP or SSE URL — stdio-only servers must be bridged (e.g. supergateway) first',
+      'Paste your server\'s URL into "Server URL", and the API key into "API key / token" if your server expects it per-request',
+      'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
+  bluesky:{name:'Bluesky',server_url:'',auth_type:'api_key',risk_tier:'platform_api',
+    steps:['In Bluesky: <b>Settings → Privacy and Security → App Passwords</b> → create one',
+      'Deploy/run a Bluesky MCP server with your handle + app password — it must expose a <b>search_posts</b> tool taking a <code>query</code> argument',
+      'Amy needs an HTTP or SSE URL — stdio-only servers must be bridged (e.g. supergateway) first',
+      'Paste your server\'s URL into "Server URL", and the app password into "API key / token" if your server expects it per-request',
+      'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
+  devto:{name:'Dev.to',server_url:'',auth_type:'none',risk_tier:'platform_api',
+    steps:['Dev.to has a public articles API — an API key (from <b>dev.to Settings → Extensions</b>) is only needed for private data',
+      'Deploy/run a Dev.to MCP server — it must expose a <b>search_articles</b> tool taking a <code>query</code> argument',
+      'Amy needs an HTTP or SSE URL — stdio-only servers must be bridged (e.g. supergateway) first',
+      'Paste your instance\'s URL into "Server URL"',
+      'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
 };
 function mcpApplyPreset(key){
   const p=_MCP_PRESETS[key];

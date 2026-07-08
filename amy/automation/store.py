@@ -120,6 +120,22 @@ class AutomationStore:
                 error    TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS learning_feed_items (
+                id           TEXT PRIMARY KEY,
+                uid          TEXT NOT NULL,
+                source       TEXT,
+                title        TEXT,
+                url          TEXT,
+                summary      TEXT,
+                score        INTEGER,
+                relevance    REAL,
+                why          TEXT,
+                focus_tag    TEXT,
+                saved        INTEGER DEFAULT 0,
+                fetched_at   TEXT,
+                published_at TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS ingested_attachments (
                 msg_id   TEXT NOT NULL,
                 filename TEXT NOT NULL,
@@ -131,6 +147,7 @@ class AutomationStore:
             );
 
             CREATE INDEX IF NOT EXISTS idx_runs_job   ON automation_runs(job_name, started_at);
+            CREATE INDEX IF NOT EXISTS idx_feed_uid   ON learning_feed_items(uid, fetched_at);
             CREATE INDEX IF NOT EXISTS idx_appr_state ON approvals(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_llm_ts     ON llm_calls(ts);
             """
