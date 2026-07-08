@@ -253,6 +253,168 @@ def ingest(
     )
 
 
+# --------------------------------------------------------------------------- #
+# photo memory — search over ingested captures (AI memory layer)
+#
+# Reads 08_Captures/**/*.md straight from the vault on every call (same
+# always-fresh policy as amy/memory/recall.py), so a photo taken a minute ago
+# is already searchable. Used by:
+#   * CollabMaster._captures_context   (chat context injection)
+#   * tools search_captures / recent_captures   (assistant console)
+#   * the capture_digest automation job (daily/weekly comparison)
+# --------------------------------------------------------------------------- #
+_STOPWORDS = {
+    "a", "an", "and", "the", "of", "in", "on", "at", "is", "was", "are",
+    "were", "it", "that", "this", "these", "those", "i", "me", "my", "we",
+    "you", "your", "do", "did", "does", "what", "which", "who", "when",
+    "where", "how", "about", "with", "for", "from", "to", "have", "has",
+    "had", "there", "be", "been", "can", "could", "tell", "show", "any",
+    "some", "one", "or", "took", "take", "taken", "saved", "photo",
+    "picture", "pic", "image", "capture", "captured", "amy",
+}
+
+_CAPTION_RE = re.compile(r"\*\*Caption:\*\*\s*(.+)")
+_LOCATION_RE = re.compile(r"\*\*Location:\*\*\s*(.+)")
+_NOTE_RE = re.compile(r"\*\*Note:\*\*\s*(.+)")
+
+# Reverse-geocoding returns official city names; people ask with the common
+# ones. Both directions are added at tokenization so either side matches.
+_CITY_ALIASES = {
+    "bangalore": "bengaluru", "bombay": "mumbai", "madras": "chennai",
+    "calcutta": "kolkata", "gurgaon": "gurugram", "mysore": "mysuru",
+    "poona": "pune", "trivandrum": "thiruvananthapuram", "cochin": "kochi",
+    "baroda": "vadodara", "benares": "varanasi", "allahabad": "prayagraj",
+}
+_CITY_ALIASES.update({v: k for k, v in list(_CITY_ALIASES.items())})
+
+
+def _cap_tokens(text: str) -> set:
+    toks = {t for t in re.findall(r"[a-z0-9]+", (text or "").lower())
+            if len(t) > 1 and t not in _STOPWORDS}
+    toks |= {_CITY_ALIASES[t] for t in toks if t in _CITY_ALIASES}
+    return toks
+
+
+def _body_field(rx, body: str) -> str:
+    m = rx.search(body)
+    return m.group(1).strip() if m else ""
+
+
+def _parse_capture_note(rel: str, text: str) -> dict:
+    """One capture .md → a flat record. Tolerant of hand-edited notes."""
+    from .vault import _tiny_parse
+    meta, body = _tiny_parse(text)
+    loc = meta.get("location")
+    place = ((loc.get("place", "") if isinstance(loc, dict) else "")
+             or meta.get("place", "") or _body_field(_LOCATION_RE, body))
+    ocr = "\n".join(ln.lstrip("> ").strip() for ln in body.splitlines()
+                    if ln.startswith(">"))
+    tags = meta.get("tags") or []
+    if not isinstance(tags, list):
+        tags = [str(tags)]
+    created = str(meta.get("created", ""))
+    return {
+        "path": rel,
+        "title": str(meta.get("title", "")) or rel.rsplit("/", 1)[-1],
+        "created": created, "date": created[:10],
+        "place": str(place), "caption": _body_field(_CAPTION_RE, body),
+        "ocr": ocr, "note": _body_field(_NOTE_RE, body),
+        "tags": [str(t).strip() for t in tags if str(t).strip()],
+        "image": str(meta.get("image", "")),
+        "source": str(meta.get("source", "")),
+    }
+
+
+def load_capture_records(vault=None, limit: int = 400) -> list[dict]:
+    """All capture records, newest first, read fresh from disk (capped)."""
+    root = captures_dir(vault)
+    if not root.exists():
+        return []
+    files = sorted(root.rglob("*.md"), key=lambda f: f.name, reverse=True)
+    out = []
+    for f in files[:limit]:
+        try:
+            rel = str(f.relative_to(_vault(vault))).replace("\\", "/")
+            out.append(_parse_capture_note(
+                rel, f.read_text(encoding="utf-8", errors="ignore")))
+        except Exception:
+            continue
+    out.sort(key=lambda r: r["created"] or r["path"], reverse=True)
+    return out
+
+
+def _date_hint(query: str):
+    """Map 'today'/'yesterday' in the query to a YYYY-MM-DD boost target."""
+    q = query.lower()
+    today = _dt.date.today()
+    if "yesterday" in q:
+        return (today - _dt.timedelta(days=1)).isoformat()
+    if "today" in q or "this morning" in q or "tonight" in q:
+        return today.isoformat()
+    return None
+
+
+def search_captures(query: str, vault=None, limit: int = 5,
+                    min_score: float = 0.2) -> list[dict]:
+    """Rank captures by weighted token overlap between the query and what we
+    know about each photo (place > tags/note/title > caption > OCR).
+    Score is normalized by query length; 'yesterday'/'today' in the query
+    boosts captures from that day. Returns records + 'score', [] if nothing
+    clears min_score."""
+    qtok = _cap_tokens(query)
+    if not qtok:
+        return []
+    hint = _date_hint(query)
+    scored = []
+    for r in load_capture_records(vault):
+        fields = (
+            (3.0, _cap_tokens(r["place"])),
+            (2.0, _cap_tokens(" ".join(r["tags"]))),
+            (2.0, _cap_tokens(r["note"])),
+            (2.0, _cap_tokens(r["title"])),
+            (1.5, _cap_tokens(r["caption"])),
+            (1.0, _cap_tokens(r["ocr"])),
+        )
+        score = sum(max((w for w, toks in fields if t in toks), default=0.0)
+                    for t in qtok) / max(len(qtok), 1)
+        if hint and r["date"] == hint:
+            score += 0.5
+        if score >= min_score:
+            scored.append((score, r))
+    scored.sort(key=lambda x: (x[0], x[1]["created"]), reverse=True)
+    return [dict(r, score=round(s, 3)) for s, r in scored[:limit]]
+
+
+def captures_between(start: str, end: str, vault=None) -> list[dict]:
+    """Capture records with start <= date <= end (YYYY-MM-DD, inclusive)."""
+    return [r for r in load_capture_records(vault, limit=1000)
+            if r["date"] and start <= r["date"] <= end]
+
+
+def context_block(query: str, vault=None, k: int = 3) -> str:
+    """Chat-context block describing the captures relevant to this query, or
+    '' when nothing clears the relevance gate (never pollute a reply)."""
+    hits = search_captures(query, vault=vault, limit=k)
+    if not hits:
+        return ""
+    lines = ["## Photo memory (captures from your vault)"]
+    for h in hits:
+        bits = [f"[{h['date'] or 'undated'}] {h['title']}"]
+        if h["place"]:
+            bits.append(f"place: {h['place']}")
+        if h["caption"]:
+            bits.append(f"caption: {h['caption']}")
+        if h["note"]:
+            bits.append(f"user note: {h['note']}")
+        if h["ocr"]:
+            bits.append("text in photo: " +
+                        " / ".join(h["ocr"].splitlines())[:400])
+        if h["tags"]:
+            bits.append("tags: " + ", ".join(h["tags"]))
+        lines.append("- " + " · ".join(bits) + f" (note: {h['path']})")
+    return "\n".join(lines)
+
+
 def list_captures(notes, limit: int = 50) -> list[dict]:
     """Recent capture notes from the loaded vault notes (newest first)."""
     caps = [n for n in notes if n.path.startswith(CAPTURES_REL + "/") and n.path.endswith(".md")]

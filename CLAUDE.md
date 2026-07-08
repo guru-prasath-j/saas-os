@@ -80,6 +80,10 @@ amy/
     store.py             EventStore: persist to collab.db events table + pub/sub
                          (failing subscribers retried once → event_dead_letters)
     triggers.py          Default subscribers (goal, vault, all finance events)
+  captures.py            Photo ingestion (08_Captures: image + caption/OCR/place note)
+                         + photo-memory search: search_captures/captures_between/
+                         context_block — used by CollabMaster chat context, the
+                         search_captures/recent_captures tools, and capture_digest
   memory/writer.py       MemoryWriter: idempotent vault journaling (daily + atomic notes)
   knowledge_graph/store.py  GraphStore: typed nodes+edges, edge UPSERT with timestamps
   saas/
@@ -239,7 +243,9 @@ Default jobs: `gmail_statement_ingest` (6h, hybrid: saved-map/preset/pdfplumber
 on approve) · `auto_categorize` (12h, learned rules first) · `anomaly_sentinel` ·
 `cashflow_alerts` · `morning_briefing` (07:00, email if SMTP set) ·
 `custodial_autopilot` (proposes prefilled cycle as tier 2) · `autopilot` (05:00) ·
-`monthly_close` (1st, CFO report + subscription proposals + compliance refresh).
+`monthly_close` (1st, CFO report + subscription proposals + compliance refresh) ·
+`capture_digest` (20:30, photo-memory day-over-day compare, Sunday = weekly
+rollup, writes 09_Memory note so chat recalls it next day).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules

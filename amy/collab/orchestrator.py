@@ -72,8 +72,9 @@ class CollabMaster:
             recalled = ""
         finance_ctx = self._finance_context(query)
         career_ctx = self._career_context(query)
+        captures_ctx = self._captures_context(query)
         extra_context = "\n\n".join(
-            p for p in (conv, recalled, finance_ctx, career_ctx) if p)
+            p for p in (conv, recalled, finance_ctx, career_ctx, captures_ctx) if p)
         res = self.pkos_master.handle(query, extra_context=extra_context)   # multi-agent + memory context
         disabled = self.marketplace.disabled_set()
         # marketplace: drop disabled domain agents
@@ -172,6 +173,21 @@ class CollabMaster:
                 return ""
             text = (result.get("text") or "")[:2000]
             return f"Live Plane data ({plane['name']}):\n{text}" if text else ""
+        except Exception:
+            return ""
+
+    def _captures_context(self, query: str) -> str:
+        """Inject photo-memory facts for queries that match ingested captures
+        (place / OCR / caption / tags / user note). Relevance-gated inside
+        context_block() itself — no keyword gate here, so 'that poster in
+        Bangalore' matches without the word 'photo' appearing. Best-effort:
+        any failure silently yields no context, same defensive pattern as
+        _finance_context/_career_context above."""
+        if not self.vault_path:
+            return ""
+        try:
+            from ..captures import context_block
+            return context_block(query, vault=self.vault_path)
         except Exception:
             return ""
 

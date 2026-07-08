@@ -43,6 +43,26 @@ async def create_capture(
     )
     if not res.duplicate:
         _engine_for(user).add_capture_note(res.note_path)
+        # journal it: capture.added is already understood by MemoryWriter
+        # (daily-note entry + atomic 09_Memory note) — fire-and-forget, a
+        # journaling failure must never fail the upload that already happened.
+        try:
+            from ...collab import CollabDB
+            from ...events.store import EventStore, CAPTURE_ADDED
+            from ..deps import _collab_db_path, _journal_user
+            cdb = CollabDB(_collab_db_path(user))
+            try:
+                EventStore(cdb).emit(CAPTURE_ADDED, {
+                    "title": res.title, "caption": res.caption,
+                    "place": res.place, "note_path": res.note_path,
+                    "image_path": res.image_path,
+                    "ocr": (res.ocr or "")[:500], "source": source,
+                }, source="captures")
+            finally:
+                cdb.close()
+            _journal_user(user)   # catch up 00_Daily/09_Memory immediately
+        except Exception:
+            pass
 
     # Narrowly-scoped: link this screenshot to a specific custodial
     # disbursement transaction, if the caller (share-intent flow) asked for

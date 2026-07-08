@@ -239,6 +239,42 @@ def _t_graph(ctx, args):
         g.conn.close()
 
 
+def _user_vault(ctx) -> Path:
+    # resolve the vault the user is ACTUALLY using (external/linked Obsidian
+    # vault respected) — tenancy, not paths.vault_dir
+    from ..saas import tenancy
+    return tenancy.resolve_vault_dir(ctx.user_id)
+
+
+@register_tool("search_captures",
+               "Search the user's photo memory (pictures taken with the app: "
+               "caption, text found in the photo, place, tags, user note). "
+               "Use for questions like 'that poster I photographed in "
+               "Bangalore'.",
+               _obj({"query": {"type": "string"},
+                     "limit": {"type": "integer", "description": "max results (<=10)"}},
+                    ["query"]), RISK_READ)
+def _t_search_captures(ctx, args):
+    from .. import captures as captures_mod
+    return captures_mod.search_captures(
+        args["query"], vault=_user_vault(ctx),
+        limit=min(int(args.get("limit") or 5), 10))
+
+
+@register_tool("recent_captures",
+               "Photos captured in the last N days (date, place, caption, "
+               "text in photo, tags). Good for daily/weekly review questions.",
+               _obj({"days": {"type": "integer", "description": "default 7"},
+                     "limit": {"type": "integer"}}), RISK_READ)
+def _t_recent_captures(ctx, args):
+    from .. import captures as captures_mod
+    days = max(int(args.get("days") or 7), 1)
+    start = (_dt.date.today() - _dt.timedelta(days=days - 1)).isoformat()
+    rows = captures_mod.captures_between(
+        start, _dt.date.today().isoformat(), vault=_user_vault(ctx))
+    return rows[:min(int(args.get("limit") or 20), 50)]
+
+
 # ===========================================================================
 # WRITE tools (agent-invoked calls park in the approval queue once R3 gates)
 # ===========================================================================
@@ -362,8 +398,7 @@ def _t_run_compliance(ctx, args):
                     ["title", "content"]), RISK_WRITE)
 def _t_vault_note(ctx, args):
     from ..memory.writer import MemoryWriter
-    from ..saas import paths
-    vault = paths.vault_dir(ctx.user_id)
+    vault = _user_vault(ctx)   # linked cloud vault, not the internal folder
     vault.mkdir(parents=True, exist_ok=True)
     eid = uuid.uuid4().hex[:12]
     p = MemoryWriter(vault).write_atomic(

@@ -61,8 +61,10 @@ def _journal(ctx, ev: dict) -> None:
     """Idempotent vault journaling of an agent event. Never raises."""
     try:
         from ..memory.writer import MemoryWriter
-        from ..saas import paths
-        vault = paths.vault_dir(ctx.user_id)
+        from ..saas import tenancy
+        # linked cloud vault, not the internal folder — otherwise agent notes
+        # never sync AND are invisible to memory recall (which reads tenancy)
+        vault = tenancy.resolve_vault_dir(ctx.user_id)
         vault.mkdir(parents=True, exist_ok=True)
         MemoryWriter(vault).log_event(ev)
     except Exception:
