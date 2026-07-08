@@ -140,8 +140,61 @@ def _budget_agent(events, ctx):
         except Exception as exc:
             _report_error(events, "budget", exc)
 
+    def on_place_entered(ev):
+        # Spend-aware geofencing (CONTEXT_PLAN C2): walking into a place whose
+        # kind maps to a nearly-exhausted budget warns BEFORE the purchase —
+        # the one moment a budget alert can actually change the outcome.
+        try:
+            p = ev.get("payload") or {}
+            name = (p.get("name") or "").strip()
+            kind = (p.get("kind") or "").strip().lower()
+            place_id = p.get("place_id") or ""
+            if not (name or kind):
+                return
+            place_tokens = _errand_tokens(kind + " " + name)
+            aliased = set(place_tokens)
+            for tok in place_tokens:
+                aliased |= _errand_tokens(_KIND_BUDGET_ALIASES.get(tok, ""))
+            fe = ctx.open_finance()
+            try:
+                statuses = fe.budget_status()
+            finally:
+                fe.close()
+            ns = ctx.notify_store()
+            for b in statuses:
+                limit = b.get("limit")
+                if not limit or not (aliased & _errand_tokens(b["category"])):
+                    continue
+                spent = b["spent"]
+                if spent < limit * _BUDGET_WARN_PCT:
+                    continue
+                pct = spent / limit
+                reasoning = (f"You just arrived at '{name}'"
+                             f"{f' ({kind})' if kind else ''}, which maps to "
+                             f"your '{b['category']}' budget — already at "
+                             f"{pct:.0%} ({spent:,.0f} of {limit:,.0f}). "
+                             "Flagged before you spend, not after.")
+                _emit_insight(events, ctx, "budget",
+                              f"{b['category']} at {pct:.0%} — you're at {name}",
+                              reasoning,
+                              {"category": b["category"], "spent": spent,
+                               "limit": limit, "place_id": place_id,
+                               "source_event_id": ev.get("id")})
+                ref = f"spendwarn_{b['category']}_{place_id}"
+                if not ns.exists_today("spend_caution", ref):
+                    ns.create(type="spend_caution",
+                              title=f"Careful at {name}",
+                              body=reasoning,
+                              priority="high" if spent > limit else "normal",
+                              related_entity={"id": ref, "entity_type": "budget",
+                                              "category": b["category"],
+                                              "place_id": place_id})
+        except Exception as exc:
+            _report_error(events, "budget", exc)
+
     for etype in _TRANSACTION_EVENTS:
         events.subscribe(etype, on_transaction_activity)
+    events.subscribe("context.place_entered", on_place_entered)
 
 
 def _subscription_agent(events, ctx):
@@ -319,6 +372,90 @@ def _compliance_agent(events, ctx):
 # Registration
 # ---------------------------------------------------------------------------
 
+_ERRAND_STOP = {"the", "and", "for", "from", "with", "near"}
+
+# stemmed place-kind token → budget-category wording it usually hits
+# (keys are post-_errand_stem forms: grocery→grocer, pharmacy→pharmac)
+_KIND_BUDGET_ALIASES = {
+    "grocer": "food groceries",
+    "supermarket": "food groceries",
+    "restaurant": "food dining",
+    "cafe": "food dining",
+    "mall": "shopping",
+    "bazaar": "shopping",
+    "pharmac": "health medical",
+    "fuel": "transport",
+    "petrol": "transport",
+}
+
+
+def _errand_stem(w: str) -> str:
+    """grocery/groceries → grocer: strip plural-ish suffixes so a place kind
+    matches the natural plural in a task title (substring checks don't —
+    'grocery' is not a substring of 'groceries')."""
+    for suf in ("ies", "es", "s", "y"):
+        if w.endswith(suf) and len(w) - len(suf) >= 4:
+            return w[: len(w) - len(suf)]
+    return w
+
+
+def _errand_tokens(text: str) -> set[str]:
+    import re
+    return {_errand_stem(t) for t in re.split(r"[^a-z0-9]+", text.lower())
+            if len(t) >= 3 and t not in _ERRAND_STOP}
+
+
+def _errand_agent(events, ctx):
+    """Errand geofencing (CONTEXT_PLAN C1): when the location sensor reports
+    entering a saved place, remind about open tasks that belong there.
+
+    Match order: explicit tasks.place_tag (equals the place's kind or name),
+    then keyword fallback (a stemmed token of the place's kind/name appears in
+    the task title). Reminders dedup per task+place per 24h. Coordinates never
+    reach this agent — the event payload carries only place id/name/kind."""
+    def on_place_entered(ev):
+        try:
+            p = ev.get("payload") or {}
+            place_id = p.get("place_id") or ""
+            name = (p.get("name") or "").strip()
+            kind = (p.get("kind") or "").strip().lower()
+            if not place_id or not (name or kind):
+                return
+            tokens = _errand_tokens(kind + " " + name)
+            rows = ctx.collab.conn.execute(
+                "SELECT id, title, COALESCE(place_tag,'') AS place_tag"
+                " FROM tasks WHERE done=0").fetchall()
+            ns = ctx.notify_store()
+            for t in rows:
+                title = (t["title"] or "").strip()
+                tag = (t["place_tag"] or "").strip().lower()
+                tagged = tag and tag in (kind, name.lower())
+                keyword = bool(tokens & _errand_tokens(title))
+                if not (tagged or keyword):
+                    continue
+                reasoning = (f"You just arrived at '{name}'"
+                             f"{f' ({kind})' if kind else ''} and the open task "
+                             f"'{title}' matches it "
+                             f"({'place tag' if tagged else 'title keyword'}).")
+                _emit_insight(events, ctx, "errand",
+                              f"Near {name}: {title}", reasoning,
+                              {"task_id": t["id"], "place_id": place_id,
+                               "source_event_id": ev.get("id")})
+                ref = f"errand_{t['id']}_{place_id}"
+                if not ns.exists_today("errand_reminder", ref):
+                    ns.create(type="errand_reminder",
+                              title=f"You're near {name}",
+                              body=f"Open task: {title} — good time to knock it out.",
+                              priority="normal",
+                              related_entity={"id": ref, "entity_type": "task",
+                                              "task_id": t["id"],
+                                              "place_id": place_id})
+        except Exception as exc:
+            _report_error(events, "errand", exc)
+
+    events.subscribe("context.place_entered", on_place_entered)
+
+
 def register_reactive_agents(events, ctx) -> list[str]:
     """Wire enabled reactive agents onto this EventStore instance.
     Returns the list of agents registered (for tests/observability)."""
@@ -335,4 +472,7 @@ def register_reactive_agents(events, ctx) -> list[str]:
     if config.agent_enabled("screening"):
         _screening_agent(events, ctx)
         registered.append("screening")
+    if config.agent_enabled("errand"):
+        _errand_agent(events, ctx)
+        registered.append("errand")
     return registered

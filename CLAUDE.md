@@ -73,6 +73,32 @@ amy/
                          "Regulator report" download button on the Agent tab.
   values/                Values screening (R7A-1): presets.json + profiles +
                          screening_flags (collab.db, joined by audit)
+  geo/                   Context layer (docs/CONTEXT_PLAN.md C1-C2): GeoStore
+                         (geo_places/visits/cells in collab.db, enter/leave
+                         hysteresis, ~110m LOCAL-day cells for unmatched fixes)
+                         + learn.py merchant×cell correlator → tier-2 add_place
+                         proposals. Router saas/routers/geo.py: /api/context/
+                         location|status|visits|places + task place-tag.
+                         Errand + spend_caution agents in reactive.py react to
+                         context.place_entered; coordinates never reach an LLM.
+  commitments/           Deadline-bearing life admin (CONTEXT_PLAN C3):
+                         commitments table in finance.db; return-window +
+                         warranty auto-detection from transactions (heuristic,
+                         no LLM); commitment_scan job walks the 3d/14d ladder
+                         + auto-expires. Routes: /api/commitments CRUD
+                         (saas/routers/commitments.py).
+  patterns.py            Behavior cadences (C4/C5): generic cadence() +
+                         merchant_cadences → pattern_tasks job (prefilled
+                         add_task proposals, place_tag armed for the errand
+                         agent) + person_cadences → relationship_nudges job
+                         (advisory, 3-day window, never a nag).
+  automation/drift.py    Preference drift (C7): monthly signals from decided
+                         approvals — always_reject / always_approve / ignored.
+                         saas/routers/inbox.py = universal inbox (C6):
+                         /api/inbox/propose|pending|decisions lets external
+                         systems (whatsapp_brain…) park tier-2 drafts and act
+                         only on human-approved rows (external_draft executor
+                         is an ack-only no-op).
   financing.py           Financing models (R7A-4): amortized|markup|zero|lease
   fx.py                  FxConverter (pluggable source, daily cache) + multi_currency_summary
   locale_fmt.py          lakh/crore vs western grouping, format_money, prompt_hint
@@ -236,7 +262,8 @@ logs every run to `automation_runs`. All automated writes go through
 `submit_action(ctx, tier, …)` — **tier 0** auto, **tier 1** auto+notify,
 **tier 2** parked in the Approval Inbox until approved. Executors:
 `import_statement` · `custodial_disburse` · `add_subscription` · `set_budget` ·
-`add_transaction`. Approve/reject decisions are recorded via DecisionEngine.
+`add_transaction` · `add_place` · `add_task` · `external_draft` (ack-only).
+Approve/reject decisions are recorded via DecisionEngine.
 
 Default jobs: `gmail_statement_ingest` (6h, hybrid: saved-map/preset/pdfplumber
 → auto-import tier 1; auto-detect/LLM-map/ambiguous → tier 2 approval, map saved
@@ -245,7 +272,12 @@ on approve) · `auto_categorize` (12h, learned rules first) · `anomaly_sentinel
 `custodial_autopilot` (proposes prefilled cycle as tier 2) · `autopilot` (05:00) ·
 `monthly_close` (1st, CFO report + subscription proposals + compliance refresh) ·
 `capture_digest` (20:30, photo-memory day-over-day compare, Sunday = weekly
-rollup, writes 09_Memory note so chat recalls it next day).
+rollup, writes 09_Memory note so chat recalls it next day) · `place_learning`
+(21:00, geo_cells×merchant correlation → tier-2 add_place proposals) ·
+`commitment_scan` (08:20, return-window/warranty detection + deadline ladder) ·
+`pattern_tasks` (06:30, cadence-due merchants → prefilled task proposals) ·
+`relationship_nudges` (09:00, broken transfer rhythms → advisory nudge) ·
+`preference_drift` (monthly 2nd, decision-history signals).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
@@ -277,11 +309,12 @@ agent.insight / agent.action_proposed / agent.action_executed
 agent.goal_planned / agent.error        # always carry {agent, reasoning}
 vault.note_edited
 goal.created / goal.completed / capture.added / digest.generated
+context.place_entered / place_left / location_updated   # payload = place id/name/kind, never coordinates
 
 # Reactive agents (amy/agents/reactive.py) are wired onto EventStore at both
 # emit points (_emit_fin + JobCtx.events()) — the bus is per-instance, so
 # subscribers must attach where the emit happens. Kill switches:
-# AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _SCREENING / _OBLIGATION.
+# AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _SCREENING / _OBLIGATION / _ERRAND.
 ```
 
 ## LLM Routing

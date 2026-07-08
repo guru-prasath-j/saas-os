@@ -103,6 +103,12 @@ class CollabDB:
             self.conn.commit()
         except Exception:
             pass   # column already exists
+        # place_tag on tasks — errand geofencing match key (CONTEXT_PLAN C1)
+        try:
+            self.conn.execute("ALTER TABLE tasks ADD COLUMN place_tag TEXT DEFAULT ''")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
 
     def reset(self):
         for t in ("prefs", "summaries", "activities", "note_access", "agent_cards",

@@ -23,7 +23,7 @@ from .routers import (
     auth, vault, knowledge, collab, intelligence,
     twin, events, memory, connectors, product, captures, habits, finance,
     notifications, mcp_connectors, business, automation, agent, jurisdictions,
-    obligations, values, learning_feed,
+    obligations, values, learning_feed, geo, commitments, inbox,
 )
 
 app = FastAPI(title="PersonalOS SaaS", version="0.1.0")
@@ -51,6 +51,9 @@ app.include_router(jurisdictions.router)
 app.include_router(obligations.router)
 app.include_router(values.router)
 app.include_router(learning_feed.router)
+app.include_router(geo.router)
+app.include_router(commitments.router)
+app.include_router(inbox.router)
 
 _INDEX_HTML = Path(__file__).parent / "static" / "index.html"
 

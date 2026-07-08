@@ -33,6 +33,31 @@ def _obligation_check(ctx: JobCtx) -> dict:
     return obligation_check(ctx)
 
 
+def _place_learning(ctx: JobCtx) -> dict:
+    from ..geo.learn import place_learning
+    return place_learning(ctx)
+
+
+def _commitment_scan(ctx: JobCtx) -> dict:
+    from ..commitments import commitment_scan
+    return commitment_scan(ctx)
+
+
+def _pattern_tasks(ctx: JobCtx) -> dict:
+    from ..patterns import pattern_tasks
+    return pattern_tasks(ctx)
+
+
+def _relationship_nudges(ctx: JobCtx) -> dict:
+    from ..patterns import relationship_nudges
+    return relationship_nudges(ctx)
+
+
+def _preference_drift(ctx: JobCtx) -> dict:
+    from .drift import preference_drift
+    return preference_drift(ctx)
+
+
 HANDLERS: dict[str, callable] = {
     "gmail_statement_ingest": ingest.gmail_statement_ingest,
     "auto_categorize": _auto_categorize,
@@ -45,6 +70,11 @@ HANDLERS: dict[str, callable] = {
     "obligation_check": _obligation_check,
     "capture_digest": capture_digest,
     "learning_feed_refresh": learning_feed_refresh,
+    "place_learning": _place_learning,
+    "commitment_scan": _commitment_scan,
+    "pattern_tasks": _pattern_tasks,
+    "relationship_nudges": _relationship_nudges,
+    "preference_drift": _preference_drift,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -64,6 +94,11 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("autopilot",              {"daily_at": "05:00"}),
         ("obligation_check",       {"daily_at": "07:15"}),
         ("capture_digest",         {"daily_at": "20:30"}),
+        ("place_learning",         {"daily_at": "21:00"}),
+        ("commitment_scan",        {"daily_at": "08:20"}),
+        ("pattern_tasks",          {"daily_at": "06:30"}),
+        ("relationship_nudges",    {"daily_at": "09:00"}),
+        ("preference_drift",       {"monthly_day": 2, "at": "06:45"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

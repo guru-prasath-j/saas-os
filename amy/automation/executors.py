@@ -444,6 +444,43 @@ def _exec_tool_call(ctx: JobCtx, payload: dict) -> dict:
     return tool.handler(ctx, args)
 
 
+@register("external_draft")
+def _exec_external_draft(ctx: JobCtx, payload: dict) -> dict:
+    """Universal inbox (CONTEXT_PLAN C6): the approval decision IS the product.
+    Nothing executes here — the external system that proposed the draft polls
+    GET /api/inbox/decisions and acts only on rows a human approved."""
+    return {"acknowledged": True, "draft": payload.get("draft_id") or ""}
+
+
+@register("add_task")
+def _exec_add_task(ctx: JobCtx, payload: dict) -> dict:
+    """Create a collab task, optionally place-tagged so the errand agent
+    reminds about it on arrival (CONTEXT_PLAN C4 — approved pattern task)."""
+    import uuid as _uuid_mod
+    tid = _uuid_mod.uuid4().hex[:12]
+    ctx.collab.conn.execute(
+        "INSERT INTO tasks (id, goal_id, title, done, created_at, place_tag)"
+        " VALUES (?,?,?,0,?,?)",
+        (tid, payload.get("goal_id") or "", str(payload["title"]).strip(),
+         _dt.datetime.now(_dt.timezone.utc).isoformat(),
+         (payload.get("place_tag") or "").strip().lower()))
+    ctx.collab.conn.commit()
+    return {"task_id": tid}
+
+
+@register("add_place")
+def _exec_add_place(ctx: JobCtx, payload: dict) -> dict:
+    """Create a geofence place (CONTEXT_PLAN C2 — approved learned place)."""
+    from ..geo import GeoStore
+    gs = GeoStore(ctx.collab)
+    pid = gs.add_place(
+        payload["name"], float(payload["lat"]), float(payload["lon"]),
+        kind=payload.get("kind") or "",
+        radius_m=int(payload.get("radius_m") or 150),
+        source=payload.get("source") or "learned")
+    return {"place_id": pid}
+
+
 @register("add_transaction")
 def _exec_add_transaction(ctx: JobCtx, payload: dict) -> dict:
     fe = ctx.open_finance()

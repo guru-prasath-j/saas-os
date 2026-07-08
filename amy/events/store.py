@@ -36,6 +36,11 @@ AGENT_ACTION_PROPOSED = "agent.action_proposed"
 AGENT_ACTION_EXECUTED = "agent.action_executed"
 AGENT_ERROR = "agent.error"
 
+# Context / physical-world sensor events (docs/CONTEXT_PLAN.md C1)
+CONTEXT_LOCATION_UPDATED = "context.location_updated"
+CONTEXT_PLACE_ENTERED = "context.place_entered"
+CONTEXT_PLACE_LEFT = "context.place_left"
+
 # Learning feed events
 LEARNING_FEED_REFRESHED = "learning.feed_refreshed"
 LEARNING_ITEM_COMPLETED = "learning.item_completed"
