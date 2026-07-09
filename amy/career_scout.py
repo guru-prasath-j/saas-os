@@ -55,6 +55,19 @@ def _match_threshold() -> float:
         return 70.0
 
 
+# jobspy quirk (see mcp_servers/jobspy_server.py): country_indeed MUST match
+# the location's country or indeed silently returns ZERO results (found live:
+# profile location "Bangalore" + the tool's USA default = empty scout runs).
+# Derived from the user's home jurisdiction pack id, never guessed by an LLM.
+_JURISDICTION_COUNTRY = {"india": "India", "us": "USA",
+                         "uae": "United Arab Emirates"}
+
+
+def _country_for_ctx(ctx) -> str | None:
+    home = ((ctx._extras.get("jurisdictions") or ["india"])[0] or "").lower()
+    return _JURISDICTION_COUNTRY.get(home)
+
+
 def _score_postings(ctx, postings: list[dict], profile: dict) -> dict[int, dict]:
     """ONE batched LLM call scoring every posting in this cycle. Returns
     {index: {"score": float, "factors": dict}}; {} on any LLM/parse
@@ -134,14 +147,15 @@ class JobScoutSensor(Sensor):
         if not target_role:
             return emitted
 
+        search_args = {"search_term": target_role,
+                       "location": profile.get("target_location") or "",
+                       "is_remote": bool(profile.get("remote_ok")),
+                       "results_wanted": 20}
+        country = _country_for_ctx(self.ctx)
+        if country:
+            search_args["country_indeed"] = country
         try:
-            out = tools.invoke(
-                self.ctx, "job_search",
-                {"search_term": target_role,
-                 "location": profile.get("target_location") or "",
-                 "is_remote": bool(profile.get("remote_ok")),
-                 "results_wanted": 20},
-                actor="agent")
+            out = tools.invoke(self.ctx, "job_search", search_args, actor="agent")
         except Exception as exc:
             _log.warning("job_scout: job_search failed: %s", exc)
             return emitted

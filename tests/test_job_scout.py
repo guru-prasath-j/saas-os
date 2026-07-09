@@ -215,3 +215,32 @@ def test_career_briefing_lines_include_next_milestone(ctx):
     ctx.collab.conn.commit()
     lines = _career_briefing_lines(ctx)
     assert any("Next milestone: Week 1" in l for l in lines)
+
+
+def test_job_scout_passes_country_for_home_jurisdiction(ctx, monkeypatch):
+    """jobspy quirk: country_indeed must match the location's country or
+    indeed silently returns zero results — the scout derives it from the
+    home jurisdiction pack (default 'india' -> 'India'), found live when a
+    Bangalore profile searched against the tool's USA default."""
+    _make_active_career_goal(ctx)
+    monkeypatch.setattr("amy.agents.reactive._get_llm", lambda ctx: None)
+
+    captured = {}
+
+    class _CapturingClient:
+        async def list_tools(self):
+            return [{"name": "search_jobs", "description": "",
+                     "input_schema": {"properties": {}}}]
+
+        async def call_tool(self, name, arguments=None):
+            captured.update(arguments or {})
+            return {"is_error": False, "text": "", "structured": []}
+
+    row = _fake_row()
+    monkeypatch.setattr("amy.connectors.mcp_call.find_connector_row",
+                        lambda uid, source: row if source == "jobspy" else None)
+    monkeypatch.setattr("amy.connectors.mcp_call.mcp_client_for",
+                        lambda r: _CapturingClient())
+
+    JobScoutSensor(ctx.events(), ctx).poll()
+    assert captured.get("country_indeed") == "India"
