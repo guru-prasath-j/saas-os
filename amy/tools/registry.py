@@ -53,7 +53,12 @@ AGENT_GATE: Callable | None = None
 
 
 def register_tool(name: str, description: str, params: dict | None = None,
-                  risk: str = RISK_READ):
+                  risk: str = RISK_READ, extras: dict | None = None):
+    """extras: opt-in flags the tier router (amy/automation/executors.py)
+    reads to hard-pin tiers beyond the risk level alone — e.g.
+    extras={"external": True} for a tool that sends something to a
+    third-party system (a GitHub comment, a Plane task) and so must stay at
+    tier 2 even if AMY_AGENT_WRITE_TIER softens ordinary internal writes."""
     if risk not in _RISKS:
         raise ValueError(f"unknown risk {risk!r}")
 
@@ -61,7 +66,7 @@ def register_tool(name: str, description: str, params: dict | None = None,
         _REGISTRY[name] = Tool(
             name=name, description=description,
             params=params or {"type": "object", "properties": {}},
-            risk=risk, handler=fn)
+            risk=risk, handler=fn, extras=extras or {})
         return fn
     return deco
 

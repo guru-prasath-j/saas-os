@@ -155,11 +155,23 @@ class AutomationStore:
                 created_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS connector_calls (
+                id        TEXT PRIMARY KEY,
+                uid       TEXT NOT NULL,
+                connector TEXT NOT NULL,
+                tool      TEXT,
+                ok        INTEGER,
+                ms        INTEGER,
+                error     TEXT,
+                ts        TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_runs_job   ON automation_runs(job_name, started_at);
             CREATE INDEX IF NOT EXISTS idx_feed_uid   ON learning_feed_items(uid, fetched_at);
             CREATE INDEX IF NOT EXISTS idx_appr_state ON approvals(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_llm_ts     ON llm_calls(ts);
             CREATE INDEX IF NOT EXISTS idx_focus_uid  ON learning_focuses(uid, active);
+            CREATE INDEX IF NOT EXISTS idx_conncall   ON connector_calls(uid, connector, ts);
             """
         )
         self.conn.commit()
@@ -436,6 +448,50 @@ class AutomationStore:
             (cutoff,)).fetchall()
         return {"window_hours": hours,
                 "providers": [dict(r) for r in rows]}
+
+    # --- connector call log (health tracking: Part 3 connectors tab + audit) --
+
+    def log_connector_call(self, uid: str, connector: str, tool: str, ok: bool,
+                           ms: int, error: str = ""):
+        """Every outbound connector call (GitHub/Plane MCP, Google Calendar,
+        ...) regardless of read/write or success/failure — feeds the
+        connectors health tab (last successful call / last error per
+        connector) and the audit report's external-write governance count."""
+        self.conn.execute(
+            "INSERT INTO connector_calls(id,uid,connector,tool,ok,ms,error,ts)"
+            " VALUES(?,?,?,?,?,?,?,?)",
+            (_uuid(), uid, connector, tool, 1 if ok else 0, ms, (error or "")[:400],
+             _now_iso()))
+        self.conn.commit()
+
+    def connector_status(self, connector: str | None = None) -> list[dict]:
+        """Per-connector rollup: last successful call, last error, call
+        counts — used by GET /api/connectors/status (Part 3)."""
+        q = ("SELECT connector, COUNT(*) calls, SUM(ok) ok_calls,"
+             " MAX(CASE WHEN ok=1 THEN ts END) last_ok_ts,"
+             " MAX(CASE WHEN ok=0 THEN ts END) last_error_ts,"
+             " (SELECT error FROM connector_calls c2 WHERE c2.connector=c1.connector"
+             "  AND c2.ok=0 ORDER BY ts DESC LIMIT 1) last_error"
+             " FROM connector_calls c1")
+        args: list = []
+        if connector:
+            q += " WHERE connector=?"
+            args.append(connector)
+        q += " GROUP BY connector"
+        rows = self.conn.execute(q, args).fetchall()
+        return [dict(r) for r in rows]
+
+    def recent_connector_calls(self, connector: str | None = None,
+                               limit: int = 50) -> list[dict]:
+        if connector:
+            rows = self.conn.execute(
+                "SELECT * FROM connector_calls WHERE connector=?"
+                " ORDER BY ts DESC LIMIT ?", (connector, limit)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM connector_calls ORDER BY ts DESC LIMIT ?",
+                (limit,)).fetchall()
+        return [dict(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

@@ -355,14 +355,21 @@ _ENTITY_ARGS = ("entity_id", "account_id", "approval_id", "tid", "sid",
 _DEFAULT_EXPIRY_DAYS = 7
 
 
-def _tier_for(risk: str) -> int:
+def _tier_for(risk: str, external: bool = False) -> int:
     """Explicit tier policy for AGENT-initiated actions.
 
     destructive is hard-pinned to tier 2 — no config can lower it.
-    write defaults to tier 2 (park for approval); AMY_AGENT_WRITE_TIER=1
-    restores execute-then-notify for installs that want it.
+    external=True (a GitHub comment, a Plane task create/update: anything
+    sent to a third-party system — see the tool's extras={"external": True},
+    CONNECTOR COMPLETION Part 1) is ALSO hard-pinned to tier 2, same as
+    destructive: these sends are irreversible once delivered, so
+    AMY_AGENT_WRITE_TIER must never soften them the way it can for ordinary
+    internal writes.
+    write (non-external) defaults to tier 2 (park for approval);
+    AMY_AGENT_WRITE_TIER=1 restores execute-then-notify for installs that
+    want it.
     """
-    if risk == "destructive":
+    if risk == "destructive" or external:
         return 2
     from .. import config
     try:
@@ -419,7 +426,7 @@ def agent_gate(ctx: JobCtx, tool, args: dict) -> dict:
                + _dt.timedelta(days=_DEFAULT_EXPIRY_DAYS)).isoformat()
     return submit_action(
         ctx,
-        tier=_tier_for(tool.risk),
+        tier=_tier_for(tool.risk, external=bool(tool.extras.get("external"))),
         action_type="tool_call",
         title=f"{agent}: {tool.name}",
         body=reasoning,
@@ -496,3 +503,56 @@ def _exec_add_transaction(ctx: JobCtx, payload: dict) -> dict:
         return {"id": tid}
     finally:
         fe.close()
+
+
+# ---------------------------------------------------------------------------
+# External connector writes (CONNECTOR COMPLETION Part 1) — GitHub/Plane.
+# These are the execution backend for github_comment/plane_create_task/
+# plane_update_task (amy/tools/connector_tools.py), whose tool.extras has
+# external=True — agent_gate's _tier_for() hard-pins them to tier 2, so this
+# code only runs for a human-actor direct call or an approved (human-
+# consented) tier-2 approval, exactly like tool_call above. Candidate remote
+# tool names are duplicated (not imported) from amy/tools/connector_tools.py
+# on purpose — importing a leading-underscore name across the
+# tools<->automation module boundary would couple two packages that only
+# ever talk to each other through the registry/executor indirection.
+# ---------------------------------------------------------------------------
+
+_GH_COMMENT = ("add_issue_comment", "create_issue_comment")
+_PLANE_CREATE_TASK = ("create_work_item", "create_issue")
+_PLANE_UPDATE_TASK = ("update_work_item", "update_issue")
+
+
+@register("github_comment")
+def _exec_github_comment(ctx: JobCtx, payload: dict) -> dict:
+    from ..connectors.mcp_call import call_mcp_tool
+    call_args = {k: payload[k] for k in ("owner", "repo") if payload.get(k)}
+    call_args["issue_number"] = payload["number"]
+    call_args["body"] = payload["body"]
+    return call_mcp_tool(ctx.user_id, ctx.store, "github", _GH_COMMENT, call_args)
+
+
+@register("plane_create_task")
+def _exec_plane_create_task(ctx: JobCtx, payload: dict) -> dict:
+    from ..connectors.mcp_call import call_mcp_tool
+    call_args = {"name": payload["title"], "title": payload["title"]}
+    if payload.get("description"):
+        call_args["description"] = payload["description"]
+    if payload.get("project_id"):
+        call_args["project_id"] = payload["project_id"]
+    return call_mcp_tool(ctx.user_id, ctx.store, "plane", _PLANE_CREATE_TASK,
+                         call_args, target_style="single")
+
+
+@register("plane_update_task")
+def _exec_plane_update_task(ctx: JobCtx, payload: dict) -> dict:
+    from ..connectors.mcp_call import call_mcp_tool
+    call_args = {"issue_id": payload["task_id"], "work_item_id": payload["task_id"]}
+    if payload.get("state"):
+        call_args["state"] = payload["state"]
+    if payload.get("title"):
+        call_args["name"] = payload["title"]
+    if payload.get("project_id"):
+        call_args["project_id"] = payload["project_id"]
+    return call_mcp_tool(ctx.user_id, ctx.store, "plane", _PLANE_UPDATE_TASK,
+                         call_args, target_style="single")
