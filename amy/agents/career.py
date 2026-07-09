@@ -39,7 +39,13 @@ class CareerAgent(SubAgent):
                 
             jobs = discovery.discover_jobs(self.llm, search_query)
             if not jobs:
-                return AgentResult(self.name, "No jobs matching your request were discovered.", [], False, "discovery")
+                return AgentResult(
+                    self.name,
+                    "Job discovery from this chat is disabled (it used to invent "
+                    "listings rather than search real ones). Use the Assistant tab "
+                    "and ask to search jobs — that runs the real job_search tool "
+                    "against live postings.",
+                    [], False, "discovery")
                 
             ans = f"### Discovered Job Listings for '{search_query}':\n\n"
             for i, j in enumerate(jobs, 1):

@@ -556,3 +556,51 @@ def _exec_plane_update_task(ctx: JobCtx, payload: dict) -> dict:
         call_args["project_id"] = payload["project_id"]
     return call_mcp_tool(ctx.user_id, ctx.store, "plane", _PLANE_UPDATE_TASK,
                          call_args, target_style="single")
+
+
+# ---------------------------------------------------------------------------
+# Career (CAREER AUTOPILOT Part 1) — send_hr_email is the execution backend
+# for amy/tools/career_tools.py's send_hr_email tool, extras={"external":
+# True} pins it to tier 2 the same way as github_comment/plane_create_task
+# above: an HR email is irreversible once delivered.
+# ---------------------------------------------------------------------------
+
+@register("send_hr_email")
+def _exec_send_hr_email(ctx: JobCtx, payload: dict) -> dict:
+    """SMTP-or-draft (CLAUDE.md's stated fallback for send_hr_email):
+    sends for real when SMTP_HOST is configured, otherwise returns a
+    copy-ready draft — smtp_configured() self-detects, no config the caller
+    needs to branch on. Either way the application's timeline is updated so
+    the funnel reflects what actually happened."""
+    from ..notifications.email import send_email, smtp_configured
+    from ..events.store import CAREER_APPLICATION_SENT
+
+    to_email = payload["to_email"]
+    subject = payload["subject"]
+    body = payload["body"]
+    application_id = payload.get("application_id")
+
+    if smtp_configured():
+        sent = send_email(to_email, subject, body)
+        status = "sent" if sent else "prepared"
+        note = "Sent via SMTP" if sent else "SMTP send failed — see logs"
+    else:
+        sent = False
+        status = "prepared"
+        note = "SMTP not configured — copy-ready draft only, not sent"
+
+    if application_id:
+        try:
+            ctx.store.update_application_status(ctx.user_id, application_id, status, note)
+        except Exception:
+            pass
+        if sent:
+            try:
+                ctx.events().emit(CAREER_APPLICATION_SENT,
+                                  {"application_id": application_id, "to_email": to_email},
+                                  source="career_tools")
+            except Exception:
+                pass
+
+    return {"sent": sent, "to": to_email, "subject": subject, "body": body,
+           "note": note}

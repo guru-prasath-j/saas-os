@@ -443,3 +443,193 @@ factory.py` (4), `test_connector_tools.py` (6), `test_connector_sensors_
 agents.py` (5), `test_connectors_status.py` (2) — 17 new tests, all
 passing, all external calls mocked except the one manual live-server
 Playwright verification above.
+
+---
+
+## Phase: CAREER AUTOPILOT
+
+Builds career capability (job discovery, portfolio analysis, application
+pipeline) ON the existing goals/tasks (GoalEngine/PlannerAgent), tool
+registry + AGENT_GATE (R1/R3), event bus (event factory, quirk 20), and
+MemoryWriter/GraphStore journaling — no parallel goal model, no parallel
+inbox, no parallel memory. Job discovery is real data only (jobspy MCP,
+port 8935); no LLM-fabricated postings.
+
+### Progress
+
+| Part | Description | Status | Commit |
+|---|---|---|---|
+| 1 | Career data model + Job Search MCP tools | PLANNED | |
+| 2 | Career goal flow (orchestrator career template) | PLANNED | |
+| 3 | Portfolio analyst (GitHub ↔ career) | PLANNED | |
+| 4 | Job scout + match scoring | PLANNED | |
+| 5 | Application pipeline (prepare → approve → send → track) | PLANNED | |
+| 6 | Career tab + briefing integration | PLANNED | |
+
+### Pre-flight findings (verified before planning Parts 1-2)
+
+1. **Job Search MCP (port 8935) — actual shape** (`mcp_servers/jobspy_server.py`):
+   ONE tool, `search_jobs(search_term, location="", site_names="indeed",
+   results_wanted=20, hours_old=72, is_remote=False, country_indeed="USA")
+   -> list[dict]`, wrapping `python-jobspy`'s `scrape_jobs()` across
+   indeed/linkedin/zip_recruiter/glassdoor/google/bayt/naukri. Each result
+   dict already carries title/company/location/job_url/date_posted/
+   job_type/is_remote/salary fields/description — there is **no** separate
+   "get one job's details by id" remote tool. `country_indeed` must match
+   `location`'s country when `site_names` includes indeed or it silently
+   returns zero results (no error) — the job_scout sensor must set this
+   from the career profile's target location, not leave the jobspy default.
+   Consequence for Part 1: `job_search` (registry tool) maps 1:1 to
+   `search_jobs` via `call_mcp_tool`; `job_details` is NOT a live MCP call —
+   it reads back an already-discovered row from the local `job_postings`
+   table (the full posting, description included, was already captured at
+   discovery time).
+2. **A pre-existing, conflicting career agent is live in production today.**
+   `amy/agents/career.py` (`CareerAgent`) + `amy/intelligence/career/
+   {discovery,matcher,resume,normalizer,analytics}.py` is a legacy
+   "Operational Layer" sub-agent wired into `CollabMaster`
+   (`amy/collab/orchestrator.py`), served at `POST /api/collab/ask` /
+   `/api/collab/ask/stream` (`amy/saas/routers/collab.py`) — **which is the
+   main chat box in `index.html`** (line ~2028), not a dead code path.
+   `discovery.discover_jobs()`'s own docstring: *"we leverage the LLM to
+   simulate structured job search results"* — it fabricates 3 job postings
+   with invented titles/companies/URLs on every "find jobs for X" chat
+   message, zero real data, directly violating this phase's "no fake
+   data" constraint. It also writes vault notes directly under
+   `06_Job_Search/` via `amy.agent_writeback.WriteProposal` — a **third**
+   write-proposal mechanism, parallel to both the Approval Inbox
+   (AGENT_GATE) and the universal inbox (`external_draft`), that the user
+   approves through a different UI path entirely. Left alone, a user typing
+   "find jobs" in the main chat box gets confidently fabricated results
+   side-by-side with the new, real Job Scout — this needs an explicit
+   decision before Part 1 ships (see design questions below).
+3. **SMTP is available, self-detecting, already wired for outbound mail.**
+   `amy/notifications/email.py`: `smtp_configured()` checks `SMTP_HOST` env;
+   `send_email_alert()` no-ops cleanly when unset. `send_hr_email`'s
+   executor should call `smtp_configured()` at execution time and either
+   send for real or fall back to a copy-ready draft — self-adapting, not a
+   hard branch the user needs to pre-decide. `automation/closers.py`
+   already uses this exact pattern (`smtp_configured() and ctx.user_email`).
+4. **Field-level encryption helper exists and is reusable.**
+   `amy/saas/security.py::encrypt_secret`/`decrypt_secret` (Fernet,
+   `AMY_ENC_SECRET`, currently used for stored API keys) — `career_profile.
+   resume_text` will use the same helper rather than inventing a second one.
+5. **Batch approval — confirmed buildable on the existing executor shape,
+   no schema change needed.** `submit_action`/`EXECUTORS` (`amy/automation/
+   executors.py`) already take one `action_type` + one arbitrary JSON
+   `payload` per approval row — a new `plane_batch_create_tasks` executor
+   (payload `{tasks: [{title, description}, ...], project_id}`) loops
+   `call_mcp_tool` once per task inside a single approval/execute call,
+   exactly like `_exec_custodial_disburse` loops per-beneficiary today. One
+   open question is UX, not architecture (see design questions below):
+   approving the row creates ALL tasks atomically — is partial/per-task
+   approval ever needed for the weekly-milestone breakdown?
+6. **Goals/tasks schema (reuse, not extend)**: `goals(id, title, domain,
+   status, progress, created_at, target_date, finance_meta)`,
+   `milestones(id, goal_id, title, done, position)`,
+   `tasks(id, goal_id, title, done, created_at, place_tag)` — all in
+   collab.db, owned by `PlannerAgent`/`GoalEngine`
+   (`amy/collab/planner.py`, `amy/autonomous/goals.py`). A career goal is
+   `domain="career"`; `learning_focuses.goal_id` already FKs into this same
+   `goals` table (existing Learning Feed integration) — the career plan
+   template reuses that link, doesn't add a new one. `finance_meta` is a
+   free JSON column on goals already used for savings targets; a
+   `career_meta` sibling (target_role, deadline) is the natural place for
+   career-goal-specific fields rather than a new table, keeping ONE goal
+   row per career objective consistent with every other domain.
+7. **Orchestrator's generic plan loop cannot produce a career fan-out
+   as-is.** `amy/automation/orchestrator.py::run_goal()` plans a max of
+   4 LLM-decided tool-call steps with a 300s wall-clock budget
+   (`_PLAN_MAX_STEPS`, `_TIME_BUDGET_S`) — adequate for "cut spending 10%"
+   but not for "fan out across learning focuses + weekly Plane milestones +
+   portfolio analysis + job scout activation" in one LLM-improvised pass.
+   Part 2 adds a **template detection branch**: goals matching a career
+   shape (regex/keyword pre-check, e.g. "become a", "career", target-role
+   + duration) skip the generic 4-step LLM plan and run a hardcoded
+   fan-out sequence instead (skill-gap LLM call → learning_focus create →
+   batched milestone/task proposal → portfolio-analysis trigger →
+   job-scout activation), still going through `tools.invoke(actor="agent")`
+   for every write so AGENT_GATE still gates each one. This is the same
+   "detect a known shape, run a template" pattern jurisdiction packs and
+   the Learning Feed's focus→goal linkage already use elsewhere in the
+   codebase — not a new architectural idiom.
+
+### Part 1 — Career data model + Job Search MCP tools (file map)
+
+- `amy/automation/store.py` — `AutomationStore._init` gains four
+  `CREATE TABLE IF NOT EXISTS` blocks (career_profile, job_postings,
+  applications, company_intel), same lazy-init idiom as
+  `learning_focuses`/`connector_sensor_seen`. CRUD helper methods
+  alongside the existing `create_approval`/`log_connector_call` style.
+- `amy/tools/career_tools.py` (new, mirrors `connector_tools.py`):
+  `job_search` (RISK_READ, wraps `search_jobs` via `call_mcp_tool`,
+  `country_indeed` derived from `career_profile`/args), `job_details`
+  (RISK_READ, local `job_postings` row lookup — no MCP call, see finding
+  1), `portfolio_repo_list`/`portfolio_repo_details` (RISK_READ, reuse
+  `github_list_*`-style calls against the existing GitHub connector —
+  no new connector registration), `application_log` (RISK_WRITE, internal
+  — status-ladder writes to `applications`), `send_hr_email` (RISK_WRITE,
+  `extras={"external": True}` — hard tier-2 exactly like `github_comment`),
+  `career_status` (RISK_READ — goal/plan progress + funnel counts for the
+  assistant and briefing).
+- `amy/automation/executors.py` — `send_hr_email` executor (SMTP-or-draft,
+  finding 3), `application_log` executor (or direct DB write if RISK_WRITE
+  internal writes can bypass the executor indirection the way `add_task`
+  does — TBD at implementation time, matching whichever existing tool it
+  resembles more).
+- `amy/events/store.py` — new event-type constants
+  (`career.goal_set`/`job_discovered`/`application_prepared`/`_sent`/
+  `_status_changed`/`portfolio_analyzed`) added to `AGENT_RELEVANT_EVENTS`
+  so a bare `EventStore` emitting one warns loudly (quirk 20 guardrail).
+- `amy/config.py` — kill switches via the existing `agent_enabled()` helper
+  (`AMY_AGENT_CAREER_GOAL`/`_PORTFOLIO`/`_JOB_SCOUT`/
+  `_APPLICATION_TRACKER`).
+- `tests/test_career_tools.py` (new) — table creation idempotency, each
+  tool's happy path against a mocked `call_mcp_tool`/mocked SMTP,
+  `send_hr_email` external-pin holds under `AMY_AGENT_WRITE_TIER=0`
+  (negative control, same test shape as `test_connector_tools.py`).
+
+### Part 2 — Career goal flow (file map)
+
+- `amy/automation/orchestrator.py` — `_is_career_goal(text) -> bool`
+  detector + `_run_career_template(ctx, goal, run_id)` fan-out function,
+  called from `run_goal()` before the generic plan branch (finding 7).
+  Reuses `_store_plan_graph`/`_mark_task`/`_persist_run`/journaling as-is
+  so career runs show up in `GET /api/agent/goals` identically to any
+  other orchestrator run.
+- `amy/collab/planner.py` / `amy/autonomous/goals.py` — no schema change
+  (finding 6); template calls `GoalEngine.create_goal(title, domain=
+  "career", target_date=...)` then sets `career_meta` (new JSON column,
+  sibling to `finance_meta`) with `{target_role, weekly_milestones: [...]}`.
+- `amy/learning_feed/sensor.py` — template calls `add_focus(collab_conn,
+  uid, topic, goal_id=career_goal_id)` per identified skill gap (existing
+  function, no changes needed).
+- `amy/automation/executors.py` — new `plane_batch_create_tasks` executor
+  (finding 5) + matching `amy/tools/connector_tools.py` (or
+  `career_tools.py`) registry tool, `extras={"external": True}`.
+- `amy/agents/reactive.py` — `career_goal` agent: (a) proposes a career
+  goal (tier-2, dedup `career_goal_suggest`) when career signals appear
+  with no active career goal; (b) nudges (advisory `agent.insight` only)
+  a career goal with zero `career.*`/`agent.goal_planned` progress events
+  in `AMY_CAREER_STALL_DAYS` (default 5) — same 3-day-window non-nag idiom
+  as `relationship_nudges`.
+- `tests/test_career_goal_flow.py` (new) — career-shaped goal triggers the
+  template not the generic planner; template fan-out creates exactly one
+  goal + linked learning_focuses + one batched Plane approval (not N);
+  stall nudge fires once per window, not per tick; non-career goal still
+  takes the generic 4-step path (regression guard).
+
+### Design decisions (resolved before Part 1 started)
+
+(a) **Legacy `CareerAgent`/`discover_jobs` fake-data path (finding 2)**:
+disable job discovery only. `amy/intelligence/career/discovery.py::
+discover_jobs()` stops fabricating postings (returns `[]` with a note
+pointing at the real Job Scout); `CareerAgent`'s matcher/resume/analytics
+intents and its vault-note writes are left untouched for now — smallest
+change, no regression to existing chat behavior outside job discovery.
+(b) **Batch approval UX (finding 5)**: atomic — one approval row lists
+every proposed milestone task, approve creates all of them, reject
+creates none. Per-task approval can be added later without a schema
+change if needed.
+(c) No decision needed on Job Search MCP shape or SMTP (findings 1, 3 —
+both self-adapting).

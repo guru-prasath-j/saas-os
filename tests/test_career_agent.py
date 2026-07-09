@@ -76,6 +76,10 @@ def test_check_duplicate():
     assert dup3 is None
 
 def test_discovery_agent():
+    """CAREER AUTOPILOT (docs/AGENT_PLAN.md): discover_jobs() used to ask the
+    LLM to fabricate postings — disabled by design now, regardless of what
+    the LLM would return. Real discovery lives behind the jobspy MCP
+    connector (amy/tools/career_tools.py's job_search tool)."""
     mock_response = """
     [
         {
@@ -91,11 +95,9 @@ def test_discovery_agent():
     """
     router = MagicMock(spec=LLMRouter)
     router.generate.return_value = (mock_response, "mock-openai")
-    
+
     jobs = discovery.discover_jobs(router, "Deeplearning jobs")
-    assert len(jobs) == 1
-    assert jobs[0]["title"] == "MLE 1"
-    assert jobs[0]["company"] == "DeepMind"
+    assert jobs == []
 
 def test_career_agent_answers():
     # Setup mock retriever and router
@@ -111,9 +113,10 @@ def test_career_agent_answers():
     
     agent = CareerAgent(retriever, router)
     
-    # Test Discovery routing
+    # Test Discovery routing — disabled (CAREER AUTOPILOT): no longer
+    # fabricates listings, points at the real job_search tool instead.
     res1 = agent.answer("discover jobs for ML Engineer")
-    assert "Discovered Job Listings" in res1.answer
+    assert "job_search" in res1.answer
     
     # Test Matching routing
     router.generate.return_value = ("Fit Score: 85%", "mock-openai")

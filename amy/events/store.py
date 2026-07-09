@@ -64,6 +64,14 @@ PLANE_TASK_ASSIGNED = "plane.task_assigned"
 PLANE_TASK_DUE_SOON = "plane.task_due_soon"
 PLANE_TASK_STATUS_CHANGED = "plane.task_status_changed"
 
+# Career events (CAREER AUTOPILOT phase)
+CAREER_GOAL_SET = "career.goal_set"
+CAREER_JOB_DISCOVERED = "career.job_discovered"
+CAREER_APPLICATION_PREPARED = "career.application_prepared"
+CAREER_APPLICATION_SENT = "career.application_sent"
+CAREER_APPLICATION_STATUS_CHANGED = "career.application_status_changed"
+CAREER_PORTFOLIO_ANALYZED = "career.portfolio_analyzed"
+
 # Event types a reactive agent (amy/agents/reactive.py) actually .subscribe()s
 # to today. Kept as a plain literal set HERE rather than imported from
 # amy.agents.reactive, so this module stays import-free of agents/automation

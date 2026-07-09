@@ -174,12 +174,68 @@ class AutomationStore:
                 ts        TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS career_profile (
+                uid              TEXT PRIMARY KEY,
+                target_role      TEXT DEFAULT '',
+                target_location  TEXT DEFAULT '',
+                remote_ok        INTEGER DEFAULT 1,
+                deadline         TEXT,
+                resume_text_enc  TEXT,
+                skills           TEXT DEFAULT '[]',
+                updated_at       TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS job_postings (
+                id            TEXT PRIMARY KEY,
+                uid           TEXT NOT NULL,
+                source        TEXT DEFAULT 'jobspy',
+                title         TEXT DEFAULT '',
+                company       TEXT DEFAULT '',
+                url           TEXT DEFAULT '',
+                location      TEXT DEFAULT '',
+                salary        TEXT DEFAULT '',
+                is_remote     INTEGER DEFAULT 0,
+                description   TEXT DEFAULT '',
+                keywords      TEXT DEFAULT '[]',
+                match_score   REAL,
+                match_factors TEXT DEFAULT '{}',
+                status        TEXT DEFAULT 'discovered',
+                discovered_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS applications (
+                id           TEXT PRIMARY KEY,
+                uid          TEXT NOT NULL,
+                posting_id   TEXT NOT NULL,
+                channel      TEXT DEFAULT '',
+                status       TEXT DEFAULT 'prepared',
+                match_score  REAL,
+                ats_estimate REAL,
+                draft        TEXT DEFAULT '',
+                timeline     TEXT DEFAULT '[]',
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS company_intel (
+                uid        TEXT NOT NULL,
+                company    TEXT NOT NULL,
+                notes      TEXT DEFAULT '',
+                sources    TEXT DEFAULT '[]',
+                cached_at  TEXT,
+                PRIMARY KEY (uid, company)
+            );
+
             CREATE INDEX IF NOT EXISTS idx_runs_job   ON automation_runs(job_name, started_at);
             CREATE INDEX IF NOT EXISTS idx_feed_uid   ON learning_feed_items(uid, fetched_at);
             CREATE INDEX IF NOT EXISTS idx_appr_state ON approvals(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_llm_ts     ON llm_calls(ts);
             CREATE INDEX IF NOT EXISTS idx_focus_uid  ON learning_focuses(uid, active);
             CREATE INDEX IF NOT EXISTS idx_conncall   ON connector_calls(uid, connector, ts);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_posting_dedup ON job_postings(uid, url);
+            CREATE INDEX IF NOT EXISTS idx_posting_uid ON job_postings(uid, status, discovered_at);
+            CREATE INDEX IF NOT EXISTS idx_appl_uid    ON applications(uid, status);
+            CREATE INDEX IF NOT EXISTS idx_appl_posting ON applications(posting_id);
             """
         )
         self.conn.commit()
@@ -519,6 +575,232 @@ class AutomationStore:
             " ON CONFLICT(sensor,item_key) DO UPDATE SET state=excluded.state, ts=excluded.ts",
             (sensor, item_key, state, _now_iso()))
         self.conn.commit()
+
+    # --- career profile (CAREER AUTOPILOT Part 1) ----------------------------
+    # resume_text is sensitive (same class of data as GSTIN/PAN, see
+    # CLAUDE.md) — stored Fernet-encrypted via amy.saas.security, the same
+    # helper already used for stored API keys. Every LLM call that reads
+    # resume_text back out must route sensitive=True.
+
+    def get_career_profile(self, uid: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM career_profile WHERE uid=?", (uid,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["skills"] = json.loads(d["skills"] or "[]")
+        enc = d.pop("resume_text_enc", None)
+        d["has_resume"] = bool(enc)
+        if enc:
+            try:
+                from ..saas.security import decrypt_secret
+                d["resume_text"] = decrypt_secret(enc)
+            except Exception:
+                d["resume_text"] = ""
+        else:
+            d["resume_text"] = ""
+        return d
+
+    def set_career_profile(self, uid: str, target_role: str | None = None,
+                           target_location: str | None = None,
+                           remote_ok: bool | None = None,
+                           deadline: str | None = None,
+                           resume_text: str | None = None,
+                           skills: list | None = None) -> None:
+        existing = self.conn.execute(
+            "SELECT uid FROM career_profile WHERE uid=?", (uid,)).fetchone()
+        if existing is None:
+            self.conn.execute(
+                "INSERT INTO career_profile(uid,target_role,target_location,"
+                " remote_ok,deadline,resume_text_enc,skills,updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?)",
+                (uid, "", "", 1, None, None, "[]", _now_iso()))
+        sets, args = [], []
+        if target_role is not None:
+            sets.append("target_role=?"); args.append(target_role)
+        if target_location is not None:
+            sets.append("target_location=?"); args.append(target_location)
+        if remote_ok is not None:
+            sets.append("remote_ok=?"); args.append(1 if remote_ok else 0)
+        if deadline is not None:
+            sets.append("deadline=?"); args.append(deadline)
+        if skills is not None:
+            sets.append("skills=?"); args.append(json.dumps(skills))
+        if resume_text is not None:
+            from ..saas.security import encrypt_secret
+            sets.append("resume_text_enc=?")
+            args.append(encrypt_secret(resume_text) if resume_text else None)
+        sets.append("updated_at=?"); args.append(_now_iso())
+        args.append(uid)
+        self.conn.execute(f"UPDATE career_profile SET {', '.join(sets)} WHERE uid=?", args)
+        self.conn.commit()
+
+    # --- job postings (CAREER AUTOPILOT Part 1) -------------------------------
+
+    def add_posting_if_new(self, uid: str, posting: dict) -> tuple[str, bool]:
+        """Dedup on (uid, url) — a re-discovered posting is a no-op, matching
+        connector_sensor_seen's diff-not-duplicate idiom. Returns
+        (posting_id, is_new)."""
+        url = (posting.get("url") or "").strip()
+        if url:
+            row = self.conn.execute(
+                "SELECT id FROM job_postings WHERE uid=? AND url=?", (uid, url)).fetchone()
+            if row:
+                return row["id"], False
+        pid = _uuid()
+        self.conn.execute(
+            "INSERT INTO job_postings(id,uid,source,title,company,url,location,"
+            " salary,is_remote,description,keywords,status,discovered_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (pid, uid, posting.get("source") or "jobspy",
+             posting.get("title") or "", posting.get("company") or "", url,
+             posting.get("location") or "", str(posting.get("salary") or ""),
+             1 if posting.get("is_remote") else 0, posting.get("description") or "",
+             json.dumps(posting.get("keywords") or []), "discovered", _now_iso()))
+        self.conn.commit()
+        return pid, True
+
+    def get_posting(self, uid: str, posting_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM job_postings WHERE uid=? AND id=?", (uid, posting_id)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["keywords"] = json.loads(d["keywords"] or "[]")
+        d["match_factors"] = json.loads(d["match_factors"] or "{}")
+        return d
+
+    def list_postings(self, uid: str, status: str | None = None,
+                      limit: int = 50) -> list[dict]:
+        if status:
+            rows = self.conn.execute(
+                "SELECT * FROM job_postings WHERE uid=? AND status=?"
+                " ORDER BY COALESCE(match_score,-1) DESC, discovered_at DESC LIMIT ?",
+                (uid, status, limit)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM job_postings WHERE uid=?"
+                " ORDER BY COALESCE(match_score,-1) DESC, discovered_at DESC LIMIT ?",
+                (uid, limit)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["keywords"] = json.loads(d["keywords"] or "[]")
+            d["match_factors"] = json.loads(d["match_factors"] or "{}")
+            out.append(d)
+        return out
+
+    def set_posting_match(self, uid: str, posting_id: str, match_score: float,
+                          match_factors: dict) -> bool:
+        cur = self.conn.execute(
+            "UPDATE job_postings SET match_score=?, match_factors=? WHERE uid=? AND id=?",
+            (match_score, json.dumps(match_factors), uid, posting_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def set_posting_status(self, uid: str, posting_id: str, status: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE job_postings SET status=? WHERE uid=? AND id=?",
+            (status, uid, posting_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # --- applications (CAREER AUTOPILOT Part 1) --------------------------------
+
+    _APPLICATION_STATUSES = ("prepared", "approved", "sent", "response",
+                             "interview", "offer", "rejected", "ghosted")
+
+    def create_application(self, uid: str, posting_id: str, channel: str = "",
+                           match_score: float | None = None,
+                           ats_estimate: float | None = None,
+                           draft: str = "", note: str = "") -> str:
+        aid = _uuid()
+        now = _now_iso()
+        timeline = [{"ts": now, "status": "prepared", "note": note}]
+        self.conn.execute(
+            "INSERT INTO applications(id,uid,posting_id,channel,status,"
+            " match_score,ats_estimate,draft,timeline,created_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (aid, uid, posting_id, channel, "prepared", match_score,
+             ats_estimate, draft, json.dumps(timeline), now, now))
+        self.conn.commit()
+        return aid
+
+    def get_application(self, uid: str, application_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM applications WHERE uid=? AND id=?",
+            (uid, application_id)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["timeline"] = json.loads(d["timeline"] or "[]")
+        return d
+
+    def list_applications(self, uid: str, status: str | None = None) -> list[dict]:
+        if status:
+            rows = self.conn.execute(
+                "SELECT * FROM applications WHERE uid=? AND status=?"
+                " ORDER BY updated_at DESC", (uid, status)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM applications WHERE uid=? ORDER BY updated_at DESC",
+                (uid,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["timeline"] = json.loads(d["timeline"] or "[]")
+            out.append(d)
+        return out
+
+    def update_application_status(self, uid: str, application_id: str,
+                                  status: str, note: str = "") -> bool:
+        if status not in self._APPLICATION_STATUSES:
+            raise ValueError(f"unknown application status {status!r}")
+        row = self.conn.execute(
+            "SELECT timeline FROM applications WHERE uid=? AND id=?",
+            (uid, application_id)).fetchone()
+        if row is None:
+            return False
+        timeline = json.loads(row["timeline"] or "[]")
+        timeline.append({"ts": _now_iso(), "status": status, "note": note})
+        self.conn.execute(
+            "UPDATE applications SET status=?, timeline=?, updated_at=?"
+            " WHERE uid=? AND id=?",
+            (status, json.dumps(timeline), _now_iso(), uid, application_id))
+        self.conn.commit()
+        return True
+
+    def career_funnel_counts(self, uid: str) -> dict:
+        rows = self.conn.execute(
+            "SELECT status, COUNT(*) n FROM applications WHERE uid=? GROUP BY status",
+            (uid,)).fetchall()
+        counts = {s: 0 for s in self._APPLICATION_STATUSES}
+        counts.update({r["status"]: r["n"] for r in rows})
+        counts["discovered"] = self.conn.execute(
+            "SELECT COUNT(*) n FROM job_postings WHERE uid=?", (uid,)).fetchone()["n"]
+        return counts
+
+    # --- company intel (CAREER AUTOPILOT Part 1) -------------------------------
+
+    def upsert_company_intel(self, uid: str, company: str, notes: str,
+                             sources: list[str]) -> None:
+        self.conn.execute(
+            "INSERT INTO company_intel(uid,company,notes,sources,cached_at)"
+            " VALUES(?,?,?,?,?)"
+            " ON CONFLICT(uid,company) DO UPDATE SET"
+            "  notes=excluded.notes, sources=excluded.sources, cached_at=excluded.cached_at",
+            (uid, company, notes, json.dumps(sources), _now_iso()))
+        self.conn.commit()
+
+    def get_company_intel(self, uid: str, company: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM company_intel WHERE uid=? AND company=?",
+            (uid, company)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["sources"] = json.loads(d["sources"] or "[]")
+        return d
 
 
 # ---------------------------------------------------------------------------
