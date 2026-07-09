@@ -65,14 +65,50 @@ def _run(coro):
 
 
 _RESULT_CAP = 6000
+# Structured list payloads get a larger (still bounded) budget and keep
+# their machine shape — see _compact below.
+_STRUCTURED_CAP = 20000
+_ITEM_STR_CAP = 500
 
 
 def _compact(result: dict) -> dict:
     import json
     text = json.dumps(result, default=str)
-    if len(text) > _RESULT_CAP:
-        return {"truncated": True, "result": text[:_RESULT_CAP]}
-    return {"truncated": False, "result": result}
+    if len(text) <= _RESULT_CAP:
+        return {"truncated": False, "result": result}
+    # Oversized. Degrading to a capped raw string destroys machine
+    # readability — extract_list documents that a truncated result yields
+    # [] — which silently zeroed out every LIVE job_search (20 postings
+    # with full descriptions ≈ 100KB+; the scout discovered 0 forever while
+    # every mocked test passed — found during Part 5D/5E bring-up). For a
+    # list-shaped structured payload, keep the STRUCTURE instead: trim long
+    # string fields per item, drop the duplicate "text" mirror, then drop
+    # trailing items until it fits the structured budget.
+    structured = result.get("structured") if isinstance(result, dict) else None
+    wrap_key = None
+    if isinstance(structured, dict):
+        # FastMCP wraps list returns as {"result": [...]}; other servers use
+        # their own wrapper key — same tolerance as extract_list below.
+        for k in _LIST_KEYS:
+            if isinstance(structured.get(k), list):
+                wrap_key, structured = k, structured[k]
+                break
+    if isinstance(structured, list) and structured:
+        items = []
+        for item in structured:
+            if isinstance(item, dict):
+                item = {k: (v[:_ITEM_STR_CAP] + "…"
+                            if isinstance(v, str) and len(v) > _ITEM_STR_CAP
+                            else v)
+                        for k, v in item.items()}
+            items.append(item)
+        while items:
+            slim = {k: v for k, v in result.items() if k != "text"}
+            slim["structured"] = {wrap_key: items} if wrap_key else items
+            if len(json.dumps(slim, default=str)) <= _STRUCTURED_CAP:
+                return {"truncated": True, "result": slim}
+            items = items[:-1]
+    return {"truncated": True, "result": text[:_RESULT_CAP]}
 
 
 def call_mcp_tool(user_id: str, store, source: str, candidates: tuple[str, ...],
@@ -143,8 +179,12 @@ def call_mcp_tool(user_id: str, store, source: str, candidates: tuple[str, ...],
         raise ConnectorCallError(f"{source} connector call failed: {msg}") from exc
 
 
-_LIST_KEYS = ("items", "results", "pull_requests", "issues", "work_items",
-             "tasks", "data", "value", "entries")
+# "result" (singular): FastMCP wraps a tool returning list[dict] as
+# structuredContent={"result": [...]} — our own local servers (jobspy,
+# hackernews, ...) all produce this shape; missing it made extract_list
+# return [] for every LIVE jobspy response (found in Part 5D/5E bring-up).
+_LIST_KEYS = ("result", "items", "results", "pull_requests", "issues",
+             "work_items", "tasks", "data", "value", "entries")
 
 
 def extract_list(compacted: dict) -> list[dict]:
