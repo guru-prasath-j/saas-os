@@ -714,7 +714,12 @@ def portfolio_analyze(events, ctx, target_role: str | None = None,
             "SELECT career_meta FROM goals WHERE id=?", (goal_id,)).fetchone()
         if row and row["career_meta"]:
             try:
-                target_role = json.loads(row["career_meta"]).get("target_role")
+                meta = json.loads(row["career_meta"])
+                # Part 5F ladder: the portfolio builds toward the DESTINATION
+                # role — you apply with what you have, you build toward where
+                # you're going (scouting stays on meta["target_role"]).
+                target_role = (meta.get("north_star_role")
+                               or meta.get("target_role"))
             except Exception:
                 pass
     if not target_role:
@@ -919,9 +924,21 @@ def _application_lifecycle_agent(events, ctx):
                 return
             application_id = payload.get("application_id") or ""
             goal_row = ctx.collab.conn.execute(
-                "SELECT id, title FROM goals WHERE domain='career' AND"
-                " status='active' ORDER BY created_at DESC LIMIT 1").fetchone()
+                "SELECT id, title, career_meta FROM goals WHERE domain='career'"
+                " AND status='active' ORDER BY created_at DESC LIMIT 1").fetchone()
             goal_id = goal_row["id"] if goal_row else None
+            # Part 5F ladder: a north-star role beyond the one just landed
+            # means the wind-down PROMOTES instead of closing — same single
+            # approval, the goal stays active and scouting re-aims.
+            promote_to = None
+            if goal_row and goal_row["career_meta"]:
+                try:
+                    meta = json.loads(goal_row["career_meta"])
+                    ns = (meta.get("north_star_role") or "").strip()
+                    if ns and ns.lower() != (meta.get("target_role") or "").strip().lower():
+                        promote_to = ns
+                except Exception:
+                    promote_to = None
             open_postings = len(ctx.store.list_postings(
                 ctx.user_id, status="discovered", limit=1000))
             others = [a for a in ctx.store.list_applications(ctx.user_id)
@@ -929,24 +946,37 @@ def _application_lifecycle_agent(events, ctx):
                       and a["status"] in ("sent", "response", "interview", "offer")]
 
             from ..automation.executors import submit_action
-            steps = [f"- close career goal: {goal_row['title']}" if goal_row
-                     else "- no active career goal to close",
+            if promote_to:
+                goal_step = (f"- promote the goal: '{promote_to}' becomes the "
+                             "active target (goal stays open, scouting re-aims "
+                             "at the north star)")
+                title = (f"Offer accepted — promote the search to your north "
+                         f"star ({promote_to})?")
+            else:
+                goal_step = (f"- close career goal: {goal_row['title']}" if goal_row
+                             else "- no active career goal to close")
+                title = "Offer accepted — wind down the job search?"
+            steps = [goal_step,
                      f"- archive {open_postings} open posting(s)",
                      f"- propose withdrawal emails for {len(others)} other "
                      "active application(s) — each send parks as its own "
                      "tier-2 approval"]
             submit_action(
                 ctx, 2, "career_wind_down",
-                title="Offer accepted — wind down the job search?",
+                title=title,
                 body="One approval executes every step:\n" + "\n".join(steps),
                 payload={"goal_id": goal_id,
                          "accepted_application_id": application_id,
-                         "withdraw_others": bool(others)},
+                         "withdraw_others": bool(others),
+                         "promote_to_role": promote_to},
                 source="application_lifecycle_agent",
                 dedup_key=f"winddown_{goal_id or application_id}",
-                reasoning="An accepted offer ends the search; continuing to "
-                          "scout/apply now wastes everyone's time. Nothing "
-                          "winds down without this approval.",
+                reasoning=("The immediate role is landed; the ladder's next "
+                           "rung takes over — nothing changes without this "
+                           "approval." if promote_to else
+                           "An accepted offer ends the search; continuing to "
+                           "scout/apply now wastes everyone's time. Nothing "
+                           "winds down without this approval."),
                 risk="write")
         except Exception as exc:
             _report_error(events, "application_lifecycle", exc)

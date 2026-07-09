@@ -156,3 +156,45 @@ def test_portfolio_route_no_target_role_skips(app_client):
     r = c.get("/api/career/portfolio", headers=headers)
     assert r.status_code == 200, r.text
     assert r.json().get("skipped")
+
+
+# ---------------------------------------------------------------------------
+# Career ladder (Part 5F)
+# ---------------------------------------------------------------------------
+
+def test_patch_goal_ladder_updates_meta_and_profile(app_client):
+    import json as _json
+    c, headers, uid, _ = app_client
+    r = c.patch("/api/career/goal", headers=headers,
+                json={"target_role": "AI Mobile Engineer"})
+    assert r.status_code == 404   # no active career goal yet
+
+    cdb, store = _store_for(uid)
+    try:
+        cdb.conn.execute(
+            "INSERT INTO goals(id,title,domain,status,created_at,career_meta)"
+            " VALUES('gl','ladder','career','active',datetime('now'),'{}')")
+        cdb.conn.commit()
+
+        r = c.patch("/api/career/goal", headers=headers,
+                    json={"target_role": "AI Mobile Engineer",
+                          "north_star_role": "GenAI Engineer"})
+        assert r.status_code == 200, r.text
+        assert r.json()["north_star_role"] == "GenAI Engineer"
+
+        meta = _json.loads(cdb.conn.execute(
+            "SELECT career_meta FROM goals WHERE id='gl'").fetchone()["career_meta"])
+        assert meta["target_role"] == "AI Mobile Engineer"
+        assert meta["north_star_role"] == "GenAI Engineer"
+        # profile follows the scouted role (ATS/drafts re-aim too)
+        assert store.get_career_profile(uid)["target_role"] == "AI Mobile Engineer"
+
+        # "" clears the north star; ladder fields surface on the goal payload
+        r = c.patch("/api/career/goal", headers=headers,
+                    json={"north_star_role": ""})
+        assert r.status_code == 200 and r.json()["north_star_role"] is None
+        g = c.get("/api/career/profile", headers=headers).json()["goal"]
+        assert g["target_role"] == "AI Mobile Engineer"
+        assert g["north_star_role"] is None
+    finally:
+        cdb.close()

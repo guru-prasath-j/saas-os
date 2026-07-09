@@ -35,13 +35,29 @@ class ApplicationStatusBody(BaseModel):
     note: str = ""
 
 
+class CareerLadderBody(BaseModel):
+    """Part 5F: edit the active goal's ladder — target_role is what gets
+    scouted/applied for NOW; north_star_role (optional, "" clears it) is
+    the longer-term destination that learning/portfolio build toward."""
+    target_role: str | None = None
+    north_star_role: str | None = None
+
+
 def _active_career_goal(ctx) -> dict | None:
+    import json as _json
     row = ctx.collab.conn.execute(
         "SELECT * FROM goals WHERE domain='career' AND status='active'"
         " ORDER BY created_at DESC LIMIT 1").fetchone()
     if row is None:
         return None
     d = dict(row)
+    try:
+        meta = _json.loads(d.get("career_meta") or "{}")
+    except Exception:
+        meta = {}
+    # parsed ladder fields for the frontend (career_meta stays the raw JSON)
+    d["target_role"] = meta.get("target_role")
+    d["north_star_role"] = meta.get("north_star_role")
     try:
         from ...autonomous import GoalEngine
         d["computed_progress"] = GoalEngine(ctx.collab).progress(d["id"])
@@ -71,6 +87,44 @@ def put_career_profile(body: CareerProfileBody, user: User = Depends(current_use
             remote_ok=body.remote_ok, deadline=body.deadline,
             resume_text=body.resume_text, skills=body.skills)
         return {"ok": True}
+    finally:
+        cdb.close()
+
+
+@router.patch("/api/career/goal")
+def update_career_ladder(body: CareerLadderBody, user: User = Depends(current_user)):
+    """Part 5F: edit the active career goal's ladder roles in place. This
+    is THE way to change what gets scouted — the scout reads the goal's
+    career_meta.target_role first (editing the profile's role alone does
+    NOT re-aim scouting, a UX trap found live). target_role changes are
+    mirrored to the profile so ATS/drafts follow. Direct human edit of the
+    user's own stated intent — not gated, same stance as the profile PUT."""
+    import json as _json
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        row = ctx.collab.conn.execute(
+            "SELECT id, career_meta FROM goals WHERE domain='career' AND"
+            " status='active' ORDER BY created_at DESC LIMIT 1").fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="no active career goal")
+        try:
+            meta = _json.loads(row["career_meta"] or "{}")
+        except Exception:
+            meta = {}
+        if body.target_role is not None and body.target_role.strip():
+            meta["target_role"] = body.target_role.strip()[:120]
+            ctx.store.set_career_profile(user.id, target_role=meta["target_role"])
+        if body.north_star_role is not None:
+            ns = body.north_star_role.strip()[:120]
+            if ns and ns.lower() != (meta.get("target_role") or "").lower():
+                meta["north_star_role"] = ns
+            else:
+                meta.pop("north_star_role", None)   # "" (or same role) clears it
+        ctx.collab.conn.execute("UPDATE goals SET career_meta=? WHERE id=?",
+                                (_json.dumps(meta), row["id"]))
+        ctx.collab.conn.commit()
+        return {"ok": True, "target_role": meta.get("target_role"),
+               "north_star_role": meta.get("north_star_role")}
     finally:
         cdb.close()
 

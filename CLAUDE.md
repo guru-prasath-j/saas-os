@@ -617,11 +617,25 @@ fabricated job postings or company intel.
   portfolio UI) — the career portfolio section lives inside the career
   tab to avoid the name collision.
 
+- **Career ladder (Part 5F)**: `goals.career_meta` carries `target_role`
+  (the role being APPLIED for now — drives scouting/ATS/drafts) and an
+  optional `north_star_role` (destination — drives learning focuses,
+  milestone skill/portfolio phases, portfolio analysis). "become X then Y"
+  parses as a ladder (LLM parse, deterministic `then`/`en route to`/
+  `toward` split fallback). The scout reads the GOAL's `target_role` first
+  — editing the profile's role alone does NOT re-aim scouting; use
+  `PATCH /api/career/goal` (the "Save ladder" control in the career tab
+  header). On an accepted offer with a north star present, the wind-down
+  bundle PROMOTES instead of closing: goal stays active, north star
+  becomes `target_role` (mirrored to the profile), postings archived,
+  withdrawals re-parked individually.
+
 ```
 GET/PUT           /api/career/profile
+PATCH             /api/career/goal                       # ladder roles (Part 5F)
 GET               /api/career/postings | applications | portfolio
 PATCH             /api/career/applications/{id}          # human-reported outcome, not gated
-POST              /api/career/postings/{id}/apply
+POST              /api/career/postings/{id}/apply        # 409 + ?force=true on duplicate-company
 ```
 
 ## Automation Layer

@@ -2991,12 +2991,37 @@ async function _loadCareerGoalHeader(){
     const days=_careerDaysLeft(g.target_date);
     const daysStr=days==null ? 'no deadline set'
       : (days>=0 ? days+' day(s) left' : Math.abs(days)+' day(s) overdue');
+    // Part 5F career ladder: target_role = applying NOW (drives scouting/
+    // ATS/drafts); north_star_role = longer-term destination (drives
+    // learning focuses, milestones, portfolio analysis). Edited here on the
+    // GOAL, not the profile form — the scout reads the goal's role first.
+    const ladder=g.north_star_role
+      ? `Next: <b>${_connEsc(g.target_role||p.target_role||'')}</b> → North star: <b>${_connEsc(g.north_star_role)}</b>`
+      : `Next: <b>${_connEsc(g.target_role||p.target_role||'')}</b>`;
     el.innerHTML=`<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
-      <div><b>${_connEsc(g.title)}</b><div class="faint">${_connEsc(p.target_role||'')}</div></div>
+      <div><b>${_connEsc(g.title)}</b><div class="faint">${ladder}</div></div>
       <span class="chip">${_connEsc(daysStr)}</span>
       <span class="chip">${Math.round(g.computed_progress||0)}% progress</span>
+      <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <input id="careerLadderNext" placeholder="applying next (scouted)" value="${_connEsc(g.target_role||'')}" style="max-width:170px"/>
+        <input id="careerLadderStar" placeholder="north star (learning)" value="${_connEsc(g.north_star_role||'')}" style="max-width:170px"/>
+        <button class="ghost sm" onclick="careerSaveLadder()">Save ladder</button>
+        <span id="careerLadderMsg" class="faint"></span>
+      </span>
     </div>`;
   }catch(e){ el.innerHTML='<span class="faint">Could not load career profile.</span>'; }
+}
+async function careerSaveLadder(){
+  const msg=document.getElementById('careerLadderMsg');
+  msg.textContent='Saving…';
+  try{
+    await api('/api/career/goal',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      target_role: document.getElementById('careerLadderNext').value.trim(),
+      north_star_role: document.getElementById('careerLadderStar').value.trim(),
+    })});
+    msg.textContent='Saved — scouting re-aims on the next poll.';
+    _loadCareerGoalHeader();
+  }catch(e){ msg.textContent='Save failed: '+(e.message||e); }
 }
 async function careerSaveProfile(){
   const msg=document.getElementById('careerProfileMsg');
@@ -3018,7 +3043,7 @@ async function careerSaveProfile(){
     await _loadCareerGoalHeader();
   }catch(e){ msg.textContent='Could not save.'; }
 }
-const _CAREER_FUNNEL_ORDER=['discovered','prepared','approved','sent','response','interview','offer','rejected','ghosted'];
+const _CAREER_FUNNEL_ORDER=['discovered','prepared','approved','sent','response','interview','offer','accepted','rejected','ghosted'];
 async function _loadCareerFunnel(){
   const el=document.getElementById('careerFunnel');
   try{

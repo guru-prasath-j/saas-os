@@ -697,10 +697,40 @@ def _exec_career_wind_down(ctx: JobCtx, payload: dict) -> dict:
     no separate 'disable' flag to forget to reset). Withdrawal emails for
     other active applications are NOT sent here: each one is re-proposed
     through the send_hr_email tool (external -> hard tier 2), so every
-    individual outbound send still gets its own explicit approval."""
+    individual outbound send still gets its own explicit approval.
+
+    Part 5F career ladder: when the approval carries promote_to_role (a
+    north-star role beyond the one just landed), the goal is PROMOTED
+    instead of closed — it stays active, the north star becomes the
+    scouting target (career_meta.target_role, mirrored to the profile),
+    and postings/withdrawals wind down exactly as in the close path."""
+    import json as _wjson
+
     goal_id = payload.get("goal_id")
+    promote_to = (payload.get("promote_to_role") or "").strip()
     closed_goal = False
-    if goal_id:
+    promoted = False
+    if goal_id and promote_to:
+        row = ctx.collab.conn.execute(
+            "SELECT career_meta FROM goals WHERE id=? AND status='active'",
+            (goal_id,)).fetchone()
+        if row is not None:
+            try:
+                meta = _wjson.loads(row["career_meta"] or "{}")
+            except Exception:
+                meta = {}
+            meta["target_role"] = promote_to
+            meta.pop("north_star_role", None)
+            ctx.collab.conn.execute(
+                "UPDATE goals SET career_meta=? WHERE id=?",
+                (_wjson.dumps(meta), goal_id))
+            ctx.collab.conn.commit()
+            try:
+                ctx.store.set_career_profile(ctx.user_id, target_role=promote_to)
+            except Exception:
+                pass
+            promoted = True
+    elif goal_id:
         cur = ctx.collab.conn.execute(
             "UPDATE goals SET status='completed' WHERE id=? AND status='active'",
             (goal_id,))
@@ -750,5 +780,6 @@ def _exec_career_wind_down(ctx: JobCtx, payload: dict) -> dict:
             except Exception:
                 pass
 
-    return {"closed_goal": closed_goal, "archived_postings": archived,
+    return {"closed_goal": closed_goal, "promoted_to": promote_to if promoted else None,
+           "archived_postings": archived,
            "withdrawal_sends_proposed": withdrawals_proposed}

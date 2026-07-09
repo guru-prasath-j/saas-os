@@ -211,9 +211,19 @@ _CAREER_ACTION_PHRASES = ("become a", "become an", "land a job", "get a job",
 _CAREER_PARSE_SYSTEM = (
     "Extract the target job role and duration from this career goal. "
     "Respond with EXACTLY ONE JSON object: "
-    '{"target_role": "<role>", "weeks": <int>}. If no duration is stated, '
-    "estimate a reasonable one (8-12 weeks)."
+    '{"target_role": "<role to apply for NEXT>", '
+    '"north_star_role": "<longer-term destination role, or null>", '
+    '"weeks": <int>}. If the goal names a career LADDER ("become X then Y", '
+    '"X en route to Y", "X, eventually Y"), target_role is the immediate '
+    "role and north_star_role the destination; otherwise north_star_role is "
+    "null. If no duration is stated, estimate a reasonable one (8-12 weeks)."
 )
+
+# Deterministic ladder split for the no-LLM fallback path: "X then Y",
+# "X en route to Y", "X toward(s) Y", "X eventually Y".
+_LADDER_SPLIT_RE = re.compile(
+    r"\s+(?:then|en route to|towards?|eventually)\s+(?:a\s+|an\s+)?",
+    re.IGNORECASE)
 
 _SKILL_GAP_SYSTEM = (
     "Compare the candidate's current skills against what real job postings "
@@ -257,23 +267,46 @@ def _log_career_template_failure(ctx: JobCtx, run_id: str, goal: str, exc: Excep
         pass
 
 
-def _extract_role_and_deadline(ctx: JobCtx, goal: str) -> tuple[str, str, int]:
-    """One LLM call to pull {target_role, weeks} out of the free-text goal —
-    NOT sensitive, it's parsing the goal sentence itself, not resume/profile
-    data. Degrades to a naive fallback (whole goal text as role, 8 weeks) on
-    any LLM failure, same stance as every other degrade-gracefully call in
-    this codebase (learning_feed/ranker.py, finance/budget_suggest.py, ...)."""
+def _extract_role_and_deadline(ctx: JobCtx, goal: str) -> tuple[str, str, int, str | None]:
+    """One LLM call to pull {target_role, north_star_role, weeks} out of the
+    free-text goal — NOT sensitive, it's parsing the goal sentence itself,
+    not resume/profile data. Degrades to a naive fallback (whole goal text
+    as role, ladder split on 'then'/'en route to'/'toward', 8 weeks) on any
+    LLM failure, same stance as every other degrade-gracefully call in this
+    codebase (learning_feed/ranker.py, finance/budget_suggest.py, ...).
+
+    Part 5F career ladder: target_role is the role to APPLY for next (drives
+    scouting/ATS/drafts); north_star_role, when the goal names a longer-term
+    destination, drives learning focuses / milestones / portfolio analysis."""
     resp = _gen(ctx, _CAREER_PARSE_SYSTEM, f"Goal: {goal}") if ctx.llm else None
     weeks = 8
     role = goal[:120]
+    north_star: str | None = None
     if resp and resp.get("target_role"):
         role = str(resp["target_role"])[:120]
+        ns = resp.get("north_star_role")
+        if ns and str(ns).strip().lower() not in ("null", "none", ""):
+            north_star = str(ns)[:120]
         try:
             weeks = max(1, int(resp.get("weeks") or 8))
         except (TypeError, ValueError):
             weeks = 8
+    else:
+        parts = _LADDER_SPLIT_RE.split(goal, maxsplit=1)
+        if len(parts) == 2 and parts[1].strip():
+            role, north_star = parts[0][:120].strip(), parts[1][:120].strip()
+            # strip the leading action phrase ("become an ...") so the role
+            # is comparable/searchable — longest phrase first, else
+            # "become a" eats "become an"'s prefix and leaves "n ..."
+            low = role.lower()
+            for p in sorted(_CAREER_ACTION_PHRASES, key=len, reverse=True):
+                if low.startswith(p):
+                    role = role[len(p):].strip() or role
+                    break
+    if north_star and north_star.strip().lower() in role.strip().lower():
+        north_star = None   # "X then X" is not a ladder
     deadline = (_dt.date.today() + _dt.timedelta(weeks=weeks)).isoformat()
-    return role, deadline, weeks
+    return role, deadline, weeks, north_star
 
 
 def _extract_keywords(postings: list[dict], top_n: int = 8) -> list[str]:
@@ -324,24 +357,30 @@ def _skill_gaps(ctx: JobCtx, target_role: str, profile: dict) -> list[str]:
     return fallback or [target_role]
 
 
-def _weekly_milestones(target_role: str, weeks: int, gaps: list[str]) -> list[str]:
+def _weekly_milestones(target_role: str, weeks: int, gaps: list[str],
+                       learn_role: str | None = None) -> list[str]:
     """Deterministic phase breakdown (skills 40% / portfolio 25% /
     applications 25% / interview prep 10%) — not LLM-dependent, so this
-    step never fails regardless of provider availability."""
+    step never fails regardless of provider availability.
+
+    learn_role (Part 5F ladder): skill/portfolio weeks build toward the
+    north-star role; application/interview weeks stay on the immediate
+    target_role. Same role for both when there's no ladder."""
     weeks = max(weeks, 4)
+    learn_role = learn_role or target_role
     skill_weeks = max(1, round(weeks * 0.4))
     portfolio_weeks = max(1, round(weeks * 0.25))
     apply_weeks = max(1, round(weeks * 0.25))
     interview_weeks = max(1, weeks - skill_weeks - portfolio_weeks - apply_weeks)
 
-    gap_list = gaps or [target_role]
+    gap_list = gaps or [learn_role]
     out: list[str] = []
     cursor = 1
     for i in range(skill_weeks):
         out.append(f"Week {cursor}: Skill building — {gap_list[i % len(gap_list)]}")
         cursor += 1
     for i in range(portfolio_weeks):
-        out.append(f"Week {cursor}: Portfolio project #{i + 1} for {target_role}")
+        out.append(f"Week {cursor}: Portfolio project #{i + 1} for {learn_role}")
         cursor += 1
     for i in range(apply_weeks):
         out.append(f"Week {cursor}: Applications — {target_role} roles")
@@ -380,9 +419,12 @@ def _run_career_template(ctx: JobCtx, goal: str, run_id: str) -> dict:
             _mark_task(ctx, task_ids[i], plan[i],
                       "queued for approval" if is_pending else str(result)[:200])
 
-    # 1. parse target role + deadline
-    target_role, deadline, weeks = _extract_role_and_deadline(ctx, goal)
-    _log_step(0, "-", {}, {"target_role": target_role, "deadline": deadline, "weeks": weeks},
+    # 1. parse target role + deadline (+ optional north star — Part 5F:
+    # "become X then Y" is a ladder; applications chase X, learning aims at Y)
+    target_role, deadline, weeks, north_star = _extract_role_and_deadline(ctx, goal)
+    learn_role = north_star or target_role
+    _log_step(0, "-", {}, {"target_role": target_role, "north_star_role": north_star,
+                           "deadline": deadline, "weeks": weeks},
               "Parsed target role/timeline from the goal text (sensitive=False — "
               "no resume/profile data touched here).")
 
@@ -390,32 +432,38 @@ def _run_career_template(ctx: JobCtx, goal: str, run_id: str) -> dict:
     # its own plan, same line _store_plan_graph already draws — not gated)
     engine = GoalEngine(ctx.collab, events=ctx.events())
     gid = engine.create_goal(goal, domain="career", target_date=deadline)
+    meta = {"target_role": target_role, "weeks": weeks}
+    if north_star:
+        meta["north_star_role"] = north_star
     ctx.collab.conn.execute(
-        "UPDATE goals SET career_meta=? WHERE id=?",
-        (json.dumps({"target_role": target_role, "weeks": weeks}), gid))
+        "UPDATE goals SET career_meta=? WHERE id=?", (json.dumps(meta), gid))
     ctx.collab.conn.commit()
     ctx.store.set_career_profile(ctx.user_id, target_role=target_role, deadline=deadline)
     _log_step(1, "create_goal", {"title": goal, "domain": "career"}, {"id": gid},
-              f"New career goal: {target_role} by {deadline} ({weeks} weeks).")
+              f"New career goal: {target_role} by {deadline} ({weeks} weeks)"
+              + (f", north star: {north_star}." if north_star else "."))
 
     # 3. skill gaps -> learning focuses (linked to this goal, same pattern
-    # the Learning Feed already uses for goal-linked focuses)
+    # the Learning Feed already uses for goal-linked focuses). Gaps are
+    # measured against the LADDER's destination (learn_role): you apply for
+    # what you can win today, you learn toward where you're going.
     profile = ctx.store.get_career_profile(ctx.user_id) or {}
-    gaps = _skill_gaps(ctx, target_role, profile)
+    gaps = _skill_gaps(ctx, learn_role, profile)
     from ..learning_feed.sensor import add_focus
     for topic in gaps:
         try:
             add_focus(ctx.collab.conn, ctx.user_id, topic, goal_id=gid)
         except Exception as exc:
             _log.warning("career template: add_focus(%r) failed: %s", topic, exc)
-    _log_step(2, "-", {"target_role": target_role}, {"gaps": gaps},
+    _log_step(2, "-", {"target_role": learn_role}, {"gaps": gaps},
               "Skill gaps from real postings (job_search) vs current profile "
               "skills — degrades to a keyword diff if the LLM/search is unavailable.")
 
     # 4. weekly milestones (tracked progress, internal — not gated) + a
     # batched Plane task proposal (external send — IS gated, one approval
     # for the whole breakdown per the resolved design decision)
-    milestones = _weekly_milestones(target_role, weeks, gaps)
+    milestones = _weekly_milestones(target_role, weeks, gaps,
+                                    learn_role=learn_role)
     for title in milestones:
         try:
             engine.add_milestone(gid, title)
@@ -438,9 +486,10 @@ def _run_career_template(ctx: JobCtx, goal: str, run_id: str) -> dict:
     # + vault note + its own gap-project batch approval. Degrades to a
     # {"error"/"skipped"} dict on any failure — never blocks the plan.
     from ..agents.reactive import portfolio_analyze
-    portfolio_reasoning = "Full portfolio pull + classification for the career plan."
+    portfolio_reasoning = ("Full portfolio pull + classification for the career "
+                           "plan (against the ladder's destination role).")
     try:
-        portfolio_result = portfolio_analyze(ctx.events(), ctx, target_role=target_role,
+        portfolio_result = portfolio_analyze(ctx.events(), ctx, target_role=learn_role,
                                              goal_id=gid)
     except Exception as exc:
         portfolio_result = {"error": str(exc)[:200]}
@@ -458,17 +507,19 @@ def _run_career_template(ctx: JobCtx, goal: str, run_id: str) -> dict:
     if isinstance(portfolio_result, dict) and portfolio_result.get("showcase"):
         portfolio_note = (f", portfolio classified ({len(portfolio_result['showcase'])} "
                           "showcase repo(s))")
-    summary = (f"Career plan for {target_role} over {weeks} weeks: goal created, "
-              f"{len(gaps)} learning focus(es) linked, {len(milestones)} "
-              f"milestone(s) proposed as one batched approval{portfolio_note}.")
+    ladder_note = f" (north star: {north_star})" if north_star else ""
+    summary = (f"Career plan for {target_role}{ladder_note} over {weeks} weeks: "
+              f"goal created, {len(gaps)} learning focus(es) linked, "
+              f"{len(milestones)} milestone(s) proposed as one batched "
+              f"approval{portfolio_note}.")
     status = "completed"
     _persist_run(ctx, run_id, goal, plan, steps_log, summary, status)
 
     try:
         from ..events.store import CAREER_GOAL_SET
         payload = {"agent": "career_goal_agent", "goal_id": gid,
-                  "target_role": target_role, "deadline": deadline,
-                  "reasoning": summary}
+                  "target_role": target_role, "north_star_role": north_star,
+                  "deadline": deadline, "reasoning": summary}
         eid = ctx.events().emit(CAREER_GOAL_SET, payload, source="orchestrator")
         from ..agents.reactive import _journal
         _journal(ctx, {"id": eid, "type": CAREER_GOAL_SET, "payload": payload,

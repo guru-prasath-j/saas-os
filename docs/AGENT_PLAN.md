@@ -965,6 +965,43 @@ tier-2-with-diff + approve applies it + honest no-resume skip; referral
 check finds graph mentions/empty is honest; retention archives old
 unapplied postings, keeps applications.
 
+### Part 5F — Career ladder (DONE)
+
+User-requested after 5D/5E landed: "short-term AI Mobile Engineer, long-
+term GenAI Engineer." Two horizons on ONE goal — no parallel goal model:
+
+- `goals.career_meta` gains optional `north_star_role` alongside
+  `target_role`. **Applications chase the reachable role, learning chases
+  the aspirational one**: scouting/ATS/drafts stay on `target_role`;
+  skill gaps, milestone skill/portfolio phases, and portfolio analysis
+  aim at `north_star_role or target_role` (learn_role).
+- Parse: `_CAREER_PARSE_SYSTEM` extracts both roles ("become X then Y" /
+  "X en route to Y"); the no-LLM fallback splits deterministically on
+  then/en route to/toward(s)/eventually and strips the leading action
+  phrase (longest-first — "become a" must not eat "become an"'s prefix).
+  A north star equal to (or contained in) the target is discarded.
+- Wind-down promotion: with a north star present, an accepted offer's
+  wind-down bundle PROMOTES instead of closing — goal stays active,
+  `target_role` becomes the north star (mirrored to the profile so
+  ATS/drafts follow), `north_star_role` cleared; postings archived and
+  withdrawals re-parked exactly as the close path. Without a north star,
+  behavior is unchanged (close).
+- `PATCH /api/career/goal` {target_role?, north_star_role?} edits the
+  ladder in place ("" clears the star); THE way to re-aim scouting — the
+  scout reads the goal's role first, so editing the profile's role alone
+  never re-aims it (UX trap found live). `_active_career_goal` now
+  surfaces parsed `target_role`/`north_star_role` for the frontend;
+  career tab header renders "Next: X → North star: Y" + a Save-ladder
+  control; funnel chips include the Part 5E `accepted` status.
+
+Tests: `tests/test_career_ladder.py` (9 passing) — fallback ladder split;
+identical/contained roles aren't a ladder; plain goals get no star;
+template stores both roles + learning focuses aim at the star; milestones
+split roles by phase; portfolio_analyze prefers the star; wind-down
+promotes (goal active, meta+profile re-aimed) vs closes without a star;
+accepted-offer proposal carries promote_to_role. Plus a PATCH-route test
+in `tests/test_career_routes.py`.
+
 ## CAREER AUTOPILOT — summary
 
 All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3
