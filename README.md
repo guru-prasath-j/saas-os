@@ -13,6 +13,32 @@ python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
 
 LLM providers degrade gracefully: NVIDIA → OpenAI → Groq → local Ollama → rule-based template.
 
+## Local MCP servers
+
+The Job Search / HackerNews / YouTube / Dev.to sources in Account → MCP
+Sources are served by the self-hosted MCP servers in `mcp_servers/`. The app
+auto-starts and supervises them while it runs (`_local_mcp_supervisor_loop`
+in `amy/saas/app.py`; opt out with `AMY_LOCAL_MCP_SERVERS=0`), so normally
+there is nothing to start by hand — if a connector shows 502, restart the app.
+
+After pulling changes, restart everything with:
+
+```bash
+git pull
+# kill the app + local MCP servers (PowerShell):
+#   Get-NetTCPConnection -LocalPort 8849,8935,8001,8003,8004 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
+```
+
+To run a server standalone (each in its own terminal):
+
+```bash
+python mcp_servers/jobspy_server.py       # Job Search → http://localhost:8935/mcp
+python mcp_servers/hackernews_server.py   # HackerNews → http://localhost:8001/mcp
+python mcp_servers/youtube_server.py      # YouTube    → http://localhost:8003/mcp
+python mcp_servers/devto_server.py        # Dev.to     → http://localhost:8004/mcp
+```
+
 ## Features
 
 | Module | What it does |
