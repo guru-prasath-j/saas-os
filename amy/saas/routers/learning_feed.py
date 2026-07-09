@@ -14,8 +14,15 @@ from .. import tenancy
 router = APIRouter()
 
 
-class FocusBody(BaseModel):
-    focus: str
+class FocusCreateBody(BaseModel):
+    topic: str
+    goal_id: str | None = None
+
+
+class FocusUpdateBody(BaseModel):
+    active: bool | None = None
+    goal_id: str | None = None
+    clear_goal: bool = False
 
 
 class ProgressBody(BaseModel):
@@ -36,6 +43,7 @@ def _open_collab(user: User):
 
 @router.get("/api/learning-feed")
 def list_feed(source: str | None = None, saved: int | None = None,
+              focus_id: str | None = None,
               limit: int = 100, user: User = Depends(current_user)):
     from ...learning_feed.sensor import resolve_focus
     cdb = _open_collab(user)
@@ -48,6 +56,9 @@ def list_feed(source: str | None = None, saved: int | None = None,
         if saved is not None:
             q += " AND saved=?"
             args.append(1 if saved else 0)
+        if focus_id:
+            q += " AND focus_id=?"
+            args.append(focus_id)
         q += " ORDER BY relevance DESC, fetched_at DESC, score DESC LIMIT ?"
         args.append(max(1, min(int(limit), 500)))
         rows = [dict(r) for r in cdb.conn.execute(q, args).fetchall()]
@@ -56,26 +67,80 @@ def list_feed(source: str | None = None, saved: int | None = None,
         cdb.close()
 
 
-@router.patch("/api/learning-feed/focus")
-def set_focus(body: FocusBody, background: BackgroundTasks,
-              user: User = Depends(current_user)):
-    from ...learning_feed.sensor import FOCUS_PREF_KEY, refresh_for_user
-    focus = body.focus.strip()
-    if not focus:
-        raise HTTPException(status_code=400, detail="focus must not be empty")
+@router.get("/api/learning-feed/focuses")
+def list_focuses_route(user: User = Depends(current_user)):
+    """All focuses (active + inactive) with their linked goal's title, if
+    any. Auto-seeds a first focus from the legacy single-focus pref for a
+    user who hasn't created one yet."""
+    from ...learning_feed.sensor import list_focuses
     cdb = _open_collab(user)
     try:
-        cdb.conn.execute(
-            "INSERT INTO prefs(key,value) VALUES(?,?)"
-            " ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-            (FOCUS_PREF_KEY, focus[:200]))
-        cdb.conn.commit()
+        list_focuses(cdb.conn, user.id)   # side effect: seeds default if empty
+        rows = cdb.conn.execute(
+            "SELECT f.*, g.title AS goal_title FROM learning_focuses f"
+            " LEFT JOIN goals g ON f.goal_id = g.id"
+            " WHERE f.uid=? ORDER BY f.created_at", (user.id,)).fetchall()
+        return {"focuses": [dict(r) for r in rows]}
+    finally:
+        cdb.close()
+
+
+@router.post("/api/learning-feed/focuses")
+def create_focus(body: FocusCreateBody, background: BackgroundTasks,
+                 user: User = Depends(current_user)):
+    from ...learning_feed.sensor import add_focus, refresh_for_user
+    topic = body.topic.strip()
+    if not topic:
+        raise HTTPException(status_code=400, detail="topic must not be empty")
+    cdb = _open_collab(user)
+    try:
+        fid = add_focus(cdb.conn, user.id, topic, goal_id=body.goal_id)
     finally:
         cdb.close()
     # fire-and-forget: BackgroundTasks runs sync functions in a threadpool,
-    # so the sensor's internal asyncio.run() is safe there
-    background.add_task(refresh_for_user, user.id, focus[:200])
-    return {"focus": focus[:200], "refresh": "scheduled"}
+    # so the sensor's internal asyncio.run() is safe there. Pass the row id,
+    # not the topic text — refreshing by text would silently recreate this
+    # focus if the user deletes it before the queued task runs.
+    background.add_task(refresh_for_user, user.id, focus_id=fid)
+    return {"id": fid, "topic": topic[:200], "refresh": "scheduled"}
+
+
+@router.patch("/api/learning-feed/focuses/{focus_id}")
+def update_focus(focus_id: str, body: FocusUpdateBody, background: BackgroundTasks,
+                 user: User = Depends(current_user)):
+    from ...learning_feed.sensor import set_focus_active, set_focus_goal, refresh_for_user
+    cdb = _open_collab(user)
+    try:
+        row = cdb.conn.execute(
+            "SELECT * FROM learning_focuses WHERE id=? AND uid=?",
+            (focus_id, user.id)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="focus not found")
+        reactivated = bool(body.active) and not row["active"]
+        if body.active is not None:
+            set_focus_active(cdb.conn, user.id, focus_id, body.active)
+        if body.clear_goal:
+            set_focus_goal(cdb.conn, user.id, focus_id, None)
+        elif body.goal_id is not None:
+            set_focus_goal(cdb.conn, user.id, focus_id, body.goal_id)
+    finally:
+        cdb.close()
+    if reactivated:
+        background.add_task(refresh_for_user, user.id, focus_id=focus_id)
+    return {"id": focus_id, "updated": True}
+
+
+@router.delete("/api/learning-feed/focuses/{focus_id}")
+def remove_focus(focus_id: str, user: User = Depends(current_user)):
+    from ...learning_feed.sensor import delete_focus
+    cdb = _open_collab(user)
+    try:
+        ok = delete_focus(cdb.conn, user.id, focus_id)
+    finally:
+        cdb.close()
+    if not ok:
+        raise HTTPException(status_code=404, detail="focus not found")
+    return {"deleted": True}
 
 
 @router.patch("/api/learning-feed/progress/{item_id}")
@@ -114,12 +179,32 @@ def track_progress(item_id: str, body: ProgressBody,
         if just_completed:
             try:
                 from ...events.store import EventStore, LEARNING_ITEM_COMPLETED
-                EventStore(cdb).emit(LEARNING_ITEM_COMPLETED, {
+                es = EventStore(cdb)
+                try:
+                    # same idiom as _emit_fin (finance.py) / _events_with_agents
+                    # (geo.py) — wire reactive agents onto THIS EventStore
+                    # instance before emitting, so the learning agent reacts
+                    from ...agents.reactive import register_reactive_agents
+                    from ...automation.jobs import build_ctx
+                    from .. import paths
+                    agent_ctx = build_ctx(user.id, user.email, cdb,
+                                          paths.index_dir(user.id), llm_router=None)
+                    register_reactive_agents(es, agent_ctx)
+                except Exception:
+                    pass   # agents are optional; the event itself must still emit
+                es.emit(LEARNING_ITEM_COMPLETED, {
                     "title": item["title"], "url": item["url"],
                     "source": item["source"], "focus": item.get("focus_tag"),
+                    "focus_id": item.get("focus_id"),
                 }, source="learning_feed")
             except Exception:
                 pass
+            try:
+                from ...collab.memory import MemoryManager
+                MemoryManager(cdb).log_activity(
+                    "learning", item["title"], domain=item.get("focus_tag"))
+            except Exception:
+                pass   # activity log is best-effort; progress is already saved
     finally:
         cdb.close()
 
@@ -159,6 +244,12 @@ def save_item(item_id: str, user: User = Depends(current_user)):
             (item_id, user.id))
         cdb.conn.commit()
         item = dict(row)
+        try:
+            from ...collab.memory import MemoryManager
+            MemoryManager(cdb).log_activity(
+                "learning", item["title"], domain=item.get("focus_tag"))
+        except Exception:
+            pass   # activity log is best-effort; the save already succeeded
     finally:
         cdb.close()
 

@@ -217,6 +217,17 @@
   .cap-thumb{width:56px;height:56px;border-radius:10px;overflow:hidden;background:rgba(255,255,255,.06);border:1px solid var(--border);cursor:pointer;flex:0 0 auto}
   .cap-thumb img{width:100%;height:100%;object-fit:cover;display:block}
   .cap-more{display:flex;align-items:center;justify-content:center;font-family:var(--display);font-weight:700;color:var(--muted);font-size:14px}
+  .cap-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px}
+  .cap-card{cursor:pointer;padding:0;overflow:hidden;display:flex;flex-direction:column}
+  .cap-card .cap-thumb-box{width:100%;aspect-ratio:4/3;background:rgba(255,255,255,.06);overflow:hidden}
+  .cap-card .cap-thumb-box img{width:100%;height:100%;object-fit:cover;display:block}
+  .cap-card .cap-body{padding:11px 12px}
+  .cap-card .cap-title{font-size:13px;font-weight:600;margin-bottom:2px}
+  .cap-card .cap-meta{font-size:11px;color:var(--muted);margin-bottom:6px}
+  .cap-card .cap-sum{font-size:12px;color:var(--text);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.6em}
+  .cap-card .cap-chips{margin-top:8px}
+  .drop-zone{border:1.5px dashed var(--border-2);border-radius:var(--r-lg);padding:36px 20px;text-align:center;cursor:pointer;color:var(--muted);transition:border-color .15s,background .15s}
+  .drop-zone:hover,.drop-zone.dragover{border-color:var(--neon);background:rgba(191,255,10,.05);color:var(--text)}
   .dl-row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
   .dl-row:last-child{border-bottom:none}
   .dash-fab{position:fixed;right:28px;bottom:26px;z-index:7;border-radius:999px;padding:13px 22px;font-size:14.5px;box-shadow:0 8px 30px rgba(191,255,10,.35)}
@@ -282,6 +293,9 @@
       <button data-tab="decisions">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
         <span class="label">Decisions</span></button>
+      <button data-tab="captures">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="13" r="4"/></svg>
+        <span class="label">Captures</span></button>
 
       <!-- ── FINANCE ── -->
       <div class="nav-sector">Finance</div>
@@ -330,6 +344,9 @@
       <button data-tab="portfolio">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.5 2.5 15 0 18M12 3c-2.5 2.5-2.5 15 0 18"/></svg>
         <span class="label">Portfolio</span></button>
+      <button data-tab="metaai">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="15" r="3.2"/><circle cx="18" cy="15" r="3.2"/><path d="M9.2 15h5.6M2 15l1.8-6.5A2 2 0 0 1 5.7 7h1M22 15l-1.8-6.5A2 2 0 0 0 18.3 7h-1" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span class="label">Meta AI</span></button>
 
       <!-- ── MCP ── -->
       <div class="nav-sector">MCP</div>
@@ -490,6 +507,19 @@
                 <div class="muted" style="font-size:11.5px;margin-top:10px">Activity (last 14 days)</div>
                 <div class="gbar" id="dashGrowthBars" style="margin-top:5px"></div>
               </div>
+              <!-- LEARNING -->
+              <div class="card">
+                <div class="ov-head">
+                  <span class="t-ico" style="color:var(--gold)">🎯</span>
+                  <b style="flex:1">Learning <span class="muted" style="font-weight:400">Overview</span></b>
+                  <a href="#" onclick="openTab('learn');return false" class="faint" title="Open Learning">→</a>
+                </div>
+                <div class="row" style="gap:12px">
+                  <div><div class="muted" style="font-size:11.5px">Active focuses</div><b id="dashLearnFocuses" style="font-size:21px;font-family:var(--display)">—</b></div>
+                </div>
+                <div class="muted" style="font-size:11.5px;margin-top:8px" id="dashLearnStats">—</div>
+                <div style="margin-top:10px" id="dashLearnGoals"></div>
+              </div>
               <!-- LIFE -->
               <div class="card">
                 <div class="ov-head">
@@ -529,6 +559,10 @@
               <h3 style="margin-top:0">Upcoming Deadlines</h3>
               <div id="dashDeadlines" class="muted">Loading…</div>
               <div style="margin-top:10px;text-align:right"><a href="#" id="dashDlMore" class="hidden" onclick="dashToggleDeadlines();return false" style="font-size:12px">View all obligations →</a></div>
+            </div>
+            <div class="card" id="dashMeetingsCard" style="display:none">
+              <h3 style="margin-top:0">Upcoming Meetings</h3>
+              <div id="dashMeetings" class="muted">Loading…</div>
             </div>
           </div>
         </div>
@@ -571,17 +605,22 @@
       <!-- TAB: LEARN -->
       <div class="tab hidden" id="tab-learn">
         <div class="card">
-          <h3>Learning feed</h3>
-          <p class="muted">Fresh reading/watching matched to your focus, pulled every 6h from your promoted MCP sources (HackerNews, YouTube, arXiv, …) and ranked by the AI. Register sources in Account → MCP Sources.</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
-            <input id="lfFocus" placeholder="Focus keywords (e.g. generative AI, rust, distributed systems)" style="flex:1;min-width:220px"/>
-            <button class="sm" onclick="saveFeedFocus()">Save &amp; refresh</button>
+          <h3>Learning focuses</h3>
+          <p class="muted">Track one or more topics — pulled every 6h from your promoted MCP sources (HackerNews, YouTube, arXiv, …) and AI-ranked. Link a focus to a goal to track deliberate progress; the learning agent proposes one on its own once a topic is organically trending. Register sources in Account → MCP Sources.</p>
+          <div id="lfFocusList" class="muted">Loading…</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <input id="lfNewTopic" placeholder="New focus (e.g. rust, distributed systems)" style="flex:1;min-width:200px"/>
+            <select id="lfNewGoal" style="flex:0 0 180px"><option value="">No goal</option></select>
+            <button class="sm" onclick="createFocus()">+ Add focus</button>
           </div>
+          <span class="meta" id="lfMsg"></span>
+        </div>
+        <div class="card">
+          <h3>Feed</h3>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="lfFilters">
             <button class="ghost sm" onclick="loadLearningFeed()">All</button>
             <button class="ghost sm" onclick="loadLearningFeed({saved:1})">★ Saved</button>
           </div>
-          <span class="meta" id="lfMsg"></span>
           <div id="lfBody" class="muted">Loading…</div>
         </div>
         <div class="card"><h3>Learning trends</h3><p class="muted">Topics trending up or cooling off, with recommendations.</p><div id="learnBody" class="muted">Loading…</div></div>
@@ -636,6 +675,54 @@
           <div id="decHistory"><p class="muted">Loading…</p></div>
           <div id="decAnalysis" class="hidden"></div>
           <div id="decRecs" class="hidden"></div>
+        </div>
+      </div>
+
+      <!-- TAB: CAPTURES -->
+      <div class="tab hidden" id="tab-captures">
+        <div class="card">
+          <h3>Captures <span class="muted">— every photo, with what it is</span></h3>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+            <button class="ghost sm cap-filter active" data-src="" onclick="capSetFilter('',this)">All</button>
+            <button class="ghost sm cap-filter" data-src="in-app-camera" onclick="capSetFilter('in-app-camera',this)">In-app camera</button>
+            <button class="ghost sm cap-filter" data-src="gallery-auto" onclick="capSetFilter('gallery-auto',this)">Gallery</button>
+            <button class="ghost sm cap-filter" data-src="meta-glasses" onclick="capSetFilter('meta-glasses',this)">Meta glasses</button>
+          </div>
+          <div id="capGrid" class="cap-grid"><p class="muted">Loading…</p></div>
+        </div>
+        <div class="card hidden" id="capDetail"></div>
+      </div>
+
+      <!-- TAB: META AI (Ray-Ban Meta glasses ingestion) -->
+      <div class="tab hidden" id="tab-metaai">
+        <div class="card">
+          <h3>Meta AI <span class="muted">— Ray-Ban Meta glasses photos</span></h3>
+          <div class="drop-zone" id="metaDropZone" onclick="document.getElementById('metaFileInput').click()">
+            <div style="font-size:28px;margin-bottom:6px">👓</div>
+            <div>Drop Ray-Ban Meta photos here or click to choose</div>
+            <div class="muted" style="font-size:12px;margin-top:4px">JPEG/PNG, any number of files</div>
+            <input type="file" id="metaFileInput" accept="image/*" multiple class="hidden" onchange="metaFilesChosen(this.files)"/>
+          </div>
+          <div id="metaUploadStatus" class="meta" style="margin-top:10px"></div>
+        </div>
+        <div class="card">
+          <p class="muted" style="margin:0">
+            Photos from Ray-Ban Meta glasses sync to your phone via the <b>Meta AI app</b>.
+            Export, AirDrop, or download them from there, then drop the files above.
+            Every photo gets caption, text-in-photo (OCR), place and date extracted
+            automatically and becomes part of Amy's memory — chat can recall it and
+            the daily digest compares it day-over-day, exactly like any other capture.
+          </p>
+          <p class="faint" style="margin:8px 0 0;font-size:12px">
+            Hands-free auto-sync (e.g. a Google Photos backup connector) is a planned
+            automation job — for now, this drop zone is the sync step.
+          </p>
+        </div>
+        <div class="card">
+          <div id="metaStats" class="fin-kpis" style="margin-bottom:0"></div>
+        </div>
+        <div class="card">
+          <div id="metaGrid" class="cap-grid"><p class="muted">Loading…</p></div>
         </div>
       </div>
 
@@ -1387,8 +1474,6 @@
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('outlook')">Outlook</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('teams')">Teams</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('reddit')">Reddit</button>
-            <button type="button" class="ghost sm" onclick="mcpApplyPreset('gmeet')">Google Meet</button>
-            <button type="button" class="ghost sm" onclick="mcpApplyPreset('gsheets')">Google Sheets</button>
             <span class="meta" style="margin-left:6px">Learning Feed:</span>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('hackernews')">HackerNews</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('arxiv')">arXiv</button>
@@ -1549,6 +1634,213 @@ function md(t){
   return h.replace(/\n{2,}/g,'<br><br>').replace(/\n/g,'<br>');
 }
 
+// ---- captures + meta ai: shared grid renderer over /api/captures ----
+// One renderer for both the Captures tab and the Meta AI tab (which is just
+// the same grid hard-filtered to source=meta-glasses) — no copy-paste.
+let _capBlobUrls = [];        // grid thumbnail blobs, revoked on every render
+let _capDetailBlobUrl = null; // detail-view image blob, tracked separately so
+                              // a background grid reload can't revoke it out
+                              // from under an open detail panel
+let _capByPath = {};
+let _capActiveFilter = '';
+
+function _capRevokeGridUrls(){
+  _capBlobUrls.forEach(u=>{ try{ URL.revokeObjectURL(u); }catch(e){} });
+  _capBlobUrls = [];
+}
+
+// list_captures() image field is vault-relative to 08_Captures/ (e.g.
+// "attachments/2026-07-08_1000_xxx.jpg"); the image endpoint wants the full
+// vault-relative path. Auth-fetch + blob URL — a plain <img src> can't carry
+// the Bearer token and would 401.
+async function _capLoadImg(imageRel, imgId, isDetail){
+  if(!imageRel) return;
+  try{
+    const r = await api('/api/captures/image?path=' + encodeURIComponent('08_Captures/'+imageRel));
+    if(!r.ok) return;
+    const url = URL.createObjectURL(await r.blob());
+    if(isDetail){
+      if(_capDetailBlobUrl){ try{ URL.revokeObjectURL(_capDetailBlobUrl); }catch(e){} }
+      _capDetailBlobUrl = url;
+    } else {
+      _capBlobUrls.push(url);
+    }
+    const img = document.getElementById(imgId);
+    if(img) img.src = url; else URL.revokeObjectURL(url);
+  }catch(e){}
+}
+
+function _capSourceLabel(s){
+  return {'in-app-camera':'Camera','gallery-auto':'Gallery','meta-glasses':'Meta glasses'}[s] || (s || 'Other');
+}
+
+function _capWhen(iso){
+  if(!iso) return '';
+  const d = new Date(String(iso));
+  if(isNaN(d)) return String(iso).slice(0,16).replace('T',' ');
+  return d.toLocaleString(undefined,{day:'numeric',month:'short',year:'numeric',hour:'numeric',minute:'2-digit'});
+}
+
+function renderCaptureGrid(containerEl, items){
+  _capRevokeGridUrls();
+  if(!items.length){
+    containerEl.innerHTML = '<p class="muted">No captures yet — photos you take in the mobile app (or drop into Meta AI) appear here.</p>';
+    return;
+  }
+  const shown = items.slice(0, 40); // cap thumbnails loaded at once
+  const gridId = containerEl.id;
+  containerEl.innerHTML = shown.map((c,i)=>{
+    _capByPath[c.path] = c;
+    const metaLine = [_capWhen(c.created), c.place].filter(Boolean).join(' · ');
+    const tags = (c.tags||[]).slice(0,3).map(t=>`<span class="chip">${_dEsc(t)}</span>`).join('');
+    return `<div class="card tile cap-card" onclick="capOpenDetail(decodeURIComponent('${encodeURIComponent(c.path)}'))">
+      <div class="cap-thumb-box"><img id="${gridId}-img-${i}" alt=""/></div>
+      <div class="cap-body">
+        <div class="cap-title">${_dEsc(c.title||'(capture)')}</div>
+        <div class="cap-meta">${_dEsc(metaLine)}</div>
+        <div class="cap-sum">${_dEsc(c.summary||'')}</div>
+        <div class="cap-chips"><span class="chip">${_dEsc(_capSourceLabel(c.source))}</span>${tags}</div>
+      </div></div>`;
+  }).join('');
+  shown.forEach((c,i)=>{ if(c.image) _capLoadImg(c.image, gridId+'-img-'+i, false); });
+}
+
+async function loadCaptures(source){
+  if(source===undefined) source = _capActiveFilter;
+  _capActiveFilter = source;
+  const grid = document.getElementById('capGrid');
+  grid.innerHTML = '<p class="muted">Loading…</p>';
+  try{
+    const q = source ? '&source='+encodeURIComponent(source) : '';
+    const d = await jget('/api/captures?limit=100'+q);
+    renderCaptureGrid(grid, d.captures||[]);
+  }catch(e){
+    grid.innerHTML = '<p class="muted">Error loading captures: '+_dEsc(e.message)+'</p>';
+  }
+}
+
+function capSetFilter(source, btnEl){
+  document.querySelectorAll('.cap-filter').forEach(b=>b.classList.toggle('active', b===btnEl));
+  loadCaptures(source);
+}
+
+// Detail panel lives inside the Captures tab (#capDetail) — a card click
+// from the Meta AI grid switches tabs to show it there too, so there's one
+// detail view, not a duplicate.
+function capOpenDetail(path){
+  const c = _capByPath[path];
+  if(!c) return;
+  openTab('captures');
+  const el = document.getElementById('capDetail');
+  el.classList.remove('hidden');
+  const tags = (c.tags||[]).map(t=>`<span class="chip">${_dEsc(t)}</span>`).join('');
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+      <b style="flex:1">${_dEsc(c.title||'(capture)')}</b>
+      <button class="ghost sm" onclick="capCloseDetail()">✕ close</button>
+    </div>
+    <div style="max-width:520px;border-radius:12px;overflow:hidden;margin-bottom:12px;background:rgba(255,255,255,.06)">
+      <img id="capDetailImg" style="width:100%;display:block" alt=""/>
+    </div>
+    <div class="muted" style="margin-bottom:10px">${_dEsc(_capWhen(c.created))}${c.place?' · '+_dEsc(c.place):''} · <span class="chip">${_dEsc(_capSourceLabel(c.source))}</span></div>
+    ${c.caption?`<p><b>Caption:</b> ${_dEsc(c.caption)}</p>`:''}
+    ${c.note?`<p><b>Note:</b> ${_dEsc(c.note)}</p>`:''}
+    ${c.ocr?`<p><b>Text in photo:</b><br><span style="white-space:pre-wrap">${_dEsc(c.ocr)}</span></p>`:''}
+    ${tags?`<div style="margin-top:8px">${tags}</div>`:''}
+    <button style="margin-top:14px" onclick="capAskAboutThis(decodeURIComponent('${encodeURIComponent(c.title||'this photo')}'))">Ask Amy about this</button>
+  `;
+  el.scrollIntoView({behavior:'smooth', block:'nearest'});
+  if(c.image) _capLoadImg(c.image, 'capDetailImg', true);
+}
+
+function capCloseDetail(){
+  document.getElementById('capDetail').classList.add('hidden');
+  if(_capDetailBlobUrl){ try{ URL.revokeObjectURL(_capDetailBlobUrl); }catch(e){} _capDetailBlobUrl=null; }
+}
+
+function capAskAboutThis(title){
+  openTab('chat');
+  const qi = document.getElementById('q');
+  if(!qi) return;
+  qi.value = 'Tell me about my photo "'+title+'"';
+  ask();
+}
+
+// ---- meta ai tab: drop-zone ingestion + glasses-only feed ----
+async function loadMetaAI(){
+  const grid = document.getElementById('metaGrid');
+  grid.innerHTML = '<p class="muted">Loading…</p>';
+  try{
+    const d = await jget('/api/captures?limit=200&source=meta-glasses');
+    const items = d.captures || [];
+    renderCaptureGrid(grid, items);
+    _capRenderMetaStats(items);
+  }catch(e){
+    grid.innerHTML = '<p class="muted">Error loading captures: '+_dEsc(e.message)+'</p>';
+  }
+}
+
+function _capRenderMetaStats(items){
+  const el = document.getElementById('metaStats');
+  if(!el) return;
+  const weekAgo = Date.now() - 7*86400000;
+  const thisWeek = items.filter(c=>{ const t=new Date(c.created); return !isNaN(t) && t.getTime()>=weekAgo; });
+  const places = {}, tags = {};
+  thisWeek.forEach(c=>{
+    if(c.place) places[c.place] = (places[c.place]||0)+1;
+    (c.tags||[]).forEach(t=>{ tags[t] = (tags[t]||0)+1; });
+  });
+  const top = obj => Object.entries(obj).sort((a,b)=>b[1]-a[1]).slice(0,3).map(x=>x[0]);
+  const topPlaces = top(places), topTags = top(tags);
+  el.innerHTML = `
+    <div class="tile"><div class="muted" style="font-size:11px">This week</div><div style="font-size:20px;font-weight:700">${thisWeek.length}</div></div>
+    <div class="tile"><div class="muted" style="font-size:11px">Top places</div><div style="font-size:12.5px">${topPlaces.length?_dEsc(topPlaces.join(', ')):'—'}</div></div>
+    <div class="tile"><div class="muted" style="font-size:11px">Top tags</div><div style="font-size:12.5px">${topTags.length?_dEsc(topTags.join(', ')):'—'}</div></div>
+  `;
+}
+
+// Shared multipart POST for /api/captures. Never sets taken_at/lat/lon from
+// the browser clock — the backend falls back to EXIF (amy/captures.py
+// _exif_fallback), so a dragged-in glasses photo keeps its real capture
+// time/place instead of "now".
+async function uploadCaptureFile(file, source){
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('source', source);
+  const r = await api('/api/captures', {method:'POST', body:fd});
+  if(!r.ok) throw new Error('upload failed ('+r.status+')');
+  return r.json();
+}
+
+async function metaFilesChosen(fileList){
+  const files = Array.from(fileList).filter(f=>f.type.startsWith('image/'));
+  if(!files.length) return;
+  const statusEl = document.getElementById('metaUploadStatus');
+  let uploaded=0, duplicate=0, failed=0;
+  for(let i=0;i<files.length;i++){
+    statusEl.textContent = `Uploading ${i+1} / ${files.length}…`;
+    try{
+      const res = await uploadCaptureFile(files[i], 'meta-glasses');
+      if(res.duplicate) duplicate++; else uploaded++;
+    }catch(e){ failed++; }
+  }
+  statusEl.textContent = `${uploaded} uploaded · ${duplicate} duplicate skipped`
+    + (failed ? ` · ${failed} failed` : '');
+  document.getElementById('metaFileInput').value = '';
+  loadMetaAI();
+}
+
+(function _capWireDropZone(){
+  const zone = document.getElementById('metaDropZone');
+  if(!zone) return;
+  ['dragenter','dragover'].forEach(ev=> zone.addEventListener(ev, e=>{ e.preventDefault(); zone.classList.add('dragover'); }));
+  ['dragleave','drop'].forEach(ev=> zone.addEventListener(ev, e=>{ e.preventDefault(); zone.classList.remove('dragover'); }));
+  zone.addEventListener('drop', e=>{
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if(files && files.length) metaFilesChosen(files);
+  });
+})();
+
 // ---- view switching ----
 function show(loggedIn){
   document.body.classList.toggle('authed', loggedIn);
@@ -1573,12 +1865,14 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='budget'){ loadFinBudgets(); loadBudgetSuggestions(); }
   if(tab==='business') loadBizEntities();
   if(tab==='reflect') loadReflect();
-  if(tab==='learn'){ loadLearn(); loadLearningFeed(); }
+  if(tab==='learn'){ loadLearn(); loadFocuses(); loadLearningFeed(); }
   if(tab==='agents') loadAgents();
   if(tab==='portfolio') loadPortfolio();
   if(tab==='memory') loadMemoryLake();
   if(tab==='timeline') loadTimeline('week');
   if(tab==='decisions') loadDecisions();
+  if(tab==='captures') loadCaptures();
+  if(tab==='metaai') loadMetaAI();
   if(tab==='intelligence') {}
   if(tab==='tags') loadTags();
   if(tab==='habits') loadHabits();
@@ -1800,6 +2094,74 @@ async function loadLearn(){
 }
 // ---- learning feed ----
 function _lfEsc(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+// api() returns whatever status the server sent without throwing (only a
+// 401 throws) — CRUD calls that silently ignore a failed status leave the
+// UI showing stale state with no explanation, so every focus mutation
+// below awaits this after api() and surfaces the server's error detail.
+async function _lfCheckOk(r){
+  if(r.ok) return r;
+  let detail=r.statusText;
+  try{ detail=(await r.json()).detail || detail; }catch(e){}
+  throw new Error(detail);
+}
+let _lfFocuses=[];
+async function loadFocuses(){
+  const el=document.getElementById('lfFocusList');
+  el.innerHTML='<span class="faint">Loading…</span>';
+  let d;
+  try{ d=await jget('/api/learning-feed/focuses'); }
+  catch(e){ el.innerHTML='<p class="muted">Could not load focuses: '+_lfEsc(e.message)+'</p>'; return; }
+  _lfFocuses=d.focuses||[];
+  el.classList.remove('muted');
+  el.innerHTML=_lfFocuses.length ? _lfFocuses.map(f=>{
+    const goalChip=f.goal_id
+      ?'<a href="#" class="chip" style="color:var(--gold)" onclick="openTab(\'goals\');return false" title="Linked goal">🎯 '+_lfEsc(f.goal_title||'goal')+'</a>'
+      :'<span class="faint" style="font-size:11px">no goal linked</span>';
+    return '<div class="toggle" style="align-items:center">'
+      +'<span><b style="cursor:pointer" onclick="loadLearningFeed({focus_id:\''+f.id+'\'})" title="Show this focus\'s items">'+_lfEsc(f.topic)+'</b> '+goalChip
+      +(f.active?'':' <span class="chip">paused</span>')+'</span>'
+      +'<span style="display:flex;gap:6px">'
+      +'<button class="ghost sm" onclick="toggleFocusActive(\''+f.id+'\','+(f.active?'false':'true')+')">'+(f.active?'pause':'resume')+'</button>'
+      +'<button class="ghost sm" onclick="deleteFocusUI(\''+f.id+'\')">delete</button></span></div>';
+  }).join('') : '<p class="muted">No focuses yet — add one below.</p>';
+  try{
+    const g=await jget('/api/goals');
+    const sel=document.getElementById('lfNewGoal');
+    sel.innerHTML='<option value="">No goal</option>'+(g.goals||[]).map(x=>'<option value="'+x.id+'">'+_lfEsc(x.title)+'</option>').join('');
+  }catch(e){}
+}
+async function createFocus(){
+  const topic=document.getElementById('lfNewTopic').value.trim();
+  const goalId=document.getElementById('lfNewGoal').value;
+  const m=document.getElementById('lfMsg');
+  if(!topic){ m.textContent='Enter a topic first.'; return; }
+  m.textContent='Adding…';
+  try{
+    await _lfCheckOk(await api('/api/learning-feed/focuses',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({topic, goal_id: goalId||null})}));
+    document.getElementById('lfNewTopic').value='';
+    m.textContent='Focus added — refreshing in the background (takes ~30s)…';
+    loadFocuses();
+    setTimeout(()=>{ loadLearningFeed(); m.textContent=''; }, 30000);
+  }catch(e){ m.textContent='Could not add focus: '+e.message; }
+}
+async function toggleFocusActive(id,active){
+  const m=document.getElementById('lfMsg');
+  try{
+    await _lfCheckOk(await api('/api/learning-feed/focuses/'+id,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({active})}));
+    m.textContent='';
+    loadFocuses();
+  }catch(e){ m.textContent='Could not update focus: '+e.message; }
+}
+async function deleteFocusUI(id){
+  const m=document.getElementById('lfMsg');
+  try{
+    await _lfCheckOk(await api('/api/learning-feed/focuses/'+id,{method:'DELETE'}));
+    m.textContent='';
+    loadFocuses(); loadLearningFeed();
+  }catch(e){ m.textContent='Could not delete focus: '+e.message; }
+}
 async function loadLearningFeed(filter){
   filter=filter||{};
   const el=document.getElementById('lfBody');
@@ -1807,13 +2169,12 @@ async function loadLearningFeed(filter){
   const qs=new URLSearchParams();
   if(filter.source) qs.set('source',filter.source);
   if(filter.saved) qs.set('saved','1');
+  if(filter.focus_id) qs.set('focus_id',filter.focus_id);
   let d;
   try{ d=await jget('/api/learning-feed'+(qs.toString()?'?'+qs:'')); }
   catch(e){ el.innerHTML='<p class="muted">Could not load feed: '+_lfEsc(e.message)+'</p>'; return; }
-  const focusEl=document.getElementById('lfFocus');
-  if(focusEl && !focusEl.value) focusEl.value=d.focus||'';
   // dynamic per-source filter chips (rebuilt from an unfiltered fetch only)
-  if(!filter.source && !filter.saved){
+  if(!filter.source && !filter.saved && !filter.focus_id){
     const srcs=[...new Set((d.items||[]).map(i=>i.source))].sort();
     const holder=document.getElementById('lfFilters');
     holder.querySelectorAll('[data-lf-src]').forEach(b=>b.remove());
@@ -1855,17 +2216,6 @@ async function loadLearningFeed(filter){
       +' <span class="chip">'+_lfEsc(it.source)+'</span> '+rel
       +why+prog+'</div>'+star+'</div>';
   }).join('');
-}
-async function saveFeedFocus(){
-  const focus=document.getElementById('lfFocus').value.trim();
-  const m=document.getElementById('lfMsg');
-  if(!focus){ m.textContent='Enter focus keywords first.'; return; }
-  m.textContent='Saving…';
-  try{
-    await api('/api/learning-feed/focus',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus})});
-    m.textContent='Focus saved — refreshing feed in the background (takes ~30s)…';
-    setTimeout(()=>{ loadLearningFeed(); m.textContent=''; }, 30000);
-  }catch(e){ m.textContent=e.message; }
 }
 async function saveFeedItem(id,btn){
   try{
@@ -2209,17 +2559,6 @@ const _MCP_PRESETS={
       'Deploy/run a Reddit MCP server configured with that app\'s credentials',
       'Paste your server\'s URL into "Server URL", and an access token into "API key / token"',
       'Learning Feed: if the server exposes a <b>search_posts</b> tool, flip "Also sync to vault" after adding and Reddit joins your feed']},
-  gmeet:{name:'Google Meet',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
-    steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
-      'Create an OAuth client in <b>Google Cloud Console</b> with Meet/Calendar API access',
-      'Deploy/run a Google Meet MCP server configured with that client',
-      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"',
-      'Note: Gmail/Calendar already work today via the separate "Connect Google" button above — this preset is only for Meet-specific data']},
-  gsheets:{name:'Google Sheets',server_url:'',auth_type:'oauth',risk_tier:'platform_api',
-    steps:['No verified server URL for this yet — you\'ll need to find/deploy one yourself',
-      'Create an OAuth client in <b>Google Cloud Console</b> with Sheets API access',
-      'Deploy/run a Google Sheets MCP server configured with that client',
-      'Paste your server\'s URL into "Server URL", and an access token into "API key / token"']},
   // Learning Feed sources — name must keep the source keyword (matched by
   // substring); server must expose the listed tool taking a query argument.
   hackernews:{name:'HackerNews',server_url:'',auth_type:'none',risk_tier:'scraping_backed',
@@ -3458,6 +3797,9 @@ async function loadDashboard(){
     obligations: jget('/api/obligations'),
     deadlines:   jget('/api/jurisdictions/deadlines?days=120'),
     activity:    jget('/api/memory/heatmap?days=14'),
+    meetings:    jget('/api/connectors/calendar?limit=8'),
+    learningFocuses: jget('/api/learning-feed/focuses'),
+    learningItems:   jget('/api/learning-feed?limit=200'),
   };
   const D = {};
   await Promise.all(Object.entries(jobs).map(async ([k,p])=>{
@@ -3472,9 +3814,11 @@ async function loadDashboard(){
   safe(()=>dashRenderTimeline());
   safe(()=>dashRenderMoney(D));
   safe(()=>dashRenderGrowth(D));
+  safe(()=>dashRenderLearning(D));
   safe(()=>dashRenderLife(D));
   safe(()=>dashRenderMind(D));
   safe(()=>dashRenderDeadlines(D));
+  safe(()=>dashRenderMeetings(D));
 }
 
 function dashRenderHeader(){
@@ -3780,6 +4124,37 @@ function dashRenderGrowth(D){
     bars.map(v=>`<i style="height:${Math.max(6, Math.round(100*v/max))}%;opacity:${v?0.85:0.25}" title="${v} activities"></i>`).join('');
 }
 
+/* ── learning overview (focuses, weekly engagement, goal-linked progress) ── */
+function dashRenderLearning(D){
+  const focuses = (D.learningFocuses && D.learningFocuses.focuses) || [];
+  const items = (D.learningItems && D.learningItems.items) || [];
+  document.getElementById('dashLearnFocuses').textContent =
+    focuses.filter(f=>f.active).length;
+
+  const weekAgo = Date.now() - 7*86400000;
+  const inWeek = ts => !!ts && new Date(ts).getTime() >= weekAgo;
+  const savedWeek = items.filter(it=>it.saved && inWeek(it.fetched_at)).length;
+  const completedWeek = items.filter(it=>inWeek(it.completed_at)).length;
+  document.getElementById('dashLearnStats').textContent =
+    `${savedWeek} saved · ${completedWeek} completed this week`;
+
+  const byFocus = {};
+  items.forEach(it=>{ if(it.focus_id) (byFocus[it.focus_id] = byFocus[it.focus_id] || []).push(it); });
+  const linked = focuses.filter(f=>f.goal_id).slice(0,3);
+  document.getElementById('dashLearnGoals').innerHTML = linked.length ? linked.map(f=>{
+    const its = byFocus[f.id] || [];
+    const done = its.filter(it=>it.saved || it.completed_at).length;
+    const pct = its.length ? Math.round(100*done/its.length) : 0;
+    return `<div style="margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;gap:8px;font-size:12px;margin-bottom:3px">
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dEsc(f.topic)}</span>
+        <b style="color:var(--gold)">${pct}%</b>
+      </div>
+      <div class="bar" style="height:6px"><i style="width:${pct}%"></i></div>
+    </div>`;
+  }).join('') : '<span class="faint" style="font-size:12px">No goal-linked focuses yet.</span>';
+}
+
 /* ── life overview (habit heatmap + goal progress) ── */
 async function dashRenderLife(D){
   const goals = ((D.goals && D.goals.goals) || []).filter(g=>(g.status||'active') !== 'done').slice(0,3);
@@ -3899,6 +4274,28 @@ function dashRenderDeadlines(D){
         <div class="faint" style="font-size:11px">${_dEsc(String(x.date))}${x.amount?` · est. ${fmtMoney(x.amount)}`:''}${x.jd?` · ${_dEsc(x.jd)}`:''}</div>
       </div>
       <b style="font-size:12px;color:${col};white-space:nowrap">${days} days left</b>
+    </div>`;
+  }).join('');
+}
+
+/* ── upcoming meetings (Google Meet join links on calendar events) ── */
+function dashRenderMeetings(D){
+  const card = document.getElementById('dashMeetingsCard');
+  const el = document.getElementById('dashMeetings');
+  const items = ((D.meetings && D.meetings.items) || []).filter(i => i.meta && i.meta.meet_url);
+  if(!items.length){ card.style.display = 'none'; return; }
+  card.style.display = '';
+  el.classList.remove('muted');
+  el.innerHTML = items.slice(0,5).map(i=>{
+    const t = i.ts ? new Date(i.ts) : null;
+    const when = (t && !isNaN(t)) ? t.toLocaleString([], {weekday:'short', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : (i.ts || '');
+    return `<div class="dl-row">
+      <span class="a-ico" style="flex:0 0 28px;width:28px;height:28px;font-size:13px;color:var(--cyan)">🎥</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_dEsc(i.title || '(untitled)')}</div>
+        <div class="faint" style="font-size:11px">${_dEsc(when)}</div>
+      </div>
+      <a href="${_dEsc(i.meta.meet_url)}" target="_blank" rel="noopener" class="ghost sm" style="flex:0 0 auto;font-size:12px;padding:5px 10px">Join</a>
     </div>`;
   }).join('');
 }

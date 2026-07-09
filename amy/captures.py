@@ -165,6 +165,51 @@ def _parse_dt(taken_at: str | None) -> _dt.datetime:
     return _dt.datetime.now().astimezone()
 
 
+def _exif_fallback(image_bytes: bytes) -> tuple[str | None, float | None, float | None]:
+    """Best-effort (taken_at, lat, lon) from EXIF — for uploads that arrive
+    with no explicit metadata (e.g. photos dragged into the web Meta AI drop
+    zone). Returns (None, None, None) on any failure; never raises. Pillow is
+    already a dependency (vision/caption path), no new package added."""
+    try:
+        from PIL import Image, ExifTags
+
+        img = Image.open(__import__("io").BytesIO(image_bytes))
+        raw = img._getexif()
+        if not raw:
+            return None, None, None
+        exif = {ExifTags.TAGS.get(k, k): v for k, v in raw.items()}
+
+        taken_at = None
+        dt_str = exif.get("DateTimeOriginal") or exif.get("DateTime")
+        if dt_str:
+            try:
+                taken_at = _dt.datetime.strptime(
+                    str(dt_str), "%Y:%m:%d %H:%M:%S").isoformat()
+            except Exception:
+                taken_at = None
+
+        lat = lon = None
+        gps = exif.get("GPSInfo")
+        if gps:
+            gps_tags = {ExifTags.GPSTAGS.get(k, k): v for k, v in gps.items()}
+
+            def _to_deg(value, ref) -> float | None:
+                try:
+                    d, m, s = (float(v) for v in value)
+                    deg = d + m / 60.0 + s / 3600.0
+                    return -deg if ref in ("S", "W") else deg
+                except Exception:
+                    return None
+
+            if "GPSLatitude" in gps_tags and "GPSLongitude" in gps_tags:
+                lat = _to_deg(gps_tags["GPSLatitude"], gps_tags.get("GPSLatitudeRef", "N"))
+                lon = _to_deg(gps_tags["GPSLongitude"], gps_tags.get("GPSLongitudeRef", "E"))
+
+        return taken_at, lat, lon
+    except Exception:
+        return None, None, None
+
+
 def ingest(
     image_bytes: bytes,
     filename: str = "",
@@ -183,6 +228,17 @@ def ingest(
     vault: target vault root (per-user in SaaS; defaults to global config.VAULT).
     openai_api_key: caption/OCR key (None=global, user's key in SaaS, ""=skip).
     """
+    # Uploads with no explicit taken_at/GPS (e.g. files dragged into the web
+    # Meta AI drop zone) fall back to EXIF so they keep their real capture
+    # time/place instead of "now" — only fills in what the caller didn't
+    # already provide.
+    if taken_at is None or (lat is None and lon is None):
+        exif_taken_at, exif_lat, exif_lon = _exif_fallback(image_bytes)
+        if taken_at is None:
+            taken_at = exif_taken_at
+        if lat is None and lon is None:
+            lat, lon = exif_lat, exif_lon
+
     h = hashlib.sha1(image_bytes).hexdigest()[:12]
     ext = _ext_for(filename, content_type)
     created = _parse_dt(taken_at)
@@ -415,19 +471,62 @@ def context_block(query: str, vault=None, k: int = 3) -> str:
     return "\n".join(lines)
 
 
+def _body_parts(body: str) -> tuple[str, str, str]:
+    """(caption, note, ocr) straight from a capture note's body — same
+    regexes/blockquote convention as _parse_capture_note(), reused rather
+    than re-derived so list_captures() and the search layer never drift."""
+    caption = _body_field(_CAPTION_RE, body)
+    note = _body_field(_NOTE_RE, body)
+    ocr = "\n".join(ln.lstrip("> ").strip() for ln in body.splitlines()
+                    if ln.startswith(">") and ln.lstrip("> ").strip())
+    return caption, note, ocr
+
+
+def _summary_for(caption: str, note: str, ocr: str, place: str) -> str:
+    """One-line description for a capture card: caption > user note > first
+    OCR line > place > ''."""
+    if caption:
+        return caption
+    if note:
+        return note
+    if ocr:
+        return ocr.splitlines()[0]
+    return f"Photo at {place}" if place else ""
+
+
+def _created_sort_key(n) -> str:
+    """String sort key for a capture's created timestamp. The vault's
+    frontmatter parser sometimes yields a str, sometimes a datetime (tz-aware
+    or naive depending on how the string was written) — comparing those
+    directly raises TypeError, so everything is normalized to an ISO string
+    (which still sorts chronologically) before sort() ever compares two."""
+    c = n.meta.get("created")
+    if hasattr(c, "isoformat"):
+        return c.isoformat()
+    return str(c) if c else n.path
+
+
 def list_captures(notes, limit: int = 50) -> list[dict]:
     """Recent capture notes from the loaded vault notes (newest first)."""
     caps = [n for n in notes if n.path.startswith(CAPTURES_REL + "/") and n.path.endswith(".md")]
-    caps.sort(key=lambda n: n.meta.get("created", n.path), reverse=True)
+    caps.sort(key=_created_sort_key, reverse=True)
     out = []
     for n in caps[:limit]:
         loc = n.meta.get("location") or {}
+        place = (loc.get("place") if isinstance(loc, dict) else "") or ""
+        caption, note, ocr = _body_parts(n.body or "")
+        created = n.meta.get("created", "")
         out.append({
             "path": n.path,
             "title": n.title,
-            "created": n.meta.get("created", ""),
+            "created": created.isoformat() if hasattr(created, "isoformat") else str(created),
             "image": n.meta.get("image", ""),
-            "place": (loc.get("place") if isinstance(loc, dict) else "") or "",
+            "place": place,
             "tags": n.tags,
+            "summary": _summary_for(caption, note, ocr, place),
+            "caption": caption,
+            "note": note,
+            "ocr": ocr,
+            "source": str(n.meta.get("source", "")),
         })
     return out

@@ -43,7 +43,8 @@ _SUMMARY_KEYS = ("summary", "description", "abstract", "selftext", "text", "body
 _SCORE_KEYS = ("score", "points", "upvotes", "likes", "like_count")
 _PUBLISHED_KEYS = ("published_at", "published", "created_at", "date", "created", "pubDate")
 _LIST_KEYS = ("items", "results", "stories", "papers", "posts", "videos",
-              "articles", "data", "hits", "entries")
+              "articles", "data", "hits", "entries",
+              "result")   # FastMCP's own wrapper key for a bare list[...] return type
 
 
 def tool_for(connector_name: str) -> tuple[str, ...] | None:

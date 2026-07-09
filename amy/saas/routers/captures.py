@@ -86,10 +86,16 @@ async def create_capture(
 
 
 @router.get("/api/captures")
-def captures_list(limit: int = 50, user: User = Depends(current_user)):
+def captures_list(limit: int = 50, source: str | None = None,
+                  user: User = Depends(current_user)):
     from ... import captures as captures_mod
     eng = _engine_for(user)
-    return {"captures": captures_mod.list_captures(eng.notes, limit=limit)}
+    # Filter before truncating to `limit` so a source filter doesn't get
+    # crowded out by newer captures from other sources.
+    caps = captures_mod.list_captures(eng.notes, limit=max(limit, 1000))
+    if source:
+        caps = [c for c in caps if c.get("source") == source]
+    return {"captures": caps[:limit]}
 
 
 @router.get("/api/captures/image")

@@ -283,6 +283,80 @@ async def _vault_watch_loop():
             pass
 
 
+# ---------------------------------------------------------------------------
+# Local MCP servers (mcp_servers/*.py) — auto-start + supervise
+#
+# Registering a connector in mcp_connectors only stores a URL; it can never
+# make a localhost process exist. These three self-hosted servers back
+# registered connectors that point at localhost (Job Search/HackerNews/
+# YouTube — see mcp_servers/*.py), so Amy launches and supervises them
+# itself: as long as this app is running, they are too, with no separate
+# manual `python mcp_servers/....py` step per session.
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_LOCAL_MCP_SERVERS = [
+    ("jobspy",     _REPO_ROOT / "mcp_servers" / "jobspy_server.py",     8935),
+    ("hackernews", _REPO_ROOT / "mcp_servers" / "hackernews_server.py", 8001),
+    ("youtube",    _REPO_ROOT / "mcp_servers" / "youtube_server.py",    8003),
+    ("devto",      _REPO_ROOT / "mcp_servers" / "devto_server.py",      8004),
+]
+_local_mcp_procs: dict = {}   # name -> subprocess.Popen
+
+
+def _port_open(port: int, host: str = "127.0.0.1") -> bool:
+    import socket
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(0.5)
+        return s.connect_ex((host, port)) == 0
+
+
+def _ensure_local_mcp_servers():
+    """(Re)start any tracked local MCP server that isn't currently listening.
+    Skips a server whose port is already open — either our own previous
+    child is still alive, or something else (a manually-started instance)
+    already owns that port, and spawning a second one would just collide."""
+    import subprocess, sys
+    for name, script, port in _LOCAL_MCP_SERVERS:
+        if not script.exists():
+            continue
+        proc = _local_mcp_procs.get(name)
+        if proc is not None and proc.poll() is None:
+            continue   # our child, still running
+        if _port_open(port):
+            continue   # something (ours from a prior tick, or external) already serves this port
+        try:
+            _local_mcp_procs[name] = subprocess.Popen(
+                [sys.executable, str(script)],
+                cwd=str(_REPO_ROOT),
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            pass   # one server failing to launch must never block app startup
+
+
+async def _local_mcp_supervisor_loop():
+    import asyncio
+    if os.getenv("AMY_LOCAL_MCP_SERVERS", "1") == "0":
+        return   # opt-out
+    seconds = float(os.getenv("AMY_LOCAL_MCP_SUPERVISE_SECONDS", "60"))
+    while True:
+        try:
+            await asyncio.to_thread(_ensure_local_mcp_servers)
+        except Exception:
+            pass
+        await asyncio.sleep(max(10.0, seconds))
+
+
+def _stop_local_mcp_servers():
+    for proc in _local_mcp_procs.values():
+        if proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+
+
 def _run_all_consolidations():
     from ..memory.consolidate import Consolidator
     s = SessionLocal()
@@ -480,3 +554,9 @@ async def _startup():
     asyncio.create_task(_automation_loop())
     asyncio.create_task(_mcp_poll_loop())
     asyncio.create_task(_vault_watch_loop())
+    asyncio.create_task(_local_mcp_supervisor_loop())
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    _stop_local_mcp_servers()

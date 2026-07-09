@@ -148,6 +148,25 @@ def _t_bills(ctx, args):
         fe.close()
 
 
+@register_tool("upcoming_meetings",
+               "Upcoming calendar events, with a Google Meet join link when "
+               "the event has one. Requires Google to be connected "
+               "(Account tab -> Connect Google) — returns [] otherwise.",
+               _obj({"limit": {"type": "integer", "description": "max events (<=20)"}}),
+               RISK_READ)
+def _t_upcoming_meetings(ctx, args):
+    from ..connectors import ConnectorRegistry
+    limit = min(int(args.get("limit") or 10), 20)
+    try:
+        items = ConnectorRegistry(ctx.connector_dir).list("calendar", mode="private", limit=limit)
+    except Exception:
+        return []
+    return [{"title": i.get("title"), "start": i.get("ts"),
+             "meet_url": (i.get("meta") or {}).get("meet_url") or None,
+             "location": (i.get("meta") or {}).get("location") or None}
+            for i in items]
+
+
 @register_tool("afford_check",
                "'Can I afford this?' — verdict with reasoning and risk level.",
                _obj({"amount": {"type": "number"},

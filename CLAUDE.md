@@ -9,9 +9,27 @@ python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
 # Kill: Get-NetTCPConnection -LocalPort 8849 | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 ```
 
+App startup auto-launches+supervises the local MCP servers behind the
+Job Search/HackerNews/YouTube/Dev.to connectors (`mcp_servers/*.py`, ports
+8935/8001/8003/8004 — see `_local_mcp_supervisor_loop` in `amy/saas/app.py`).
+Force-killing the main app (above) does **not** kill these children on
+Windows — they keep running independently, which is intentional (the
+supervisor detects they're already up on next start and won't duplicate
+them). To stop everything including the children:
+```bash
+# Kill main app + all four local MCP servers:
+Get-NetTCPConnection -LocalPort 8849,8935,8001,8003,8004 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+```
+Opt out of auto-start with `AMY_LOCAL_MCP_SERVERS=0`. YouTube needs
+`YOUTUBE_API_KEY` in `.env` (YouTube Data API v3) — without it the server
+still starts but `search_videos` returns `[]`.
+
 ## What It Is
 
-FastAPI + single-page frontend. SQLite-per-user. One active user (`guruprasathjay@gmail.com`, uid `4cfcf80f85e944178e5b4c2d6493b9dd`).
+FastAPI + single-page frontend. SQLite-per-user, multi-user capable — do
+not hardcode a uid/email in docs or scripts, it goes stale fast; look up
+current accounts in `saas_data/amy_saas.db`'s `users` table
+(`id, email`).
 
 Primary: **Finance CFO** — CSV/XLS/PDF import, Gmail sync, budgets, subscriptions, investments, custodial accounts.
 
@@ -51,7 +69,8 @@ amy/
   tools/                 Tool registry (R1): JSON-schema tools with risk levels
                          read|write|destructive; AGENT_GATE parks agent writes
   agents/reactive.py     Reactive agents (R2): budget/subscription/compliance/
-                         screening — wired onto EventStore at emit points
+                         screening/errand/learning — wired onto EventStore at
+                         emit points (register_reactive_agents(events, ctx))
   calendars/             Calendar abstraction (R7A-3): gregorian|hijri|fiscal
   jurisdictions/         Packs (R7B): {uae,us,india}.json + loader/versioning
                          + fx_seed.json. New jurisdiction = new JSON only
@@ -110,6 +129,18 @@ amy/
                          + photo-memory search: search_captures/captures_between/
                          context_block — used by CollabMaster chat context, the
                          search_captures/recent_captures tools, and capture_digest
+  learning_feed/          Multi-focus learning tracker (Learn tab + dashboard
+                         card). aggregator.py fans a topic out to promoted MCP
+                         sources (SOURCE_TOOLS: HN/YouTube/arXiv/Reddit/
+                         Bluesky/Dev.to) → ranker.py (one LLM call, 0-10
+                         relevance + why) → sensor.py (poll_one per
+                         learning_focuses row, poll_all loops every active
+                         focus; upserts learning_feed_items, emits
+                         learning.feed_refreshed, writes a vault note).
+                         Local MCP servers for HN/YouTube/Dev.to live in
+                         mcp_servers/*.py (see Run section). Reactive agent:
+                         agents/reactive.py:_learning_agent. Full detail:
+                         "Learning Feed" section below.
   memory/writer.py       MemoryWriter: idempotent vault journaling (daily + atomic notes)
   knowledge_graph/store.py  GraphStore: typed nodes+edges, edge UPSERT with timestamps
   saas/
@@ -126,17 +157,22 @@ amy/
       values.py          /api/values presets/profiles/flags
       auth.py            JWT login, OpenAI key, private folder
       connectors.py      Google OAuth flow + disconnect
-      [11 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
+      learning_feed.py   Focus CRUD, feed list, save/progress — /api/learning-feed/...
+      [10 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
     static/index.html    Entire frontend (~3000 lines, one file)
 ```
 
 ## Data Paths
 
+`{uid}` = a row id from `saas_data/amy_saas.db`'s `users` table — look it
+up, don't hardcode one (see "What It Is").
+
 | What | Path |
 |---|---|
 | User DB | `saas_data/amy_saas.db` |
-| Finance DB | `saas_data/index/4cfcf80f85e944178e5b4c2d6493b9dd/finance.db` |
-| Google token | `saas_data/index/4cfcf80f85e944178e5b4c2d6493b9dd/connectors/google_token.json` |
+| Finance DB | `saas_data/index/{uid}/finance.db` |
+| Collab DB | `saas_data/index/{uid}/collab.db` — events, automation_jobs/runs/approvals, goals/tasks/milestones, learning_focuses/learning_feed_items, geo_places/visits/cells, values screening_flags, prefs, activities |
+| Google token | `saas_data/index/{uid}/connectors/google_token.json` |
 
 ## Finance DB Tables
 
@@ -255,6 +291,65 @@ POST              /api/business/entities/{entity_id}/compliance/run
 GET/PATCH         /api/business/rates[/{rate_id}]
 ```
 
+## Learning Feed
+
+Multi-focus learning tracker behind the Learn tab + dashboard Learning card.
+
+- Data lives in `collab.db` (tables created lazily by `AutomationStore._init`):
+  `learning_focuses` (id, uid, topic, goal_id nullable FK into `goals`,
+  active, created_at) and `learning_feed_items` (id, uid, source, title,
+  url, summary, score, relevance, why, focus_tag, focus_id FK, saved,
+  fetched_at, published_at, progress, position_sec, duration_sec,
+  completed_at).
+- A user tracks any number of topics ("focuses") at once; a focus can
+  optionally link to a `goals` row — same `goals`/`tasks` tables
+  `GoalEngine` (`amy/autonomous/goals.py`, used by the `create_goal`/
+  `add_goal_task` tools) and `PlannerAgent` (`amy/collab/planner.py`,
+  backs `/api/goals`) both operate on, so a linked goal shows up on the
+  normal Goals tab too — no separate goal model for learning.
+- Pipeline: `amy/learning_feed/aggregator.py` (fan a topic out to every
+  promoted MCP connector matching `SOURCE_TOOLS`, normalize whatever
+  shape comes back — JSON, wrapped list, or numbered plain text) →
+  `ranker.py` (ONE LLM call scores every item 0-10 + a one-line "why",
+  degrades to unranked input order on any parse/LLM failure — never
+  errors) → `sensor.py` (`LearningFeedSensor.poll_one` handles one focus
+  row: fetch → rank → upsert → emit `learning.feed_refreshed` → vault
+  note; `poll_all` loops every active focus for a user, one failing
+  focus never blocks the others). `learning_feed_refresh` automation job
+  (every 6h, gated by `AMY_LEARNING_FEED_ENABLED`) calls `poll_all()`.
+- Local MCP servers for HackerNews/YouTube/Dev.to: `mcp_servers/*.py`
+  (ports/env in the Run section above). arXiv/Reddit/Bluesky need an
+  external community MCP server registered instead — `SOURCE_TOOLS` in
+  `aggregator.py` lists the candidate tool names per source.
+- Saving an item (`POST .../save/{id}`) or crossing 90% watched
+  (`PATCH .../progress/{id}`) both write a vault note (`MemoryWriter`)
+  AND log to the `activities` table (`MemoryManager.log_activity`,
+  `amy/collab/memory.py`) — this feeds `amy/collab/learning.py`'s trend
+  engine (`/api/learn`, the "Learning trends" card), so trends reflect
+  real feed engagement now, not only CollabMaster chat queries.
+- Reactive agent `agents/reactive.py:_learning_agent` (kill switch
+  `AMY_AGENT_LEARNING`, default on) subscribes to `learning.feed_refreshed`
+  and `learning.item_completed`: proposes a goal (tier-2 Approval Inbox
+  via `tools.invoke(..., actor="agent")`, dedup key
+  `learning_goal_{topic}`) when an UNLINKED focus's topic is trending in
+  the activity log; nudges (advisory `agent.insight` only — never a
+  write) a GOAL-LINKED focus that's accumulated ≥10 fetched items with
+  zero saves/completions after 3+ days; journals completions as insights.
+- Focus create/reactivate schedules a `BackgroundTasks` refresh keyed on
+  the focus **id** (`refresh_for_user(..., focus_id=...)`), not topic
+  text — refreshing by text alone would silently recreate a focus the
+  user deletes in the few seconds before the queued task runs (it looks
+  up-or-creates by topic string). `refresh_for_user(..., focus=...)`
+  (text-keyed) is a legacy fallback kept for callers with no row id.
+
+```
+GET/POST                /api/learning-feed/focuses
+PATCH/DELETE            /api/learning-feed/focuses/{focus_id}
+GET                     /api/learning-feed?source=&saved=&focus_id=&limit=
+POST                    /api/learning-feed/save/{item_id}
+PATCH                   /api/learning-feed/progress/{item_id}   # watch-progress heartbeat, ≥90% = completed
+```
+
 ## Automation Layer
 
 App loop ticks every 60s (`AMY_AUTOMATION_TICK_SECONDS`), runs due jobs per user,
@@ -305,16 +400,23 @@ finance.transaction_added / csv_imported / pdf_imported / gmail_synced
 finance.budget_set / subscription_added / investment_added / income_added
 finance.ledger_entry_posted / ledger_audited / compliance_suggested
 business.entity_created
+learning.feed_refreshed / learning.item_completed
 agent.insight / agent.action_proposed / agent.action_executed
 agent.goal_planned / agent.error        # always carry {agent, reasoning}
 vault.note_edited
 goal.created / goal.completed / capture.added / digest.generated
 context.place_entered / place_left / location_updated   # payload = place id/name/kind, never coordinates
 
-# Reactive agents (amy/agents/reactive.py) are wired onto EventStore at both
-# emit points (_emit_fin + JobCtx.events()) — the bus is per-instance, so
-# subscribers must attach where the emit happens. Kill switches:
-# AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _SCREENING / _OBLIGATION / _ERRAND.
+# Reactive agents (amy/agents/reactive.py) are wired onto EventStore at
+# EVERY site that builds one and is about to emit an agent-relevant event —
+# the bus is per-instance, so each call site must call
+# register_reactive_agents(events, ctx) itself. Known sites: _emit_fin
+# (finance.py), JobCtx.events() (automation/executors.py),
+# _events_with_agents (geo.py), and the learning-feed router/sensor. A site
+# that builds a bare EventStore(cdb) and calls .emit() directly SILENTLY
+# drops all agent reactions — no error, nothing in the logs. Kill switches:
+# AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _SCREENING / _OBLIGATION /
+# _ERRAND / _LEARNING.
 ```
 
 ## LLM Routing
@@ -358,6 +460,8 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 17. Jurisdiction packs: everything country-specific is JSON in `amy/jurisdictions/` (validated on load, effective-date versioned). No jurisdiction/religion logic in Python — new jurisdiction = new pack file (docs/jurisdictions.md). Obligation/screening presets are data; custodial accounts are excluded from obligation wealth math as a hard rail packs cannot override.
 18. Currency display: never hardcode ₹ — backend formats via `amy/locale_fmt.py` (+ `AMY_CURRENCY_SYMBOL` for context.py), frontend via `fmtMoney()` driven by `/api/settings/locale`.
 19. `docs/AGENT_PLAN.md` is the source of truth for the agentic-finance project (phases, commits, binding R7B spec).
+20. A new event-emit site ALWAYS needs its own `register_reactive_agents(events, ctx)` call before `.emit(...)` — copy the `_emit_fin`/`_events_with_agents` idiom. Forgetting it doesn't error; the agent just never fires (found and fixed twice in the learning-feed router/sensor during that feature's build).
+21. Refresh-by-topic-text on a multi-row feature (learning_focuses) can resurrect a row a user just deleted, if a `BackgroundTasks` refresh was queued before the delete lands and only runs after. Refresh by row id, not by the text a lookup-or-create query matches on, whenever an id is available.
 
 ## Common Pattern
 

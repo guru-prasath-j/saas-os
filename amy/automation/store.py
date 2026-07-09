@@ -146,10 +146,20 @@ class AutomationStore:
                 PRIMARY KEY (msg_id, filename)
             );
 
+            CREATE TABLE IF NOT EXISTS learning_focuses (
+                id         TEXT PRIMARY KEY,
+                uid        TEXT NOT NULL,
+                topic      TEXT NOT NULL,
+                goal_id    TEXT,
+                active     INTEGER DEFAULT 1,
+                created_at TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_runs_job   ON automation_runs(job_name, started_at);
             CREATE INDEX IF NOT EXISTS idx_feed_uid   ON learning_feed_items(uid, fetched_at);
             CREATE INDEX IF NOT EXISTS idx_appr_state ON approvals(status, created_at);
             CREATE INDEX IF NOT EXISTS idx_llm_ts     ON llm_calls(ts);
+            CREATE INDEX IF NOT EXISTS idx_focus_uid  ON learning_focuses(uid, active);
             """
         )
         self.conn.commit()
@@ -174,6 +184,14 @@ class AutomationStore:
                 self.conn.commit()
             except Exception:
                 pass   # column already exists
+        # Multi-focus upgrade: FK from an item to the learning_focuses row
+        # that fetched it (focus_tag stays as the human-readable topic text)
+        try:
+            self.conn.execute(
+                "ALTER TABLE learning_feed_items ADD COLUMN focus_id TEXT")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
 
     # --- global pause -------------------------------------------------------
 

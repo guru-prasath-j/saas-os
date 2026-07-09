@@ -23,6 +23,11 @@ starlette>=0.37.2,<0.38.0
 # works with amy/connectors/mcp.py out of the box.
 python-jobspy>=1.1
 
+# mcp_servers/hackernews_server.py + youtube_server.py — same self-hosted
+# FastMCP pattern, for the free Algolia HN Search API and the YouTube Data
+# API v3 respectively.
+requests>=2.31
+
 # Core (Phase 1-3). All optional deps degrade gracefully if missing.
 fastapi>=0.110
 uvicorn[standard]>=0.29

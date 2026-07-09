@@ -14,6 +14,10 @@ Agents:
                  and proposes them through the approval queue
   compliance   — after a ledger post, runs compliance suggestions for
                  'close'-tracked business entities (advisory rows only)
+  learning     — after a learning-feed refresh, proposes a goal for a
+                 topic that's trending up and isn't goal-linked yet, and
+                 nudges (advisory only) a goal-linked focus with zero
+                 engagement after repeated refreshes
 
 Rules honored here:
   - every insight/action carries an explicit reasoning string
@@ -25,6 +29,8 @@ Rules honored here:
   - journaling via MemoryWriter.log_event is idempotent on event id
 """
 from __future__ import annotations
+
+import datetime as _dt
 
 from .. import config
 
@@ -368,6 +374,104 @@ def _compliance_agent(events, ctx):
     events.subscribe("finance.ledger_entry_posted", on_ledger_posted)
 
 
+_LEARNING_STALE_MIN_ITEMS = 10   # at least one real refresh cycle happened
+_LEARNING_STALE_MIN_DAYS = 3     # give a fresh focus time before nudging
+
+
+def _learning_agent(events, ctx):
+    """Learning feed reactions (multi-focus, goal-linked): on a refresh,
+    propose a goal for a topic that's organically trending and not yet
+    linked to one; nudge (advisory only, never a write) a goal-linked
+    focus that's accumulated items with zero saves/completions. On item
+    completion, journal an insight — the activity-log write that feeds the
+    trend engine already happens in the learning-feed router (save/
+    progress endpoints), not here."""
+    def on_feed_refreshed(ev):
+        try:
+            p = ev.get("payload") or {}
+            topic = (p.get("focus") or "").strip()
+            focus_id = p.get("focus_id")
+            if not topic or not focus_id:
+                return
+            row = ctx.collab.conn.execute(
+                "SELECT goal_id FROM learning_focuses WHERE id=?",
+                (focus_id,)).fetchone()
+            if row is None:
+                return
+            goal_id = row["goal_id"]
+
+            if not goal_id:
+                from ..collab.learning import LearningAgent
+                trend = LearningAgent(ctx.collab, None).trends().get(topic)
+                if not trend or trend["trend"] != "increasing":
+                    return
+                from .. import tools
+                reasoning = (f"'{topic}' is trending up in your learning feed "
+                             f"({trend['recent']} recent vs {trend['prior']} prior "
+                             "engagement) and isn't linked to a goal yet — "
+                             "proposing one so it's tracked deliberately.")
+                _emit_insight(events, ctx, "learning",
+                              f"'{topic}' is trending — suggest a goal", reasoning,
+                              {"topic": topic, "focus_id": focus_id})
+                ctx._extras["agent_name"] = "learning_agent"
+                ctx._extras["agent_reasoning"] = reasoning
+                ctx._extras["agent_dedup_key"] = f"learning_goal_{topic}"
+                tools.invoke(ctx, "create_goal",
+                             {"title": f"Deep-dive: {topic}", "domain": "learning"},
+                             actor="agent")
+                return
+
+            # goal-linked focus: nudge (never propose a write) if it's stale
+            stats = ctx.collab.conn.execute(
+                "SELECT COUNT(*) AS total, COALESCE(SUM(saved),0) AS saved_ct,"
+                " MIN(fetched_at) AS first_fetch FROM learning_feed_items"
+                " WHERE uid=? AND focus_id=?", (ctx.user_id, focus_id)).fetchone()
+            if not stats or stats["total"] < _LEARNING_STALE_MIN_ITEMS or stats["saved_ct"]:
+                return
+            first_fetch = stats["first_fetch"]
+            if not first_fetch:
+                return
+            age_days = (_dt.datetime.now(_dt.timezone.utc)
+                       - _dt.datetime.fromisoformat(first_fetch)).days
+            if age_days < _LEARNING_STALE_MIN_DAYS:
+                return
+            reasoning = (f"'{topic}' is linked to a goal but {stats['total']} curated "
+                         f"items over {age_days} days have zero saves or completions — "
+                         "flagging so it doesn't quietly go stale.")
+            _emit_insight(events, ctx, "learning",
+                          f"'{topic}' goal focus has no engagement yet", reasoning,
+                          {"topic": topic, "focus_id": focus_id, "goal_id": goal_id})
+            ns = ctx.notify_store()
+            ref = f"learning_stale_{focus_id}"
+            if not ns.exists_today("learning_stale_focus", ref):
+                ns.create(type="learning_stale_focus",
+                          title=f"No progress yet on '{topic}'",
+                          body=reasoning, priority="normal",
+                          related_entity={"id": ref, "entity_type": "learning_focus",
+                                          "focus_id": focus_id, "goal_id": goal_id})
+        except Exception as exc:
+            _report_error(events, "learning", exc)
+
+    def on_item_completed(ev):
+        try:
+            p = ev.get("payload") or {}
+            title = p.get("title") or "an item"
+            topic = p.get("focus") or ""
+            reasoning = (f"Completed '{title}'"
+                         + (f" (focus: {topic})" if topic else "") +
+                         " — logged to the learning activity trail.")
+            _emit_insight(events, ctx, "learning",
+                          f"Completed: {title}", reasoning,
+                          {"title": title, "focus": topic,
+                           "focus_id": p.get("focus_id"),
+                           "source_event_id": ev.get("id")})
+        except Exception as exc:
+            _report_error(events, "learning", exc)
+
+    events.subscribe("learning.feed_refreshed", on_feed_refreshed)
+    events.subscribe("learning.item_completed", on_item_completed)
+
+
 # ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
@@ -475,4 +579,7 @@ def register_reactive_agents(events, ctx) -> list[str]:
     if config.agent_enabled("errand"):
         _errand_agent(events, ctx)
         registered.append("errand")
+    if config.agent_enabled("learning"):
+        _learning_agent(events, ctx)
+        registered.append("learning")
     return registered
