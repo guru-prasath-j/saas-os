@@ -234,14 +234,16 @@ def _work_section(ctx: JobCtx) -> list[str]:
 
 def _career_briefing_lines(ctx: JobCtx) -> list[str]:
     """CAREER AUTOPILOT Part 4/6: high-match jobs discovered in the last
-    24h, application status changes, and a stall/next-milestone nudge.
-    Reads job_postings/applications/goals directly (already cached by the
-    job_scout/application-tracker jobs) — no live MCP call from the
-    briefing itself. Independently best-effort like every other piece
-    above: no active career goal just omits this line."""
+    24h, application status changes, a stall nudge, and the next milestone
+    due. Reads job_postings/applications/goals/notifications/milestones
+    directly (already cached by the job_scout/application-tracker/
+    career_goal_stall_check jobs) — no live MCP call from the briefing
+    itself. Independently best-effort like every other piece above: no
+    active career goal just omits these lines."""
     out: list[str] = []
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
+
     try:
-        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
         threshold = _career_match_threshold()
         rows = ctx.collab.conn.execute(
             "SELECT title, company, match_score FROM job_postings"
@@ -254,6 +256,51 @@ def _career_briefing_lines(ctx: JobCtx) -> list[str]:
             out.append(f"New high-match jobs: {items}.")
     except Exception:
         pass
+
+    try:
+        rows = ctx.collab.conn.execute(
+            "SELECT type, payload FROM events"
+            " WHERE type LIKE 'career.application_%' AND ts>=? ORDER BY ts DESC LIMIT 4",
+            (cutoff,)).fetchall()
+        if rows:
+            import json as _json
+            statuses = []
+            for r in rows:
+                try:
+                    p = _json.loads(r["payload"] or "{}")
+                except Exception:
+                    p = {}
+                label = r["type"].rsplit(".", 1)[-1].replace("_", " ")
+                if p.get("status"):
+                    label = f"{label} ({p['status']})"
+                statuses.append(label)
+            out.append(f"Application updates: {'; '.join(statuses)}.")
+    except Exception:
+        pass
+
+    try:
+        stall = ctx.collab.conn.execute(
+            "SELECT title, body FROM notifications"
+            " WHERE type='career_stall' AND read_at IS NULL"
+            " ORDER BY created_at DESC LIMIT 1").fetchone()
+        if stall:
+            out.append(f"Stalled: {stall['title']}.")
+    except Exception:
+        pass
+
+    try:
+        goal = ctx.collab.conn.execute(
+            "SELECT id FROM goals WHERE domain='career' AND status='active'"
+            " ORDER BY created_at DESC LIMIT 1").fetchone()
+        if goal:
+            ms = ctx.collab.conn.execute(
+                "SELECT title FROM milestones WHERE goal_id=? AND done=0"
+                " ORDER BY position LIMIT 1", (goal["id"],)).fetchone()
+            if ms:
+                out.append(f"Next milestone: {ms['title']}.")
+    except Exception:
+        pass
+
     return out
 
 

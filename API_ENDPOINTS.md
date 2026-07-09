@@ -270,6 +270,41 @@ Registry tools (not REST routes — consumed by agents/the orchestrator via
 
 ---
 
+## Career Autopilot
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/career/profile` | Target role/location/remote/deadline/skills + active career goal (progress %). Never returns raw `resume_text`. |
+| PUT | `/api/career/profile` | Update the career profile; `resume_text` is stored Fernet-encrypted. |
+| GET | `/api/career/postings` | Discovered job postings (`?status=&limit=`), sorted by match score. |
+| GET | `/api/career/applications` | Applications + funnel counts (`?status=`). |
+| PATCH | `/api/career/applications/{id}` | Record a real-world outcome (`status`, `note`) — human-reported, writes directly, not agent-gated. |
+| GET | `/api/career/portfolio` | Runs the portfolio analyst live (SHOWCASE/NEEDS WORK/GAPS) — has side effects (may propose a gap-project approval, always writes a vault note) despite being a GET; idempotent per day. |
+| POST | `/api/career/postings/{id}/apply` | Prepares an application (channel/ATS/company-intel/draft) and parks ONE approval — never sends anything itself. |
+
+Registry tools (consumed by agents/the orchestrator via `amy.tools.invoke`,
+see `amy/tools/career_tools.py`):
+
+| Tool | Risk | Notes |
+|------|------|-------|
+| `job_search` | read | Wraps the jobspy MCP connector's `search_jobs` |
+| `job_details` | read | Local `job_postings` lookup — no live call |
+| `portfolio_repo_list` / `portfolio_repo_details` | read | Against the registered `github` MCP connector |
+| `career_status` | read | Goal + plan progress + funnel counts |
+| `set_career_profile` | write | Internal |
+| `application_log` | write | Internal — create/update an application's status |
+| `send_hr_email` | write, **external** | Always tier 2 — SMTP if configured, else a copy-ready draft |
+| `plane_batch_create_tasks` | write, **external** | Always tier 2 — ONE approval creates every task atomically |
+
+Jobs: `job_scout_poll` (default 12h, `AMY_JOB_SCOUT_INTERVAL_HOURS`),
+`portfolio_review` (monthly), `career_goal_stall_check` (daily),
+`application_followup_check` (every 2 days).
+
+Kill switches: `AMY_AGENT_CAREER_GOAL`, `AMY_AGENT_PORTFOLIO`,
+`AMY_AGENT_JOB_SCOUT`, `AMY_AGENT_APPLICATION_TRACKER`.
+
+---
+
 ## Events
 
 | Method | Path | Description |

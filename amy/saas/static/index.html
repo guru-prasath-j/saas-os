@@ -324,6 +324,12 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
         <span class="label">Review Cards</span></button>
 
+      <!-- ── CAREER ── -->
+      <div class="nav-sector">Career</div>
+      <button data-tab="career">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="2" y1="13" x2="22" y2="13"/></svg>
+        <span class="label">Career</span></button>
+
       <!-- ── PEOPLE ── -->
       <div class="nav-sector">People</div>
       <button data-tab="entities">
@@ -1428,6 +1434,45 @@
         </div>
       </div>
 
+      <!-- TAB: CAREER -->
+      <div class="tab hidden" id="tab-career">
+        <div class="card">
+          <h3>Career goal</h3>
+          <div id="careerGoalHeader"><span class="faint">Loading…</span></div>
+          <details style="margin-top:10px">
+            <summary class="meta" style="cursor:pointer">Edit career profile</summary>
+            <div style="margin-top:10px;display:grid;gap:8px;max-width:420px">
+              <label class="meta">Target role<input id="careerTargetRole" type="text" placeholder="e.g. GenAI Engineer"/></label>
+              <label class="meta">Target location<input id="careerTargetLocation" type="text" placeholder="e.g. Bangalore"/></label>
+              <label style="display:flex;align-items:center;gap:6px"><input id="careerRemoteOk" type="checkbox" style="width:auto"/> Remote OK</label>
+              <label class="meta">Deadline<input id="careerDeadline" type="date"/></label>
+              <label class="meta">Skills (comma-separated)<input id="careerSkills" type="text" placeholder="python, langchain, rag"/></label>
+              <label class="meta">Resume text (used for ATS estimate — stored encrypted)<textarea id="careerResumeText" rows="4"></textarea></label>
+              <button onclick="careerSaveProfile()">Save profile</button>
+              <p class="meta" id="careerProfileMsg"></p>
+            </div>
+          </details>
+        </div>
+
+        <div class="card">
+          <h3>Pipeline funnel</h3>
+          <div id="careerFunnel" class="faint">Loading…</div>
+          <p class="meta" style="margin-top:8px">Pending career approvals live in <a href="#" onclick="document.querySelector('[data-tab=agent]').click();return false">Agent Approvals</a>.</p>
+        </div>
+
+        <div class="card">
+          <h3>Top-matched postings</h3>
+          <div id="careerPostings"><span class="faint">Loading…</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Portfolio</h3>
+          <p class="muted">Classifies your GitHub repos against real postings for your target role — SHOWCASE (resume-ready), NEEDS WORK (relevant but incomplete), and skill GAPS with buildable project ideas. Estimates, factors shown.</p>
+          <button onclick="loadCareerPortfolio()">Analyze portfolio</button>
+          <div id="careerPortfolio" style="margin-top:10px"></div>
+        </div>
+      </div>
+
       <!-- TAB: ACCOUNT -->
       <div class="tab hidden" id="tab-account">
         <div class="card">
@@ -1893,6 +1938,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='account') loadAccount();
   if(tab==='mcp') loadMcpDashboard();
   if(tab==='connectors') loadConnectorsDashboard();
+  if(tab==='career') loadCareerTab();
 });
 
 // ---- notification bell ----
@@ -2914,6 +2960,134 @@ async function connectorsSyncNow(jobName, btn){
     btn.textContent='error'; btn.disabled=false;
     setTimeout(()=>{ btn.textContent=orig; },2000);
   }
+}
+
+// ---- Career tab (CAREER AUTOPILOT Part 6) ----
+function _careerDaysLeft(deadline){
+  if(!deadline) return null;
+  const d=new Date(deadline+'T00:00:00');
+  if(isNaN(d)) return null;
+  return Math.ceil((d-new Date())/(1000*60*60*24));
+}
+async function loadCareerTab(){
+  await Promise.all([_loadCareerGoalHeader(), _loadCareerFunnel(), _loadCareerPostings()]);
+}
+async function _loadCareerGoalHeader(){
+  const el=document.getElementById('careerGoalHeader');
+  try{
+    const d=await jget('/api/career/profile');
+    const g=d.goal, p=d.profile||{};
+    document.getElementById('careerTargetRole').value=p.target_role||'';
+    document.getElementById('careerTargetLocation').value=p.target_location||'';
+    document.getElementById('careerRemoteOk').checked=!!p.remote_ok;
+    document.getElementById('careerDeadline').value=(p.deadline||'').slice(0,10);
+    document.getElementById('careerSkills').value=(p.skills||[]).join(', ');
+    if(!g){
+      el.innerHTML='<span class="faint">No active career goal yet. Ask Amy (Chat) something like '
+        +'"become a GenAI engineer in 2 months" to start one — or set a target role below so job '
+        +'scouting has something to search for.</span>';
+      return;
+    }
+    const days=_careerDaysLeft(g.target_date);
+    const daysStr=days==null ? 'no deadline set'
+      : (days>=0 ? days+' day(s) left' : Math.abs(days)+' day(s) overdue');
+    el.innerHTML=`<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center">
+      <div><b>${_connEsc(g.title)}</b><div class="faint">${_connEsc(p.target_role||'')}</div></div>
+      <span class="chip">${_connEsc(daysStr)}</span>
+      <span class="chip">${Math.round(g.computed_progress||0)}% progress</span>
+    </div>`;
+  }catch(e){ el.innerHTML='<span class="faint">Could not load career profile.</span>'; }
+}
+async function careerSaveProfile(){
+  const msg=document.getElementById('careerProfileMsg');
+  msg.textContent='Saving…';
+  try{
+    const skills=document.getElementById('careerSkills').value.split(',').map(s=>s.trim()).filter(Boolean);
+    const body={
+      target_role: document.getElementById('careerTargetRole').value.trim(),
+      target_location: document.getElementById('careerTargetLocation').value.trim(),
+      remote_ok: document.getElementById('careerRemoteOk').checked,
+      deadline: document.getElementById('careerDeadline').value || null,
+      skills,
+    };
+    const resumeText=document.getElementById('careerResumeText').value;
+    if(resumeText.trim()) body.resume_text=resumeText;
+    await api('/api/career/profile',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    msg.textContent='Saved.';
+    document.getElementById('careerResumeText').value='';
+    await _loadCareerGoalHeader();
+  }catch(e){ msg.textContent='Could not save.'; }
+}
+const _CAREER_FUNNEL_ORDER=['discovered','prepared','approved','sent','response','interview','offer','rejected','ghosted'];
+async function _loadCareerFunnel(){
+  const el=document.getElementById('careerFunnel');
+  try{
+    const d=await jget('/api/career/applications');
+    const f=d.funnel||{};
+    el.innerHTML=_CAREER_FUNNEL_ORDER.map(k=>`<span class="chip" style="margin:3px 4px 3px 0">${k}: ${f[k]||0}</span>`).join('');
+  }catch(e){ el.innerHTML='<span class="faint">Could not load funnel.</span>'; }
+}
+async function _loadCareerPostings(){
+  const el=document.getElementById('careerPostings');
+  try{
+    const d=await jget('/api/career/postings?limit=10');
+    const rows=(d.postings||[]).filter(p=>p.status!=='applied' && p.status!=='dismissed');
+    if(!rows.length){
+      el.innerHTML='<span class="faint">No postings discovered yet — job scouting runs '
+        +'automatically once a career goal is active.</span>';
+      return;
+    }
+    el.innerHTML=rows.map(p=>{
+      const score=p.match_score!=null ? Math.round(p.match_score) : null;
+      const scoreChip = score!=null
+        ? `<span class="chip" style="color:${score>=70?'var(--success)':'var(--muted)'}">${score}/100 est.</span>`
+        : '<span class="faint">unscored</span>';
+      return `<div class="card" style="margin:0 0 8px 0">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+          <div><b>${_connEsc(p.title)}</b><div class="faint">${_connEsc(p.company)} &middot; ${_connEsc(p.location||'')}</div></div>
+          ${scoreChip}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px">
+          <a href="${_connEsc(p.url)}" target="_blank" rel="noopener" class="ghost sm" style="text-decoration:none">View posting</a>
+          <button class="sm" onclick="careerApply('${p.id}',this)">Apply</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){ el.innerHTML='<span class="faint">Could not load postings.</span>'; }
+}
+async function careerApply(postingId, btn){
+  const orig=btn.textContent;
+  btn.disabled=true; btn.textContent='Preparing…';
+  try{
+    await api('/api/career/postings/'+postingId+'/apply',{method:'POST'});
+    btn.textContent='Prepared — check Approvals';
+    setTimeout(()=>{ document.querySelector('[data-tab=agent]').click(); },900);
+  }catch(e){
+    btn.textContent='error'; btn.disabled=false;
+    setTimeout(()=>{ btn.textContent=orig; },2000);
+  }
+}
+async function loadCareerPortfolio(){
+  const el=document.getElementById('careerPortfolio');
+  el.innerHTML='<span class="faint">Analyzing… this can take a few seconds.</span>';
+  try{
+    const d=await jget('/api/career/portfolio');
+    if(d.skipped){ el.innerHTML='<span class="faint">'+_connEsc(d.skipped)+'</span>'; return; }
+    if(d.error){ el.innerHTML='<span class="faint">'+_connEsc(d.error)+'</span>'; return; }
+    const showcase=(d.showcase||[]).map(e=>`<div class="card" style="margin:0 0 6px 0">`
+      +`<b>${_connEsc(e.repo)}</b><div class="meta">${_connEsc(e.why||'')}</div>`
+      +(e.bullets||[]).map(b=>`<div class="faint">&middot; ${_connEsc(b)}</div>`).join('')
+      +`</div>`).join('') || '<span class="faint">none yet</span>';
+    const needsWork=(d.needs_work||[]).map(r=>`<span class="chip" style="margin:2px">`
+      +`${_connEsc(r.repo)}: ${_connEsc((r.missing||[]).join(', ')||'polish')}</span>`).join('')
+      || '<span class="faint">none</span>';
+    const gaps=(d.gaps||[]).map(g=>`<div class="faint">&middot; <b>${_connEsc(g.keyword)}</b>: `
+      +`${_connEsc(g.project_idea)}</div>`).join('') || '<span class="faint">none</span>';
+    el.innerHTML=`<h4 style="margin:10px 0 4px">Showcase</h4>${showcase}`
+      +`<h4 style="margin:14px 0 4px">Needs work</h4>${needsWork}`
+      +`<h4 style="margin:14px 0 4px">Gaps${d.queued_approvals?' <span class="chip">proposed as tasks — see Approvals</span>':''}</h4>${gaps}`
+      +(d.note ? '<p class="meta" style="margin-top:10px">Full write-up saved to your vault.</p>' : '');
+  }catch(e){ el.innerHTML='<span class="faint">Could not analyze portfolio.</span>'; }
 }
 
 async function _mcpLoadToolsFor(c){

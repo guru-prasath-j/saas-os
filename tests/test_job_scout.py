@@ -188,3 +188,30 @@ def test_career_briefing_lines_silent_below_threshold(ctx):
         "title": "Junior Dev", "company": "Acme", "url": "https://example.invalid/2"})
     ctx.store.set_posting_match(ctx.user_id, pid, 40, {})
     assert _career_briefing_lines(ctx) == []
+
+
+def test_career_briefing_lines_include_application_updates(ctx):
+    from amy.events.store import CAREER_APPLICATION_STATUS_CHANGED
+    ctx.events().emit(CAREER_APPLICATION_STATUS_CHANGED,
+                      {"application_id": "app-1", "status": "interview"}, source="test")
+    lines = _career_briefing_lines(ctx)
+    assert any("Application updates" in l and "interview" in l for l in lines)
+
+
+def test_career_briefing_lines_include_unread_stall_nudge(ctx):
+    ns = ctx.notify_store()
+    ns.create(type="career_stall", title="No recent progress: Become a GenAI Engineer",
+              body="stalled", priority="normal", related_entity={})
+    lines = _career_briefing_lines(ctx)
+    assert any("Stalled" in l for l in lines)
+
+
+def test_career_briefing_lines_include_next_milestone(ctx):
+    from amy.autonomous import GoalEngine
+    gid = GoalEngine(ctx.collab).create_goal("Become a GenAI Engineer", domain="career")
+    ctx.collab.conn.execute(
+        "INSERT INTO milestones(id,goal_id,title,done,position) VALUES(?,?,?,0,?)",
+        ("m1", gid, "Week 1: Skill building", 0))
+    ctx.collab.conn.commit()
+    lines = _career_briefing_lines(ctx)
+    assert any("Next milestone: Week 1" in l for l in lines)

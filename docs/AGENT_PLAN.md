@@ -464,7 +464,7 @@ port 8935); no LLM-fabricated postings.
 | 3 | Portfolio analyst (GitHub ↔ career) | DONE | c4b7054 |
 | 4 | Job scout + match scoring | DONE | 5c14c51 |
 | 5 | Application pipeline (prepare → approve → send → track) | DONE | c254613 |
-| 6 | Career tab + briefing integration | PLANNED | |
+| 6 | Career tab + briefing integration | DONE | |
 
 ### Pre-flight findings (verified before planning Parts 1-2)
 
@@ -803,6 +803,75 @@ fixed by re-patching `_get_llm` to `lambda ctx: ctx.llm` in those two
 tests specifically. Full suite: 619 passed, same 23 pre-existing failures
 as Part 4's baseline (including the known-flaky filesystem-watcher test,
 which flipped back to failing this run — still not this work's doing).
+
+### Part 6 — Career tab + briefing integration (DONE)
+
+`amy/saas/routers/career.py` (new, registered in `app.py`): `GET`/`PUT
+/api/career/profile` (never returns raw `resume_text` over the wire),
+`GET /api/career/postings`, `GET /api/career/applications` (+funnel),
+`GET /api/career/portfolio` (this IS the "manual button" trigger deferred
+from Part 3 — runs `portfolio_analyze()` live, so it has side effects
+despite being a GET: can propose a gap-project approval, always writes a
+vault note; idempotent per day via Part 3's own dedup/note-eid so repeat
+clicks are harmless), `POST /api/career/postings/{id}/apply` (runs Part
+5's `prepare_application`, still always lands as one approval). Added one
+route beyond the brief's literal list: `PATCH /api/career/applications/
+{id}` — a human reporting a real-world outcome (interview/offer/rejected)
+needs *some* way to advance the funnel past "sent", and the brief's route
+list didn't include one; writes directly (not gated) since the user is
+informing Amy what already happened, not asking Amy to act.
+
+`index.html`: new `data-tab="career"` nav entry (its own "Career" nav-
+sector — the existing `data-tab="portfolio"` tab is unrelated legacy
+project-portfolio UI, not GitHub/career, so career's portfolio section
+lives inside the career tab instead of colliding with that name) and
+panel — goal header (title/target role/days-left-or-overdue/computed
+progress %, reusing `GoalEngine.progress`), an editable profile form
+(target role/location/remote/deadline/skills/resume text), pipeline
+funnel chips, top-matched postings with score badges + Apply buttons, and
+an on-demand portfolio analysis section (SHOWCASE/NEEDS WORK/GAPS). All
+inline JS syntax-checked via `node -e "new Function(...)"` over the
+`<script>` block (same verification CONNECTOR COMPLETION Part 3 used).
+
+`amy/automation/closers.py::_career_briefing_lines` (Part 4's stub)
+extended with the three remaining brief items: application status changes
+(last 24h, from `career.application_*` events), a stalled-goal nudge
+(surfaces the latest unread `career_stall` notification rather than
+recomputing stall logic — reuses Part 2's `career_goal_stall_check`
+output), and the next not-yet-done milestone by position (milestones have
+no per-item due date in the schema, so this is "next up," not "due on
+date X" — documented as the honest reading of what's actually stored).
+
+Tests: `tests/test_career_routes.py` (8 passing, `TestClient`, mirrors
+`test_connectors_status.py`'s fixture) — profile roundtrip never leaks
+resume text; empty postings/applications; PATCH updates status/timeline,
+404s on an unknown id, 400s on an invalid status; apply on an unknown
+posting 404s; apply happy path parks exactly one approval; portfolio route
+skips cleanly with no target role. Three tests added to `tests/
+test_job_scout.py` for the extended briefing lines. Full suite: 631
+passed, same 22-23 pre-existing failures (the known-flaky filesystem-
+watcher test passed this run, same as it did after Part 4 — still not
+this work's doing).
+
+## CAREER AUTOPILOT — summary
+
+All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3
+`c4b7054`, Part 4 `5c14c51`, Part 5 `c254613`, Part 6 below). New modules:
+`amy/tools/career_tools.py`, `amy/career_scout.py`, `amy/career_apply.py`,
+`amy/saas/routers/career.py`; extended `amy/automation/{store,executors,
+orchestrator,jobs,closers}.py`, `amy/agents/reactive.py`,
+`amy/events/store.py`, `amy/collab/db.py`, `amy/tools/__init__.py`,
+`index.html`. Disabled the legacy `CareerAgent`'s fake job-discovery
+generator (`amy/intelligence/career/discovery.py`) per the resolved design
+decision — its other intents are untouched. No web-search tool existed in
+this codebase before this phase; company intel is an honest stub pending a
+user-registered web-search MCP connector, never fabricated. Every external
+send (HR email, batched Plane tasks) is hard-pinned to tier 2 regardless
+of `AMY_AGENT_WRITE_TIER`; `prepare_application` routes its send through
+the approval gate unconditionally, so a human-initiated "apply" and an
+agent's high-score auto-proposal both require the same explicit approval.
+New kill switches: `AMY_AGENT_CAREER_GOAL`, `AMY_AGENT_PORTFOLIO`,
+`AMY_AGENT_JOB_SCOUT`, `AMY_AGENT_APPLICATION_TRACKER`.
 
 ### Design decisions (resolved before Part 1 started)
 

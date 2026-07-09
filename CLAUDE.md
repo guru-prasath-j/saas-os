@@ -120,6 +120,32 @@ amy/
                          systems (whatsapp_brain…) park tier-2 drafts and act
                          only on human-approved rows (external_draft executor
                          is an ack-only no-op).
+  career_scout.py        CAREER AUTOPILOT: JobScoutSensor (Sensor pattern) —
+                         no-ops without an active domain='career' goal,
+                         else job_search for the goal's role/location,
+                         dedups (job_postings), ONE batched match-scoring
+                         LLM call (sensitive=True), emits
+                         career.job_discovered, notifies + auto-proposes an
+                         application (career_apply.prepare_application) at/
+                         above AMY_CAREER_MATCH_THRESHOLD (default 70).
+                         job_scout_poll job, default every 12h.
+  career_apply.py        CAREER AUTOPILOT: application pipeline. prepare_
+                         application() — channel recommendation (email/
+                         portal/third_party, regex+heuristic, never
+                         fabricates a contact), ATS estimate (deterministic
+                         keyword coverage, honest None with no resume on
+                         file), company intel (generic "web_search" MCP
+                         source — this codebase has none built in, so this
+                         is an honest stub returning available=False with
+                         none registered, never LLM-fabricated), a
+                         sensitive=True draft referencing real SHOWCASE
+                         repo names — then ONE approval (send_hr_email for
+                         email channel, application_log for portal/third-
+                         party). The send is ALWAYS gated via
+                         tools.invoke(actor="agent") regardless of caller.
+                         application_followup_check job (every 2 days):
+                         one follow-up email after 10 days' silence, auto-
+                         ghosted after another 21.
   financing.py           Financing models (R7A-4): amortized|markup|zero|lease
   fx.py                  FxConverter (pluggable source, daily cache) + multi_currency_summary
   locale_fmt.py          lakh/crore vs western grouping, format_money, prompt_hint
@@ -164,6 +190,12 @@ amy/
                           meet_upcoming_meetings (read); github_comment,
                           plane_create_task/update_task (write,
                           extras={"external":True} — hard-pinned tier 2)
+    career_tools.py        CAREER AUTOPILOT: job_search/job_details/
+                          portfolio_repo_list/_details/career_status
+                          (read); set_career_profile/application_log
+                          (write); send_hr_email/plane_batch_create_tasks
+                          (write, extras={"external":True} — hard-pinned
+                          tier 2). See "Career Autopilot" section below.
   saas/
     app.py               FastAPI entry — all routers included
     db.py                SQLAlchemy users table (amy_saas.db)
@@ -180,9 +212,17 @@ amy/
       connectors.py      Google OAuth flow + disconnect + GET /api/connectors/status
                          (CONNECTOR COMPLETION Part 3 — unified connector health)
       learning_feed.py   Focus CRUD, feed list, save/progress — /api/learning-feed/...
-      [10 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
+      career.py          CAREER AUTOPILOT: profile GET/PUT, postings/applications
+                         GET, application PATCH (human-reported outcome, not
+                         gated), portfolio GET (the on-demand analysis trigger —
+                         has side effects despite being a GET), postings/{id}/
+                         apply POST (Part 5's prepare_application).
+      [9 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
     static/index.html    Entire frontend (~3000 lines, one file) — includes the
-                         data-tab="connectors" health dashboard
+                         data-tab="connectors" health dashboard and
+                         data-tab="career" tab (goal header, funnel, top-matched
+                         postings, on-demand portfolio analysis — NOT the same
+                         as the unrelated legacy data-tab="portfolio" tab)
 ```
 
 ## Data Paths
@@ -451,6 +491,119 @@ official `api.githubcopilot.com/mcp` and `mcp.plane.so` servers).
 GET               /api/connectors/status
 ```
 
+## Career Autopilot
+
+Job discovery, portfolio analysis, and the application pipeline — built on
+the existing goals/tasks (GoalEngine/PlannerAgent), tool registry +
+AGENT_GATE, event bus, and MemoryWriter/GraphStore. No parallel goal
+model, no parallel inbox, no parallel memory. Real data only: no LLM-
+fabricated job postings or company intel.
+
+- **Data model** (`AutomationStore`, collab.db): `career_profile` (one row
+  per user — `target_role`/`target_location`/`remote_ok`/`deadline`/
+  `skills`, `resume_text` Fernet-encrypted like stored API keys),
+  `job_postings` (deduped on `uid+url`), `applications` (status ladder:
+  prepared→approved→sent→response→interview→offer, or
+  rejected/ghosted at any point; JSON `timeline`), `company_intel`
+  (per-company cache, 30-day freshness). `goals.career_meta` (JSON,
+  sibling to `finance_meta`) carries `{target_role, weeks}` for a
+  `domain='career'` goal.
+- **Career goal flow**: a career-shaped goal (`become a`/`switch to`/
+  `career` + a role word — `amy/automation/orchestrator.py::
+  _is_career_goal()`) sent to `POST /api/agent/goal` runs a templated
+  fan-out instead of the generic 4-step LLM plan: parse target role/
+  deadline → create the goal (ungated — orchestrator's own plan
+  bookkeeping, same line `_store_plan_graph` already draws) → skill-gap
+  analysis against REAL postings (`job_search`) → linked
+  `learning_focuses` → a deterministic weekly milestone breakdown
+  proposed as ONE batched `plane_batch_create_tasks` approval (atomic —
+  approve creates every task, reject creates none) → a portfolio first
+  look. `career_goal` reactive agent proposes a career goal (tier-2, dedup
+  `career_goal_suggest`) when a learning focus trends toward a role-shaped
+  topic with none active; `career_goal_stall_check` job nudges (advisory
+  only, once in a bounded window — same non-nag idiom as
+  `relationship_nudges`) a career goal with no `career.*` activity in
+  `AMY_CAREER_STALL_DAYS` (default 5) days.
+- **Portfolio analyst** (`amy/agents/reactive.py::portfolio_analyze()`,
+  called directly like `meeting_prep_check` — not a registry tool): pulls
+  repos via `portfolio_repo_list`, builds a target-role keyword profile
+  from REAL postings (never LLM memory), then **deterministically**
+  classifies into SHOWCASE / NEEDS WORK / NOT RELEVANT (auditable
+  factors: keyword overlap + missing description/homepage/topics signals
+  — classification is never LLM-decided). ONE `sensitive=False` LLM call
+  writes resume-bullet narratives + gap-project ideas (degrades to a
+  template). Gap projects batch into one approval. Output: a vault note
+  (`09_Memory/Portfolio Review - {date}`), `career.portfolio_analyzed`
+  event, three triggers (career plan step, monthly `portfolio_review`
+  job, `GET /api/career/portfolio` as the manual button).
+- **Job scout + match scoring** (`amy/career_scout.py::JobScoutSensor`,
+  same `Sensor`/poll shape as `GitHubSensor`): no-ops without an active
+  career goal; queries `job_search` for the goal's role/location, dedups
+  new postings, then ONE batched `sensitive=True` match-scoring LLM call
+  (factors: skill overlap/experience fit/portfolio evidence/location fit
+  — "portfolio evidence" is inferred from `career_profile.skills` only,
+  since `portfolio_analyze`'s classification isn't persisted anywhere
+  queryable outside its vault note). Postings at/above
+  `AMY_CAREER_MATCH_THRESHOLD` (default 70) notify AND auto-propose an
+  application (gated by its own `AMY_AGENT_APPLICATION_TRACKER` switch,
+  separate from `AMY_AGENT_JOB_SCOUT` which only gates discovery/scoring).
+  `job_scout_poll` job, default every `AMY_JOB_SCOUT_INTERVAL_HOURS`=12h.
+- **Application pipeline** (`amy/career_apply.py::prepare_application()`):
+  channel recommendation (regex email extraction / agency-keyword
+  heuristic / portal fallback — never fabricates a contact), ATS estimate
+  (deterministic keyword-coverage math, honestly `None` with no resume on
+  file), company intel (see below), a `sensitive=True` draft referencing
+  real SHOWCASE repo names (a **cheap** one-posting reuse of
+  `_classify_repos`, deliberately not a full `portfolio_analyze()` call,
+  which would spam its own gap-project approval per application) — then
+  ONE approval: `send_hr_email` (email channel) or `application_log`
+  (portal/third-party — no scraping/portal automation, so approving just
+  marks the prep-pack ready for manual submission). **The send is always
+  routed through `tools.invoke(actor="agent")` inside
+  `prepare_application` regardless of who called it** — a human-clicked
+  "apply" and the job_scout agent's high-score auto-proposal both require
+  the same explicit approval; Amy never submits an application on its
+  own. Dedup key `apply_{posting_id}`. `application_followup_check` job
+  (every 2 days): ONE follow-up email after `_FOLLOWUP_STALE_DAYS`=10 days
+  of silence (dedup `followup_{application_id}`, whose existence in the
+  `approvals` table doubles as the "already followed up" check), auto-
+  `ghosted` after another `_GHOST_DAYS`=21 days (internal inference, not
+  gated). Portal/third-party applications (no captured contact) are
+  structurally skipped — the human tracks those manually.
+- **Company intel — honest stub, not fabricated data**: this codebase has
+  no built-in web-search tool (verified before building this — grepped
+  for web_search/tavily/serpapi/duckduckgo/bing across `amy/`, nothing).
+  `career_apply._company_intel()` tries a GENERIC `"web_search"` MCP
+  source through the same `call_mcp_tool` resolve-call-log helper GitHub/
+  Plane/jobspy already use — any web-search MCP the user registers under
+  a name containing "web_search" (Brave, Tavily, …) just works. With none
+  registered it returns `available: False` honestly rather than asking an
+  LLM to guess a company's hiring process. Always cached (30-day
+  freshness) with a "signals, not facts" disclaimer.
+- **Legacy conflict, resolved**: `amy/agents/career.py`'s `CareerAgent`
+  (a pre-SaaS "Operational Layer" sub-agent, still wired into
+  CollabMaster at `POST /api/collab/ask` — the main chat box) used to
+  fabricate job postings via LLM (`amy/intelligence/career/discovery.py`'s
+  own docstring: "we leverage the LLM to simulate structured job search
+  results"). `discover_jobs()` is now neutered — returns `[]` and the
+  chat response points at the real `job_search` tool instead. `CareerAgent`'s
+  matcher/resume/analytics intents and its separate `agent_writeback`-based
+  vault-note writes are untouched.
+- `GET /api/career/portfolio` runs `portfolio_analyze()` LIVE — it IS the
+  "manual button" trigger, so it has side effects (may propose a Plane
+  approval, always writes a vault note) despite being a GET; idempotent
+  per day. `data-tab="career"` in `index.html` is unrelated to the
+  pre-existing `data-tab="portfolio"` tab (a different, legacy project-
+  portfolio UI) — the career portfolio section lives inside the career
+  tab to avoid the name collision.
+
+```
+GET/PUT           /api/career/profile
+GET               /api/career/postings | applications | portfolio
+PATCH             /api/career/applications/{id}          # human-reported outcome, not gated
+POST              /api/career/postings/{id}/apply
+```
+
 ## Automation Layer
 
 App loop ticks every 60s (`AMY_AUTOMATION_TICK_SECONDS`), runs due jobs per user,
@@ -479,7 +632,12 @@ rollup, writes 09_Memory note so chat recalls it next day) · `place_learning`
 `preference_drift` (monthly 2nd, decision-history signals) ·
 `meeting_prep_scan` (every 15 min, drives the read-only meeting_prep agent) ·
 `connector_sensor_scan` (every `AMY_CONNECTOR_SENSOR_INTERVAL_HOURS`, default
-30 min — polls GitHubSensor/PlaneSensor).
+30 min — polls GitHubSensor/PlaneSensor) · `job_scout_poll` (default every
+`AMY_JOB_SCOUT_INTERVAL_HOURS`=12h, drives JobScoutSensor) ·
+`portfolio_review` (monthly 1st, re-analyzes the active career goal's
+portfolio) · `career_goal_stall_check` (daily, advisory nudge only) ·
+`application_followup_check` (every 2 days, one follow-up + auto-ghosting —
+see "Career Autopilot" below).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
@@ -515,6 +673,8 @@ goal.created / goal.completed / capture.added / digest.generated
 context.place_entered / place_left / location_updated   # payload = place id/name/kind, never coordinates
 github.pr_review_requested / pr_status_changed / issue_assigned   # CONNECTOR COMPLETION — MCP-based, not the legacy amy/sensors/ OL github integration
 plane.task_assigned / task_due_soon / task_status_changed
+career.goal_set / job_discovered / application_prepared / application_sent /
+  application_status_changed / portfolio_analyzed   # CAREER AUTOPILOT
 ```
 
 ### Event bus factory + reactive-agent wiring (quirk 20)
@@ -604,6 +764,7 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 21. Refresh-by-topic-text on a multi-row feature (learning_focuses) can resurrect a row a user just deleted, if a `BackgroundTasks` refresh was queued before the delete lands and only runs after. Refresh by row id, not by the text a lookup-or-create query matches on, whenever an id is available.
 22. `connector_calls`' `connector` column is a literal hardcoded string ("github", "plane", "google_calendar", or a local-server key like "hackernews") chosen at the `call_mcp_tool(...)`/`log_connector_call(...)` call site — it is NOT the user's own `McpConnector.name` (a user could register their GitHub connector as "my github" or "Work GitHub"). `GET /api/connectors/status` and any new connector-health code must roll up by the call-site's literal name, not by `row.name`, or health data silently won't match.
 23. GitHub/Plane sensors and tools don't filter "assigned to me"/"review requested of me" against the authenticated identity — any non-empty reviewers/assignees list counts as a hit (see `amy/connectors/sensors.py`'s module docstring). Correct for today's single-user-per-connector deployment; would need a `get_me`-equivalent lookup if a connector is ever shared across users.
+24. Two `agent_gate` internals worth remembering when adding a career (or any external-write) tool: (a) an agent-gated approval's `action_type` is always `"tool_call"` — the real tool name lives in `payload["tool"]`, not `action_type`; querying approvals by tool name means filtering `payload.get("tool")==...`, not `action_type==...`. (b) `_get_llm(ctx)` (`amy/agents/reactive.py`) builds a REAL `LLMRouter` and attempts real provider calls whenever `ctx.llm is None` — tests that don't care about LLM output must monkeypatch `amy.agents.reactive._get_llm` to return `None` (or a stub) explicitly rather than leaving `ctx.llm` unset, or they become slow and network-dependent (found while writing CAREER AUTOPILOT's tests; fixed retroactively in Parts 3-6).
 
 ## Common Pattern
 
