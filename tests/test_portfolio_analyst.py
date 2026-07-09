@@ -112,6 +112,9 @@ def test_portfolio_analyze_full_flow(ctx, monkeypatch):
     _mock_connectors(monkeypatch,
                      repos=[_SHOWCASE_REPO, _NEEDS_WORK_REPO, _IRRELEVANT_REPO],
                      jobs=_POSTINGS)
+    # Force the fast/deterministic no-LLM (fallback-entry) path rather than
+    # letting _get_llm build a real router (slow, network-dependent).
+    monkeypatch.setattr("amy.agents.reactive._get_llm", lambda ctx: None)
 
     out = portfolio_analyze(ctx.events(), ctx)
 
@@ -133,6 +136,7 @@ def test_portfolio_analyze_gaps_batched_into_one_approval(ctx, monkeypatch):
     _mock_connectors(monkeypatch, repos=[_SHOWCASE_REPO],
                      jobs=[{"title": "GenAI Engineer",
                            "description": "LangChain RAG kubernetes terraform deploy"}])
+    monkeypatch.setattr("amy.agents.reactive._get_llm", lambda ctx: None)
 
     out = portfolio_analyze(ctx.events(), ctx)
     assert out["gaps"], "expected at least one gap project suggestion"
@@ -178,6 +182,7 @@ def test_portfolio_review_job_runs_for_active_career_goal(ctx, monkeypatch):
     GoalEngine(ctx.collab).create_goal("Become a GenAI Engineer", domain="career")
     ctx.store.set_career_profile(ctx.user_id, target_role="GenAI Engineer")
     _mock_connectors(monkeypatch, repos=[_SHOWCASE_REPO], jobs=_POSTINGS)
+    monkeypatch.setattr("amy.agents.reactive._get_llm", lambda ctx: None)
 
     out = HANDLERS["portfolio_review"](ctx)
     assert out["target_role"] == "GenAI Engineer"

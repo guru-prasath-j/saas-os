@@ -227,7 +227,42 @@ def _work_section(ctx: JobCtx) -> list[str]:
     except Exception:
         pass
 
+    lines.extend(_career_briefing_lines(ctx))
+
     return ["Work: " + " ".join(lines)] if lines else []
+
+
+def _career_briefing_lines(ctx: JobCtx) -> list[str]:
+    """CAREER AUTOPILOT Part 4/6: high-match jobs discovered in the last
+    24h, application status changes, and a stall/next-milestone nudge.
+    Reads job_postings/applications/goals directly (already cached by the
+    job_scout/application-tracker jobs) — no live MCP call from the
+    briefing itself. Independently best-effort like every other piece
+    above: no active career goal just omits this line."""
+    out: list[str] = []
+    try:
+        cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=24)).isoformat()
+        threshold = _career_match_threshold()
+        rows = ctx.collab.conn.execute(
+            "SELECT title, company, match_score FROM job_postings"
+            " WHERE uid=? AND discovered_at>=? AND match_score>=?"
+            " ORDER BY match_score DESC LIMIT 4",
+            (ctx.user_id, cutoff, threshold)).fetchall()
+        if rows:
+            items = "; ".join(f"{r['title']} at {r['company']} ({r['match_score']:.0f}/100 est.)"
+                              for r in rows)
+            out.append(f"New high-match jobs: {items}.")
+    except Exception:
+        pass
+    return out
+
+
+def _career_match_threshold() -> float:
+    from .. import config
+    try:
+        return float(config._env("AMY_CAREER_MATCH_THRESHOLD", "70"))
+    except ValueError:
+        return 70.0
 
 
 # ---------------------------------------------------------------------------

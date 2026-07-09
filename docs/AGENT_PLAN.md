@@ -462,7 +462,7 @@ port 8935); no LLM-fabricated postings.
 | 1 | Career data model + Job Search MCP tools | DONE | 1b2f404 |
 | 2 | Career goal flow (orchestrator career template) | DONE | 5183bf1 |
 | 3 | Portfolio analyst (GitHub ↔ career) | DONE | c4b7054 |
-| 4 | Job scout + match scoring | PLANNED | |
+| 4 | Job scout + match scoring | DONE | |
 | 5 | Application pipeline (prepare → approve → send → track) | PLANNED | |
 | 6 | Career tab + briefing integration | PLANNED | |
 
@@ -681,6 +681,53 @@ baseline, +9 new tests passing. Also updated `_run_career_template`'s
 approval (it doesn't surface as a top-level "pending" step result the way
 `_log_step`'s detection expects) and `test_reactive_agents.py`'s
 registered-agent-set assertion again (grew by `portfolio`).
+
+### Part 4 — Job scout + match scoring (DONE)
+
+`amy/career_scout.py` (new flat module, alongside `amy/patterns.py`/
+`amy/financing.py` — not under `amy/connectors/`, since this is career-
+domain logic on top of a generic MCP read tool, not a generic connector
+capability): `JobScoutSensor` (same `Sensor` base/poll shape as
+`GitHubSensor`/`PlaneSensor`) no-ops without an active `domain='career'`
+goal, otherwise calls `job_search` for the goal's target_role/location,
+dedups new postings via `add_posting_if_new` (Part 1), and — for anything
+actually new — runs ONE batched match-scoring LLM call
+(`_score_postings`, `sensitive=True`, ranker.py's pattern) before emitting
+`career.job_discovered` per posting. Postings at/above
+`AMY_CAREER_MATCH_THRESHOLD` (default 70) get a `career_job_match`
+notification with the score + shown factors (skill overlap/experience
+fit/portfolio evidence/location fit) — labeled an estimate. Scoring
+failure degrades to `match_score=NULL` (posting still saved, no
+notification) rather than blocking discovery.
+
+Known simplification (documented in the module docstring): the "portfolio
+evidence" factor is inferred from `career_profile.skills` only —
+`portfolio_analyze`'s SHOWCASE/GAPS classification isn't persisted
+anywhere queryable outside its vault note, so there's no richer signal to
+feed the scorer yet.
+
+New `job_scout_poll` job (default every `AMY_JOB_SCOUT_INTERVAL_HOURS`=12h,
+re-checks the `AMY_AGENT_JOB_SCOUT` kill switch at run time the same way
+`learning_feed_refresh` re-checks its own flag, since job rows persist
+after the env is turned off). `amy/automation/closers.py::_work_section`
+gained `_career_briefing_lines` — high-match jobs discovered in the last
+24h, read directly from the already-cached `job_postings` table (no live
+MCP call from the briefing itself), independently best-effort like every
+other Work-section piece.
+
+Tests: `tests/test_job_scout.py` (8 passing) — no-op without an active
+career goal; discover + dedup across two poll cycles; scoring + threshold
+notification; LLM-unavailable degrades to unscored (never blocks
+discovery); kill switch; job wiring; briefing-line inclusion above/below
+threshold. All MCP/LLM calls mocked — tests explicitly force `_get_llm`
+to return `None` rather than leaving `ctx.llm` unset, since an unset
+`ctx.llm` makes `_get_llm` build a REAL `LLMRouter` and attempt real
+provider calls (slow, network-dependent); applied the same fix
+retroactively to `tests/test_portfolio_analyst.py`'s equivalent gap (cut
+that file's runtime from ~14s to ~2s). Full suite: 600 passed, 22 failed
+— the same pre-existing baseline minus one known-flaky filesystem-watcher
+timing test that happened to pass this run (documented as flaky since
+CONNECTOR COMPLETION Part 3).
 
 ### Design decisions (resolved before Part 1 started)
 

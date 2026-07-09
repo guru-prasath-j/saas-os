@@ -89,6 +89,14 @@ def _portfolio_review(ctx: JobCtx) -> dict:
     return portfolio_analyze(ctx.events(), ctx, goal_id=row["id"])
 
 
+def _job_scout_poll(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Part 4: drives JobScoutSensor on the interval below
+    (default 12h, AMY_JOB_SCOUT_INTERVAL_HOURS) — no-ops cleanly when there
+    is no active career goal (see JobScoutSensor.poll)."""
+    from ..career_scout import job_scout_poll
+    return job_scout_poll(ctx)
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -133,6 +141,7 @@ HANDLERS: dict[str, callable] = {
     "connector_sensor_scan": _connector_sensor_scan,
     "career_goal_stall_check": _career_goal_stall_check,
     "portfolio_review": _portfolio_review,
+    "job_scout_poll": _job_scout_poll,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -146,6 +155,11 @@ def _default_jobs() -> list[tuple[str, dict]]:
             config._env("AMY_CONNECTOR_SENSOR_INTERVAL_HOURS", "0.5"))
     except ValueError:
         sensor_interval_hours = 0.5
+    try:
+        job_scout_interval_hours = float(
+            config._env("AMY_JOB_SCOUT_INTERVAL_HOURS", "12"))
+    except ValueError:
+        job_scout_interval_hours = 12.0
     jobs = [
         ("gmail_statement_ingest", {"every_hours": 6}),
         ("auto_categorize",        {"every_hours": 12}),
@@ -166,6 +180,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("connector_sensor_scan",  {"every_hours": sensor_interval_hours}),
         ("career_goal_stall_check", {"daily_at": "09:30"}),
         ("portfolio_review",       {"monthly_day": 1, "at": "10:00"}),
+        ("job_scout_poll",         {"every_hours": job_scout_interval_hours}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).
