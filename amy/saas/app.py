@@ -147,6 +147,10 @@ class _DedupEvents:
     def __init__(self, cdb, days: int = 7):
         import datetime as _dt
         from ..events.store import EventStore
+        # Intentionally bare: this feeds the legacy OL GitHubSensor's
+        # "github.NEW_*" event types (amy/sensors/github_models.py), which no
+        # reactive agent subscribes to — see amy/saas/routers/events.py's
+        # module docstring for the full rationale.
         self._es = EventStore(cdb)
         self._conn = cdb.conn
         self._cut = (_dt.datetime.now(_dt.timezone.utc)
@@ -458,12 +462,14 @@ def _run_gmail_poll():
             custodial_accounts = [a for a in accounts if a.get("account_type") == "custodial"]
             if custodial_accounts:
                 from ..finance.custodial import emit_refill_events
-                from ..events.store import EventStore
+                from ..events.factory import get_events
                 from ..collab import CollabDB
                 collab_path = paths.index_dir(uid) / "collab.db"
                 if collab_path.exists():
                     cdb = CollabDB(str(collab_path))
-                    events = EventStore(cdb)
+                    # amy.events.factory.get_events() (Part 0 / quirk 20 fix)
+                    events = get_events(uid, cdb, index_dir=paths.index_dir(uid),
+                                        user_email=user.email)
                     for acc in custodial_accounts:
                         result = _sync_gmail(creds, fe, acc["id"], llm,
                                              since=since, max_messages=100)

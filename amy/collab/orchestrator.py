@@ -48,6 +48,11 @@ class CollabMaster:
         self.cards = AgentCards(self.db)
         self.cards.build(self.registry, self.domain_map)
         from ..events import EventStore, register_default_triggers
+        # Intentionally bare: CollabMaster is the pre-R2 chat/agent layer and
+        # uses register_default_triggers (amy/events/triggers.py), not the
+        # amy/agents/reactive.py reactive agents that amy.events.factory
+        # wires — no event type emitted through self.events here is in
+        # AGENT_RELEVANT_EVENTS today.
         self.events = EventStore(self.db)
         self.planner = PlannerAgent(self.db, llm, events=self.events)
         self.reflection = ReflectionAgent(self.db, self.planner, self.memory, llm)

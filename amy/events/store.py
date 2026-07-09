@@ -7,8 +7,13 @@ emit time, so triggers (reflection/learning/scheduler) can react.
 from __future__ import annotations
 
 import datetime as _dt
+import inspect
 import json
+import logging
+import threading
 import uuid
+
+_log = logging.getLogger("amy.events")
 
 # canonical event types emitted across the system
 QUERY_ASKED = "query.asked"
@@ -51,6 +56,31 @@ FINANCE_LEDGER_ENTRY_POSTED = "finance.ledger_entry_posted"
 FINANCE_LEDGER_AUDITED = "finance.ledger_audited"
 FINANCE_COMPLIANCE_SUGGESTED = "finance.compliance_suggested"
 
+# Connector events (CONNECTOR COMPLETION phase) — GitHub/Plane sensors
+GITHUB_PR_REVIEW_REQUESTED = "github.pr_review_requested"
+GITHUB_PR_STATUS_CHANGED = "github.pr_status_changed"
+GITHUB_ISSUE_ASSIGNED = "github.issue_assigned"
+PLANE_TASK_ASSIGNED = "plane.task_assigned"
+PLANE_TASK_DUE_SOON = "plane.task_due_soon"
+PLANE_TASK_STATUS_CHANGED = "plane.task_status_changed"
+
+# Event types a reactive agent (amy/agents/reactive.py) actually .subscribe()s
+# to today. Kept as a plain literal set HERE rather than imported from
+# amy.agents.reactive, so this module stays import-free of agents/automation
+# (see amy/events/factory.py's RISK A note) — update this set whenever a new
+# agent subscription is added in reactive.py. Used only for the zero-
+# subscriber dev warning below; never gates emit() itself.
+AGENT_RELEVANT_EVENTS = frozenset({
+    FINANCE_TRANSACTION_ADDED, FINANCE_CSV_IMPORTED, FINANCE_PDF_IMPORTED,
+    FINANCE_GMAIL_SYNCED, FINANCE_LEDGER_ENTRY_POSTED,
+    CONTEXT_PLACE_ENTERED,
+    LEARNING_FEED_REFRESHED, LEARNING_ITEM_COMPLETED,
+    GITHUB_PR_REVIEW_REQUESTED, GITHUB_PR_STATUS_CHANGED,
+})
+
+_warned_zero_subscriber_sites: set[tuple] = set()
+_warn_lock = threading.Lock()
+
 
 def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
@@ -60,6 +90,13 @@ class EventStore:
     def __init__(self, collab_db):
         self.db = collab_db.conn
         self._handlers: dict[str, list] = {}
+        # Idempotent-registration guard (Part 0 / quirk 20 fix): tracks which
+        # reactive agents (by name) are already wired onto THIS instance, so
+        # amy.agents.reactive.register_reactive_agents can no-op on a repeat
+        # call instead of double-subscribing the same agent (which would
+        # double-fire it, and for non-deduped agents produce duplicate
+        # agent.insight events / duplicate approval rows).
+        self._registered_agent_keys: set[str] = set()
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS event_dead_letters ("
             " id TEXT PRIMARY KEY, ts TEXT, event_id TEXT, event_type TEXT,"
@@ -91,7 +128,10 @@ class EventStore:
             (eid, ts, event_type, json.dumps(payload or {}), source))
         self.db.commit()
         ev = {"id": eid, "ts": ts, "type": event_type, "payload": payload or {}, "source": source}
-        for fn in list(self._handlers.get(event_type, [])) + list(self._handlers.get("*", [])):
+        handlers = list(self._handlers.get(event_type, [])) + list(self._handlers.get("*", []))
+        if not handlers and event_type in AGENT_RELEVANT_EVENTS:
+            self._warn_zero_subscribers(event_type)
+        for fn in handlers:
             try:
                 fn(ev)
             except Exception:
@@ -111,6 +151,29 @@ class EventStore:
                     except Exception:
                         pass
         return eid
+
+    def _warn_zero_subscribers(self, event_type: str) -> None:
+        """Dev guardrail: an agent-relevant event type emitted on an instance
+        with zero subscribers usually means a bare EventStore(cdb) was built
+        instead of amy.events.factory.get_events() — loud (one log line per
+        process per call-site), not silent. Never raises; a broken warning
+        must not affect the emit it's warning about."""
+        try:
+            frame = inspect.stack()[2]   # 0=this fn, 1=emit(), 2=emit()'s caller
+            site = (frame.filename, frame.lineno)
+        except Exception:
+            site = ("<unknown>", 0)
+        key = (site, event_type)
+        with _warn_lock:
+            if key in _warned_zero_subscriber_sites:
+                return
+            _warned_zero_subscriber_sites.add(key)
+        _log.warning(
+            "EventStore.emit(%r) from %s:%d has ZERO subscribers on this "
+            "instance. If this event type is meant to trigger a reactive "
+            "agent, this store was likely built bare instead of via "
+            "amy.events.factory.get_events() (see CLAUDE.md quirk 20).",
+            event_type, site[0], site[1])
 
     # --- reads -------------------------------------------------------------
     def recent(self, event_type: str | None = None, n: int = 50) -> list[dict]:

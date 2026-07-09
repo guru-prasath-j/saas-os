@@ -24,20 +24,13 @@ def _open_collab(user: User):
 
 
 def _events_with_agents(user: User, cdb):
-    """EventStore with reactive agents attached (same pattern as _emit_fin —
-    the bus is per-instance, so agents must be wired where the emit happens).
-    Wiring failures degrade to a bare store; the event itself must still emit."""
-    from ...events.store import EventStore
-    es = EventStore(cdb)
-    try:
-        from ...agents.reactive import register_reactive_agents
-        from ...automation.jobs import build_ctx
-        ctx = build_ctx(user.id, user.email, cdb,
-                        paths.index_dir(user.id), llm_router=None)
-        register_reactive_agents(es, ctx)
-    except Exception:
-        pass
-    return es
+    """EventStore with reactive agents attached, via amy.events.factory
+    (Part 0 / quirk 20 fix) — the bus is per-instance, so agents must be
+    wired where the emit happens. Wiring failures degrade to a bare store;
+    the event itself must still emit."""
+    from ...events.factory import get_events
+    return get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                      user_email=user.email)
 
 
 def _place_public(p: dict) -> dict:

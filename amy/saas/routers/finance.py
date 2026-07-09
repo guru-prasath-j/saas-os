@@ -27,24 +27,16 @@ def _open_collab(user: "User"):
 
 
 def _emit_fin(user: "User", event_type: str, payload: dict) -> None:
-    """Fire-and-forget finance event. Never raises — bad event must not break the route.
-
-    Reactive agents (amy/agents/reactive.py) are wired onto the store before
-    emitting so they react synchronously to route-driven imports too; wiring
-    failures degrade to a plain emit."""
+    """Fire-and-forget finance event. Never raises — bad event must not break
+    the route. Uses amy.events.factory.get_events() (Part 0 / quirk 20 fix)
+    so reactive agents are always wired before emitting, without every call
+    site re-implementing the register_reactive_agents idiom itself."""
     try:
-        from ...events.store import EventStore
+        from ...events.factory import get_events
         cdb = _open_collab(user)
         try:
-            es = EventStore(cdb)
-            try:
-                from ...agents.reactive import register_reactive_agents
-                from ...automation.jobs import build_ctx
-                ctx = build_ctx(user.id, user.email, cdb,
-                                paths.index_dir(user.id), llm_router=None)
-                register_reactive_agents(es, ctx)
-            except Exception:
-                pass   # agents are optional; the event itself must still emit
+            es = get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                            user_email=user.email)
             es.emit(event_type, payload, source="finance")
         finally:
             cdb.close()
@@ -801,8 +793,9 @@ async def upload_csv(
         if isinstance(result, dict):
             return result   # needs_mapping preview
         from ...finance.custodial import emit_refill_events
-        from ...events.store import EventStore
-        emit_refill_events(fe, EventStore(cdb), result.transactions)
+        from ...events.factory import get_events
+        emit_refill_events(fe, get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                                          user_email=user.email), result.transactions)
         d = result.to_dict()
         _emit_fin(user, "finance.csv_imported", {
             "account_id": aid,
@@ -897,8 +890,9 @@ async def upload_pdf(
         except PasswordRequired as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         from ...finance.custodial import emit_refill_events
-        from ...events.store import EventStore
-        emit_refill_events(fe, EventStore(cdb), result.transactions)
+        from ...events.factory import get_events
+        emit_refill_events(fe, get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                                          user_email=user.email), result.transactions)
         d = result.to_dict()
         _emit_fin(user, "finance.pdf_imported", {
             "account_id": aid,
@@ -967,8 +961,9 @@ def sync_gmail(
                        cc_account_id=cc_aid)
 
         from ...finance.custodial import emit_refill_events
-        from ...events.store import EventStore
-        emit_refill_events(fe, EventStore(cdb), result.transactions)
+        from ...events.factory import get_events
+        emit_refill_events(fe, get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                                          user_email=user.email), result.transactions)
 
         d = result.to_dict()
         if d.get("imported", 0) > 0:
@@ -1071,8 +1066,9 @@ def sync_gmail_all(
             all_transactions.extend(r.transactions)
 
         from ...finance.custodial import emit_refill_events
-        from ...events.store import EventStore
-        emit_refill_events(fe, EventStore(cdb), all_transactions)
+        from ...events.factory import get_events
+        emit_refill_events(fe, get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                                          user_email=user.email), all_transactions)
 
         result = {
             "imported":     total_imported,
@@ -1407,7 +1403,7 @@ def custodial_disburse(account_id: str, body: DisburseBody,
     import datetime as _dt
     from ...finance.custodial_sheets import append_disbursement_row
     from ...connectors.google import load_credentials, TOKEN_FILENAME
-    from ...events.store import EventStore
+    from ...events.factory import get_events
     from ..deps import _connector_dir
 
     fe = _finance_db(user)
@@ -1427,7 +1423,8 @@ def custodial_disburse(account_id: str, body: DisburseBody,
                         (body.beneficiary_id, body.part, tid))
         fe.conn.commit()
 
-        events = EventStore(cdb)
+        events = get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                            user_email=user.email)
         eid = events.emit("custodial.disbursed", {
             "account_id": account_id, "beneficiary_id": body.beneficiary_id,
             "beneficiary_name": ben["name"], "transaction_id": tid,
@@ -1803,7 +1800,7 @@ def custodial_confirm_suggestion(account_id: str, transaction_id: str,
     appends the Sheet row, and checks cycle-close."""
     from ...finance.custodial_sheets import append_disbursement_row
     from ...connectors.google import load_credentials, TOKEN_FILENAME
-    from ...events.store import EventStore
+    from ...events.factory import get_events
     from ..deps import _connector_dir
 
     fe = _finance_db(user)
@@ -1828,7 +1825,8 @@ def custodial_confirm_suggestion(account_id: str, transaction_id: str,
             (body.beneficiary_id, "Custodial Disbursement", transaction_id))
         fe.conn.commit()
 
-        eid = EventStore(cdb).emit("custodial.disbursed", {
+        eid = get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                         user_email=user.email).emit("custodial.disbursed", {
             "account_id": account_id, "beneficiary_id": body.beneficiary_id,
             "beneficiary_name": ben["name"], "transaction_id": transaction_id,
             "amount": abs(row["amount"]), "date": row["date"], "mode": body.mode,

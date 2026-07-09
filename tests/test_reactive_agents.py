@@ -23,7 +23,8 @@ def env(tmp_path, monkeypatch):
     ctx = build_ctx("u-react", "t@example.com", cdb, tmp_path, llm_router=None)
     es = EventStore(cdb)
     registered = register_reactive_agents(es, ctx)
-    assert set(registered) == {"budget", "subscription", "compliance", "screening", "errand"}
+    assert set(registered) == {"budget", "subscription", "compliance", "screening",
+                               "errand", "learning"}
     yield ctx, es, tmp_path
     cdb.close()
 

@@ -389,11 +389,11 @@ POST              /api/assistant/chat                     # {message, history} �
 ```python
 # EventStore (collab.db > events table) + in-process pub/sub
 from amy.events.store import EventStore, FINANCE_GMAIL_SYNCED, ...
-es = EventStore(cdb)
+# Build via the factory (see below), not EventStore(cdb) directly, whenever
+# the event type may trigger a reactive agent.
+from amy.events.factory import get_events
+es = get_events(user.id, cdb, index_dir=paths.index_dir(user.id), user_email=user.email)
 es.emit("finance.csv_imported", {"bank_name": ..., "imported": n}, source="finance")
-
-# Finance router uses fire-and-forget helper — never breaks routes
-def _emit_fin(user, event_type, payload): ...
 
 # Event types emitted:
 finance.transaction_added / csv_imported / pdf_imported / gmail_synced
@@ -406,18 +406,51 @@ agent.goal_planned / agent.error        # always carry {agent, reasoning}
 vault.note_edited
 goal.created / goal.completed / capture.added / digest.generated
 context.place_entered / place_left / location_updated   # payload = place id/name/kind, never coordinates
-
-# Reactive agents (amy/agents/reactive.py) are wired onto EventStore at
-# EVERY site that builds one and is about to emit an agent-relevant event —
-# the bus is per-instance, so each call site must call
-# register_reactive_agents(events, ctx) itself. Known sites: _emit_fin
-# (finance.py), JobCtx.events() (automation/executors.py),
-# _events_with_agents (geo.py), and the learning-feed router/sensor. A site
-# that builds a bare EventStore(cdb) and calls .emit() directly SILENTLY
-# drops all agent reactions — no error, nothing in the logs. Kill switches:
-# AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _SCREENING / _OBLIGATION /
-# _ERRAND / _LEARNING.
+github.pr_review_requested / pr_status_changed / issue_assigned   # CONNECTOR COMPLETION — MCP-based, not the legacy amy/sensors/ OL github integration
+plane.task_assigned / task_due_soon / task_status_changed
 ```
+
+## Event System — factory + reactive-agent wiring (quirk 20)
+
+`amy.events.factory.get_events(user_id, collab_db, index_dir=None,
+user_email="", ctx=None)` is now THE way to build an `EventStore` whose
+emit should reach reactive agents — it wraps `EventStore(cdb)` +
+`register_reactive_agents(es, ctx)` in one call (lazy-importing
+`agents.reactive`/`automation.jobs` inside the function body so
+`amy/events/store.py` itself stays import-free of agents/automation — no
+`events → agents.reactive → tools → automation → events` cycle). Known
+sites already migrated: `_emit_fin`/`emit_refill_events` calls/custodial-
+disburse endpoints (`finance.py`), `_emit_biz` (`business.py` — this one was
+a live bug: `finance.ledger_entry_posted` went through a bare `EventStore`,
+so the compliance agent never fired for ledger entries posted via the
+business router), `JobCtx.events()` (`automation/executors.py`),
+`_events_with_agents` (`geo.py`), the learning-feed router/sensor, and the
+custodial-refill branch of the Gmail auto-poll loop (`app.py`).
+
+A **bare** `EventStore(cdb)` is still valid when the event type genuinely
+has no agent subscriber (e.g. the legacy Operational Layer's
+`amy/sensors/github_sensor.py` events, `CollabMaster`'s
+`register_default_triggers` path in `amy/collab/orchestrator.py`,
+`digest.generated`, `custodial.disbursed`/`refilled`) — each such site now
+has a one-line comment saying why. Building one bare for an
+`AGENT_RELEVANT_EVENTS` type (defined in `amy/events/store.py`, next to the
+event-type constants) is no longer silent: `EventStore.emit` logs one
+WARNING per process per call-site ("...has ZERO subscribers on this
+instance...").
+
+Registration is **idempotent per EventStore instance**:
+`register_reactive_agents` tracks already-wired agent names on
+`events._registered_agent_keys` and no-ops a repeat call for an agent
+already present — calling it (or the factory) twice on the same store fires
+each agent's handler exactly once per emit, not twice. Don't rely on
+approval-side dedup keys to mask a double-registration bug — a non-deduped
+agent (e.g. `subscription`, which sets no `agent_dedup_key`) will double-
+propose if this guarantee ever regresses; `tests/test_events_factory.py`
+pins it down with a call counter + approval-row count, not just dedup.
+
+Kill switches: `AMY_AGENT_BUDGET` / `_SUBSCRIPTION` / `_COMPLIANCE` /
+`_SCREENING` / `_OBLIGATION` / `_ERRAND` / `_LEARNING` / `_PR_TASK` /
+`_MEETING_PREP`.
 
 ## LLM Routing
 

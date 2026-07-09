@@ -1,4 +1,13 @@
-"""Event store and GitHub sensor routes."""
+"""Event store and GitHub sensor routes.
+
+The EventStore(db) calls below are intentionally bare (not built via
+amy.events.factory.get_events()): amy.sensors.GitHubSensor publishes
+"github.NEW_*"/"github.CI_FAILURE" types (see amy/sensors/github_models.py)
+that no reactive agent subscribes to today — this is the legacy Operational
+Layer github integration (env-token based), separate from the CONNECTOR
+COMPLETION phase's MCP-based github.pr_review_requested/etc. sensor
+(amy/agents/reactive.py's pr_to_task agent subscribes to THOSE, not these).
+"""
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request

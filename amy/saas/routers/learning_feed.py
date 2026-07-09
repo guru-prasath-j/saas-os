@@ -178,20 +178,14 @@ def track_progress(item_id: str, body: ProgressBody,
 
         if just_completed:
             try:
-                from ...events.store import EventStore, LEARNING_ITEM_COMPLETED
-                es = EventStore(cdb)
-                try:
-                    # same idiom as _emit_fin (finance.py) / _events_with_agents
-                    # (geo.py) — wire reactive agents onto THIS EventStore
-                    # instance before emitting, so the learning agent reacts
-                    from ...agents.reactive import register_reactive_agents
-                    from ...automation.jobs import build_ctx
-                    from .. import paths
-                    agent_ctx = build_ctx(user.id, user.email, cdb,
-                                          paths.index_dir(user.id), llm_router=None)
-                    register_reactive_agents(es, agent_ctx)
-                except Exception:
-                    pass   # agents are optional; the event itself must still emit
+                from ...events.store import LEARNING_ITEM_COMPLETED
+                from ...events.factory import get_events
+                from .. import paths
+                # amy.events.factory.get_events() (Part 0 / quirk 20 fix) wires
+                # reactive agents onto THIS EventStore instance before
+                # emitting, so the learning agent reacts
+                es = get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                                user_email=user.email)
                 es.emit(LEARNING_ITEM_COMPLETED, {
                     "title": item["title"], "url": item["url"],
                     "source": item["source"], "focus": item.get("focus_tag"),

@@ -40,16 +40,16 @@ class JobCtx:
 
     def events(self):
         """EventStore with reactive agents wired on (agents also react to
-        job-driven imports). Wiring failures degrade to a bare store."""
-        from ..events.store import EventStore
-        es = EventStore(self.collab)
-        if not self._extras.get("no_reactive_agents"):
-            try:
-                from ..agents.reactive import register_reactive_agents
-                register_reactive_agents(es, self)
-            except Exception:
-                pass
-        return es
+        job-driven imports). Uses amy.events.factory.get_events() with THIS
+        ctx reused (Part 0 / quirk 20 fix) — register_reactive_agents is
+        idempotent per-instance, so calling this more than once per run is
+        safe, but each call still builds a fresh EventStore. Wiring failures
+        degrade to a bare store."""
+        if self._extras.get("no_reactive_agents"):
+            from ..events.store import EventStore
+            return EventStore(self.collab)
+        from ..events.factory import get_events
+        return get_events(self.user_id, self.collab, ctx=self)
 
     def notify_store(self):
         from ..notifications import NotificationStore

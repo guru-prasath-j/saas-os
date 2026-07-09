@@ -242,3 +242,65 @@ Tests in `tests/`: registry schema + risk gating; approval lifecycle
 financing total-cost math.
 Update API_ENDPOINTS.md + CLAUDE.md as phases land; docs/jurisdictions.md;
 keep this file's Progress table current.
+
+---
+
+## Phase: CONNECTOR COMPLETION
+
+Completes the remaining connector work after the learning-feed pipeline +
+local MCP servers (HN/YouTube/Dev.to) landed: GitHub + Plane integration,
+Meet/calendar-driven meeting prep, the connectors health tab, and a
+structural fix for quirk 20 (every EventStore emit site having to remember
+`register_reactive_agents` itself).
+
+### Progress
+
+| Part | Description | Status | Commit |
+|---|---|---|---|
+| 0 | `amy/events/factory.py` + idempotent registration + zero-subscriber warning; migrate known emit sites | DONE | (pending commit) |
+| 1 | GitHub + Plane registry tools (read + external-pinned write) + connector_calls ledger | TODO | |
+| 2 | Sensors (GitHubSensor/PlaneSensor) + reactive agents (pr_to_task, meeting_prep) + jobs (project_pulse, meeting_prep_scan) | TODO | |
+| 3 | `/api/connectors/status` + Connectors tab (index.html) | TODO | |
+
+### Part 0 — structural fix for quirk 20 (DONE)
+
+`amy/events/factory.py::get_events(user_id, collab_db, index_dir=None,
+user_email="", ctx=None)` — the one place that builds an `EventStore` with
+reactive agents wired on. Lazy-imports `agents.reactive`/`automation.jobs`
+inside the function body (RISK A: no `events → agents.reactive → tools →
+automation → events` cycle — verified via an isolated
+`python -c "import amy.events.factory"` subprocess test AND a normal app
+cold-import). RISK B (double registration → double-fire) fixed at the
+`EventStore` level: `_registered_agent_keys` tracks agents already wired on
+an instance; `register_reactive_agents` no-ops a repeat call per agent.
+Added a dev-time guardrail: `EventStore.emit` warns once per process per
+call-site when an `AGENT_RELEVANT_EVENTS` type has zero subscribers.
+
+Migrated sites: `_emit_fin` + all four `emit_refill_events(...)` call sites
++ both custodial-disburse endpoints (`amy/saas/routers/finance.py`),
+`JobCtx.events()` (`amy/automation/executors.py`), `_events_with_agents`
+(`amy/saas/routers/geo.py`), `refresh_for_user` (`amy/learning_feed/
+sensor.py`), `track_progress` (`amy/saas/routers/learning_feed.py`), the
+custodial-refill branch of the Gmail auto-poll loop (`amy/saas/app.py`),
+and `_emit_biz` (`amy/saas/routers/business.py` — a real bug found here:
+`finance.ledger_entry_posted` went through a bare `EventStore`, so the
+compliance agent never reacted to a ledger entry posted via the business
+router). Intentionally-bare sites (no agent subscribes to their event
+types) got a one-line comment instead: the legacy Operational-Layer GitHub
+sensor path (`amy/saas/routers/events.py`, `amy/saas/app.py`'s
+`_DedupEvents`), and `CollabMaster`'s `register_default_triggers` path
+(`amy/collab/orchestrator.py`).
+
+Also fixed a stale assertion in `tests/test_reactive_agents.py` (expected
+agent set predated the `learning` agent — pre-existing failure, confirmed
+via `git stash` before touching it).
+
+Tests: `tests/test_events_factory.py` (4 passing) — factory-built store
+fires an agent; bare store warns once per call-site and doesn't re-warn on
+a repeat from the same site; double `register_reactive_agents` on one
+instance fires a non-deduped write-proposing agent (`subscription`) exactly
+once (counter + exactly-1-approval-row, not masked by dedup keys); isolated
+subprocess import of `amy.events.factory` succeeds. Full suite re-run:
+same 22 failed / 7 errors as the pre-change baseline (confirmed via `git
+stash`, all pre-existing/unrelated — categorizer/BYOK/career-agent/
+finance-import/orchestrator LLM-scripting tests), 536+ passing.

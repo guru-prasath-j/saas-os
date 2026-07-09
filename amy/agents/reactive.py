@@ -562,24 +562,43 @@ def _errand_agent(events, ctx):
 
 def register_reactive_agents(events, ctx) -> list[str]:
     """Wire enabled reactive agents onto this EventStore instance.
-    Returns the list of agents registered (for tests/observability)."""
-    registered = []
+
+    Idempotent per EventStore instance (Part 0 / quirk 20 fix, RISK B): each
+    agent is subscribed at most once per instance, tracked via
+    events._registered_agent_keys. Calling this twice on the same store (or
+    calling amy.events.factory.get_events() twice for it) is safe — the
+    second call subscribes nothing new, so a single emit still runs each
+    agent's handler exactly once. Falls back to a fresh local set if the
+    instance predates this attribute (shouldn't happen; EventStore.__init__
+    always sets it) so this never raises on an unusual store implementation.
+
+    Returns the names of every agent ACTIVE on this instance (cumulative,
+    not just newly-registered-this-call) for tests/observability.
+    """
+    seen = getattr(events, "_registered_agent_keys", None)
+    if seen is None:
+        seen = set()
+        try:
+            events._registered_agent_keys = seen
+        except Exception:
+            pass
+
+    def _once(name: str, register_fn) -> None:
+        if name in seen:
+            return
+        register_fn(events, ctx)
+        seen.add(name)
+
     if config.agent_enabled("budget"):
-        _budget_agent(events, ctx)
-        registered.append("budget")
+        _once("budget", _budget_agent)
     if config.agent_enabled("subscription"):
-        _subscription_agent(events, ctx)
-        registered.append("subscription")
+        _once("subscription", _subscription_agent)
     if config.agent_enabled("compliance"):
-        _compliance_agent(events, ctx)
-        registered.append("compliance")
+        _once("compliance", _compliance_agent)
     if config.agent_enabled("screening"):
-        _screening_agent(events, ctx)
-        registered.append("screening")
+        _once("screening", _screening_agent)
     if config.agent_enabled("errand"):
-        _errand_agent(events, ctx)
-        registered.append("errand")
+        _once("errand", _errand_agent)
     if config.agent_enabled("learning"):
-        _learning_agent(events, ctx)
-        registered.append("learning")
-    return registered
+        _once("learning", _learning_agent)
+    return sorted(seen)

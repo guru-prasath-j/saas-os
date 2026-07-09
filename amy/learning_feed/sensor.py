@@ -304,7 +304,6 @@ def refresh_for_user(user_id: str, focus: str | None = None,
     fallback kept for callers with no row id in hand. Neither set:
     refreshes every active focus."""
     from ..collab import CollabDB
-    from ..events.store import EventStore
     from ..llm import LLMRouter
     from ..saas import paths
     from ..automation.store import AutomationStore, TrackedLLM
@@ -322,18 +321,12 @@ def refresh_for_user(user_id: str, focus: str | None = None,
                              purpose="learning_feed", force_local=local_only)
         except Exception:
             llm = None
-        events = EventStore(cdb)
-        try:
-            # same idiom as _emit_fin (finance.py) / _events_with_agents
-            # (geo.py) — wire reactive agents onto THIS EventStore instance
-            # so a background-task refresh reacts too, not just the job path
-            from ..agents.reactive import register_reactive_agents
-            from ..automation.jobs import build_ctx
-            agent_ctx = build_ctx(user_id, "", cdb, paths.index_dir(user_id),
-                                  llm_router=None)
-            register_reactive_agents(events, agent_ctx)
-        except Exception:
-            pass   # agents are optional; the refresh itself must still run
+        # amy.events.factory.get_events() (Part 0 / quirk 20 fix) wires
+        # reactive agents onto THIS EventStore instance so a background-task
+        # refresh reacts too, not just the job path; degrades to a bare
+        # store on any wiring failure (the refresh itself must still run).
+        from ..events.factory import get_events
+        events = get_events(user_id, cdb, index_dir=paths.index_dir(user_id))
         rows = promoted_learning_rows(user_id)
         sensor = LearningFeedSensor(events, cdb, user_id,
                                     llm=llm, connector_rows=rows)

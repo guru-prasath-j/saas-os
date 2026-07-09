@@ -32,12 +32,22 @@ def _emit_biz(user: "User", event_type: str, payload: dict) -> str | None:
     """Fire-and-forget business event. Returns the event id, or None if it
     failed — a bad event must never break the route, but callers that need
     a source_event_id for provenance should treat None as "no event" and
-    surface a 500 rather than write a row with no provenance."""
+    surface a 500 rather than write a row with no provenance.
+
+    Uses amy.events.factory.get_events() (Part 0 / quirk 20 fix) — this used
+    to be a bare EventStore, which meant FINANCE_LEDGER_ENTRY_POSTED emitted
+    here never reached the compliance reactive agent (it subscribes to that
+    exact event type in amy/agents/reactive.py). Posting a ledger entry via
+    this router silently skipped the compliance review that posting the same
+    entry through the finance router already triggers."""
     try:
-        from ...events.store import EventStore
+        from ...events.factory import get_events
+        from .. import paths
         cdb = _open_collab(user)
         try:
-            return EventStore(cdb).emit(event_type, payload, source="business")
+            es = get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                            user_email=user.email)
+            return es.emit(event_type, payload, source="business")
         finally:
             cdb.close()
     except Exception:
