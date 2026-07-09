@@ -39,8 +39,13 @@ Rules honored here:
 from __future__ import annotations
 
 import datetime as _dt
+import json
+import logging
+import re
 
 from .. import config
+
+_log = logging.getLogger("amy.agents.reactive")
 
 _BUDGET_WARN_PCT = 0.90       # insight when a category crosses 90% of its cap
 _SUB_MIN_CONFIDENCE = 0.75    # propose only confident subscription candidates
@@ -606,6 +611,236 @@ def career_goal_stall_check(events, ctx) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# portfolio (CAREER AUTOPILOT Part 3) — GitHub <-> career
+# ---------------------------------------------------------------------------
+
+_PORTFOLIO_MIN_SHOWCASE_OVERLAP = 2
+_PORTFOLIO_MAX_GAPS = 5
+
+_PORTFOLIO_SYSTEM = (
+    "You help tailor a developer's GitHub portfolio for a target job role. "
+    "For each SHOWCASE repo, write one sentence on why it belongs on a "
+    "resume for this role plus 2-3 punchy bullet points (technologies + "
+    "outcomes) — infer outcomes conservatively from the repo name/"
+    "description/topics given, never invent metrics that aren't implied. "
+    "For each GAP keyword (a skill the role wants that no repo evidences), "
+    "suggest ONE concrete buildable project. Respond with EXACTLY ONE JSON "
+    'object: {"showcase": [{"repo": "<name>", "why": "...", '
+    '"bullets": ["...", "..."]}], "gap_projects": [{"keyword": "...", '
+    '"project_idea": "..."}]}'
+)
+
+
+def _portfolio_agent(events, ctx):
+    """No-op subscription, same reasoning as _meeting_prep_agent: portfolio
+    analysis triggers are 'on demand' (a career plan step, a manual button)
+    and 'monthly' (portfolio_review job) — none of those are a push EVENT
+    to .subscribe() to. Exists only so 'portfolio' is visible/consistent in
+    register_reactive_agents' list and honors its kill switch. Real logic:
+    portfolio_analyze(), called directly by the orchestrator's career
+    template, the portfolio_review job, and (Part 6) a manual API route."""
+    return
+
+
+def _repo_text(repo: dict) -> str:
+    parts = [str(repo.get("name") or repo.get("full_name") or ""),
+             str(repo.get("description") or ""),
+             str(repo.get("language") or "")]
+    parts += [str(t) for t in (repo.get("topics") or [])]
+    return " ".join(parts)
+
+
+def _classify_repos(repos: list[dict], role_keywords: set[str]) -> tuple[list, list, list]:
+    """Deterministic, auditable classification (not LLM-decided — the
+    factors are the keyword overlap + activity/polish signals shown below,
+    matching the 'estimates, factors shown' requirement) into SHOWCASE /
+    NEEDS WORK / NOT RELEVANT. Missing-signal detection is limited to what
+    a repo-list/detail call actually returns (description, homepage,
+    topics) — there is no MCP call for a repo's file tree, so 'tests' isn't
+    claimed as detected, only suggested as a standard checklist item."""
+    kw_lower = {k.lower() for k in role_keywords}
+    showcase, needs_work, not_relevant = [], [], []
+    for r in repos:
+        if r.get("archived") or r.get("fork"):
+            not_relevant.append(r)
+            continue
+        text_l = _repo_text(r).lower()
+        matched = sorted(k for k in kw_lower if k in text_l)
+        r["_matched_keywords"] = matched
+        if not matched:
+            not_relevant.append(r)
+            continue
+        missing = []
+        if not (r.get("description") or "").strip():
+            missing.append("README/description")
+        if not (r.get("homepage") or "").strip():
+            missing.append("demo/deployment link")
+        if not (r.get("topics") or []):
+            missing.append("topics for discoverability")
+        r["_missing"] = missing
+        if len(matched) >= _PORTFOLIO_MIN_SHOWCASE_OVERLAP and not missing:
+            showcase.append(r)
+        else:
+            needs_work.append(r)
+    return showcase, needs_work, not_relevant
+
+
+def _portfolio_fallback_entry(repo: dict, target_role: str) -> dict:
+    matched = repo.get("_matched_keywords") or []
+    name = repo.get("name") or repo.get("full_name") or "repo"
+    return {"repo": name,
+           "why": f"Matches {len(matched)} keyword(s) for {target_role}: "
+                  f"{', '.join(matched) or 'general relevance'}.",
+           "bullets": [f"Built with {repo.get('language') or 'multiple technologies'}",
+                       f"Topics: {', '.join(repo.get('topics') or []) or 'none listed'}"]}
+
+
+def portfolio_analyze(events, ctx, target_role: str | None = None,
+                      goal_id: str | None = None) -> dict:
+    """Pull repos (GitHub MCP) -> classify against a target-role keyword
+    profile built from REAL job postings (job_search, never LLM memory) ->
+    SHOWCASE/NEEDS WORK/NOT RELEVANT + gap project suggestions -> vault note
+    + career.portfolio_analyzed event. Repo/keyword analysis is
+    sensitive=False (public repo metadata + role keywords, no resume text);
+    the ONE narrative-writing LLM call stays in that same non-sensitive
+    lane for the same reason. Gap projects worth building are proposed as
+    ONE batched Plane approval (plane_batch_create_tasks, external -> tier
+    2), same atomic-batch pattern Part 2 uses for milestones."""
+    from .. import tools
+    from ..connectors.mcp_call import extract_list
+
+    if not target_role and goal_id:
+        row = ctx.collab.conn.execute(
+            "SELECT career_meta FROM goals WHERE id=?", (goal_id,)).fetchone()
+        if row and row["career_meta"]:
+            try:
+                target_role = json.loads(row["career_meta"]).get("target_role")
+            except Exception:
+                pass
+    if not target_role:
+        profile = ctx.store.get_career_profile(ctx.user_id) or {}
+        target_role = profile.get("target_role")
+    if not target_role:
+        return {"skipped": "no target_role on file (set a career profile or goal first)"}
+
+    try:
+        repo_out = tools.invoke(ctx, "portfolio_repo_list", {}, actor="agent")
+        repos = repo_out.get("repos") or []
+    except Exception as exc:
+        return {"error": f"portfolio_repo_list failed: {str(exc)[:200]}"}
+    if not repos:
+        return {"skipped": "no repositories found on the connected GitHub account"}
+
+    keywords: set[str] = set()
+    try:
+        job_out = tools.invoke(ctx, "job_search",
+                               {"search_term": target_role, "results_wanted": 10},
+                               actor="agent")
+        postings = job_out.get("jobs") or []
+        from ..automation.orchestrator import _extract_keywords
+        keywords = set(_extract_keywords(postings, top_n=15))
+    except Exception as exc:
+        _report_error(events, "portfolio", exc)
+    if not keywords:
+        keywords = {target_role}
+
+    showcase, needs_work, not_relevant = _classify_repos(repos, keywords)
+    evidenced = {k for r in (showcase + needs_work + not_relevant)
+                for k in (r.get("_matched_keywords") or [])}
+    gaps = sorted({k.lower() for k in keywords} - evidenced)[:_PORTFOLIO_MAX_GAPS]
+
+    entries = [_portfolio_fallback_entry(r, target_role) for r in showcase]
+    gap_projects = [{"keyword": g, "project_idea": f"Build a small {g} project "
+                     "to demonstrate this skill."} for g in gaps]
+
+    llm = _get_llm(ctx)
+    if llm is not None and (showcase or gaps):
+        repo_lines = [f"- {r.get('name')}: {r.get('description') or '(no description)'} "
+                      f"[{', '.join(r.get('_matched_keywords') or [])}]" for r in showcase]
+        prompt = (f"Target role: {target_role}\nGap keywords: {', '.join(gaps) or 'none'}\n\n"
+                 f"Showcase repos:\n" + "\n".join(repo_lines))
+        try:
+            text, provider = llm.generate(_PORTFOLIO_SYSTEM, prompt, sensitive=False)
+            if provider != "template":
+                m = re.search(r"\{.*\}", text, re.DOTALL)
+                if m:
+                    parsed = json.loads(m.group(0))
+                    if isinstance(parsed.get("showcase"), list) and parsed["showcase"]:
+                        entries = parsed["showcase"]
+                    if isinstance(parsed.get("gap_projects"), list) and parsed["gap_projects"]:
+                        gap_projects = parsed["gap_projects"]
+        except Exception as exc:
+            _log.warning("portfolio: LLM narrative pass failed, using fallback: %s", exc)
+
+    queued = 0
+    if gap_projects:
+        reasoning = (f"Portfolio gap projects for '{target_role}': {len(gap_projects)} "
+                     "skill(s) no current repo evidences, batched into one approval.")
+        ctx._extras["agent_name"] = "portfolio_agent"
+        ctx._extras["agent_reasoning"] = reasoning
+        ctx._extras["agent_dedup_key"] = f"portfolio_gaps_{ctx.user_id}_{target_role}"
+        try:
+            batch = tools.invoke(
+                ctx, "plane_batch_create_tasks",
+                {"tasks": [{"title": f"Portfolio gap: {g['keyword']}",
+                           "description": g["project_idea"]} for g in gap_projects]},
+                actor="agent")
+            if isinstance(batch, dict) and batch.get("status") == "pending":
+                queued = 1
+        except Exception as exc:
+            _log.warning("portfolio: gap-project batch proposal failed: %s", exc)
+
+    today = _dt.date.today().isoformat()
+    lines = [f"Target role: **{target_role}**", "",
+            f"### Showcase ({len(showcase)})"]
+    for e in entries:
+        lines.append(f"- **{e.get('repo')}** — {e.get('why', '')}")
+        for b in e.get("bullets") or []:
+            lines.append(f"  - {b}")
+    lines.append(f"\n### Needs work ({len(needs_work)})")
+    for r in needs_work:
+        missing = ", ".join(r.get("_missing") or []) or "polish"
+        lines.append(f"- **{r.get('name')}** — relevant, missing: {missing}")
+    lines.append(f"\n### Gaps ({len(gap_projects)})")
+    for g in gap_projects:
+        lines.append(f"- **{g['keyword']}**: {g['project_idea']}")
+    note_body = "\n".join(lines)
+
+    note_path = None
+    try:
+        from ..memory.writer import MemoryWriter
+        from ..saas import tenancy
+        vault = tenancy.resolve_vault_dir(ctx.user_id)
+        vault.mkdir(parents=True, exist_ok=True)
+        p = MemoryWriter(vault).write_atomic(
+            "portfolio review", f"Portfolio Review - {today}", note_body,
+            eid=f"portfolioreview-{ctx.user_id}-{today}", tags=["career", "portfolio"])
+        note_path = str(p) if p else "already-written"
+    except Exception as exc:
+        _log.warning("portfolio: vault note failed: %s", exc)
+
+    result = {"target_role": target_role, "showcase": entries,
+             "needs_work": [{"repo": r.get("name"), "missing": r.get("_missing")}
+                           for r in needs_work],
+             "not_relevant_count": len(not_relevant), "gaps": gap_projects,
+             "note": note_path, "queued_approvals": queued}
+
+    try:
+        from ..events.store import CAREER_PORTFOLIO_ANALYZED
+        payload = {"agent": "portfolio_agent", "target_role": target_role,
+                  "goal_id": goal_id, "showcase_count": len(showcase),
+                  "needs_work_count": len(needs_work), "gap_count": len(gap_projects),
+                  "reasoning": f"Analyzed {len(repos)} repo(s) against '{target_role}'."}
+        eid = events.emit(CAREER_PORTFOLIO_ANALYZED, payload, source="portfolio_agent")
+        _journal(ctx, {"id": eid, "type": CAREER_PORTFOLIO_ANALYZED, "payload": payload,
+                       "ts": None, "source": "portfolio_agent"})
+    except Exception:
+        pass   # fire-and-forget: the result dict + vault note are the record
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -926,4 +1161,6 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("meeting_prep", _meeting_prep_agent)
     if config.agent_enabled("career_goal"):
         _once("career_goal", _career_goal_agent)
+    if config.agent_enabled("portfolio"):
+        _once("portfolio", _portfolio_agent)
     return sorted(seen)

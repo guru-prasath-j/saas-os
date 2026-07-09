@@ -434,20 +434,33 @@ def _run_career_template(ctx: JobCtx, goal: str, run_id: str) -> dict:
     _log_step(3, "plane_batch_create_tasks", {"tasks": milestones}, batch_result,
               batch_reasoning)
 
-    # 5. portfolio first look — read-only, informational; the full SHOWCASE/
-    # NEEDS WORK/GAPS classification + vault note is the portfolio agent (Part 3)
+    # 5. portfolio analysis (Part 3): SHOWCASE/NEEDS WORK/GAPS classification
+    # + vault note + its own gap-project batch approval. Degrades to a
+    # {"error"/"skipped"} dict on any failure — never blocks the plan.
+    from ..agents.reactive import portfolio_analyze
+    portfolio_reasoning = "Full portfolio pull + classification for the career plan."
     try:
-        repos = tools.invoke(ctx, "portfolio_repo_list", {}, actor="agent")
+        portfolio_result = portfolio_analyze(ctx.events(), ctx, target_role=target_role,
+                                             goal_id=gid)
     except Exception as exc:
-        repos = {"error": str(exc)[:200]}
-    _log_step(4, "portfolio_repo_list", {}, repos,
-              "First-look repo pull for the career plan — full portfolio "
-              "analysis (SHOWCASE/NEEDS WORK/GAPS) is a separate on-demand step.")
+        portfolio_result = {"error": str(exc)[:200]}
+        _log.warning("career template: portfolio_analyze failed: %s", exc)
+    _log_step(4, "portfolio_analyze", {"target_role": target_role}, portfolio_result,
+              portfolio_reasoning)
+    if isinstance(portfolio_result, dict):
+        # portfolio_analyze proposes its own gap-project batch approval
+        # internally (not surfaced as a top-level "pending" result the way
+        # _log_step's is_pending check expects) — fold it in so
+        # out["queued_approvals"] stays accurate.
+        queued += int(portfolio_result.get("queued_approvals") or 0)
 
+    portfolio_note = ""
+    if isinstance(portfolio_result, dict) and portfolio_result.get("showcase"):
+        portfolio_note = (f", portfolio classified ({len(portfolio_result['showcase'])} "
+                          "showcase repo(s))")
     summary = (f"Career plan for {target_role} over {weeks} weeks: goal created, "
               f"{len(gaps)} learning focus(es) linked, {len(milestones)} "
-              "milestone(s) proposed as one batched approval, portfolio "
-              "pulled for a first look.")
+              f"milestone(s) proposed as one batched approval{portfolio_note}.")
     status = "completed"
     _persist_run(ctx, run_id, goal, plan, steps_log, summary, status)
 

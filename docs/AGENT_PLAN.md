@@ -461,7 +461,7 @@ port 8935); no LLM-fabricated postings.
 |---|---|---|---|
 | 1 | Career data model + Job Search MCP tools | DONE | 1b2f404 |
 | 2 | Career goal flow (orchestrator career template) | DONE | 5183bf1 |
-| 3 | Portfolio analyst (GitHub ↔ career) | PLANNED | |
+| 3 | Portfolio analyst (GitHub ↔ career) | DONE | |
 | 4 | Job scout + match scoring | PLANNED | |
 | 5 | Application pipeline (prepare → approve → send → track) | PLANNED | |
 | 6 | Career tab + briefing integration | PLANNED | |
@@ -637,6 +637,50 @@ passed, same 23 pre-existing failures as Part 1's baseline (confirmed via
 test_reactive_agents.py`'s registered-agent-set assertion again (grew by
 `career_goal`) — the same recurring maintenance note CONNECTOR COMPLETION
 Part 2 already flagged.
+
+### Part 3 — Portfolio analyst (DONE)
+
+`amy/agents/reactive.py::portfolio_analyze(events, ctx, target_role=None,
+goal_id=None)` — not a registry tool (same precedent as `meeting_prep_check`:
+no risk-classification ambiguity, called directly). Pulls repos via the
+existing `portfolio_repo_list` tool, builds a target-role keyword profile
+from REAL postings via `job_search` (never LLM memory, reusing
+`orchestrator._extract_keywords`), then a **deterministic, auditable**
+three-way classification (`_classify_repos`): SHOWCASE (matched >=2
+keywords AND no missing-signal), NEEDS WORK (relevant but missing
+description/homepage/topics — the only signals a repo-list call actually
+returns; "tests" is never claimed as detected, only suggested), NOT
+RELEVANT (archived/fork/zero keyword overlap). Classification itself is
+never LLM-decided, only the resume-bullet narrative and gap-project ideas
+are (ONE batched LLM call, `sensitive=False` — public repo metadata + role
+keywords, no resume text — degrades to a deterministic template on
+failure/no-LLM). Gap projects (role keywords no repo evidences) batch into
+ONE `plane_batch_create_tasks` approval, same atomic pattern as Part 2's
+milestones. Output: a vault note (`09_Memory/Portfolio Review - {date}`,
+idempotent per user+day), `career.portfolio_analyzed` event + journal, and
+a structured result dict (Part 6's Career tab will render it directly).
+
+Three triggers, as specced: on-demand from the career plan template (Part
+2's step 5 now calls the real analysis instead of a bare repo-list "first
+look"), a new monthly `portfolio_review` job (skips cleanly if no active
+career goal), and — deferred to Part 6 — a manual button/route. New
+`AMY_AGENT_PORTFOLIO` kill switch (`_portfolio_agent` is a no-op
+subscription registered for kill-switch/visibility consistency only, same
+reasoning as `_meeting_prep_agent` — there's no push event for "analyze my
+portfolio").
+
+Tests: `tests/test_portfolio_analyst.py` (9 passing, all MCP calls mocked)
+— three-way classification incl. archived/fork; no-target-role skip;
+full-flow happy path (showcase/needs-work/not-relevant counts, vault note,
+event); gap projects batch into exactly one tier-2 approval; GitHub
+failure degrades to an error dict, never raises; agent registration;
+monthly job skips without an active career goal and runs when one exists.
+Full suite: 591 passed, same 23 pre-existing failures as Parts 1-2's
+baseline, +9 new tests passing. Also updated `_run_career_template`'s
+`queued_approvals` counter to fold in `portfolio_analyze`'s own batch
+approval (it doesn't surface as a top-level "pending" step result the way
+`_log_step`'s detection expects) and `test_reactive_agents.py`'s
+registered-agent-set assertion again (grew by `portfolio`).
 
 ### Design decisions (resolved before Part 1 started)
 
