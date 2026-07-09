@@ -196,7 +196,25 @@ class JobScoutSensor(Sensor):
                         priority="normal",
                         related_entity={"id": ref, "entity_type": "job_posting",
                                         "posting_id": pid})
+                self._maybe_propose_application(pid, goal["id"])
         return emitted
+
+    def _maybe_propose_application(self, posting_id: str, goal_id: str) -> None:
+        """CAREER AUTOPILOT Part 5: 'the agent proposes for high scores' —
+        gated by AMY_AGENT_APPLICATION_TRACKER (separate from AMY_AGENT_
+        JOB_SCOUT, which only gates discovery/scoring). prepare_application
+        itself always routes the actual send through tools.invoke(actor=
+        "agent"), so this still lands as one approval, never an auto-send —
+        the dedup key (apply_{posting_id}) makes a repeat call harmless."""
+        from . import config
+        if not config.agent_enabled("application_tracker"):
+            return
+        try:
+            from .career_apply import prepare_application
+            prepare_application(self.ctx, posting_id, goal_id=goal_id)
+        except Exception as exc:
+            _log.warning("job_scout: auto-apply proposal failed for %s: %s",
+                        posting_id, exc)
 
 
 def job_scout_poll(ctx) -> dict:

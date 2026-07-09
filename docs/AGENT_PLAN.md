@@ -463,7 +463,7 @@ port 8935); no LLM-fabricated postings.
 | 2 | Career goal flow (orchestrator career template) | DONE | 5183bf1 |
 | 3 | Portfolio analyst (GitHub ↔ career) | DONE | c4b7054 |
 | 4 | Job scout + match scoring | DONE | 5c14c51 |
-| 5 | Application pipeline (prepare → approve → send → track) | PLANNED | |
+| 5 | Application pipeline (prepare → approve → send → track) | DONE | |
 | 6 | Career tab + briefing integration | PLANNED | |
 
 ### Pre-flight findings (verified before planning Parts 1-2)
@@ -728,6 +728,81 @@ that file's runtime from ~14s to ~2s). Full suite: 600 passed, 22 failed
 — the same pre-existing baseline minus one known-flaky filesystem-watcher
 timing test that happened to pass this run (documented as flaky since
 CONNECTOR COMPLETION Part 3).
+
+### Part 5 — Application pipeline (DONE)
+
+`amy/career_apply.py` (new flat module). Pre-flight check before writing
+any code: grepped for `web_search`/`tavily`/`serpapi`/`duckduckgo`/`bing`
+across `amy/` — **no web-search tool exists anywhere in this codebase**.
+Per this phase's "say so and stub the interface — do not fake data"
+constraint, `_company_intel()` tries a GENERIC `web_search` MCP source
+through the same `call_mcp_tool` resolve-call-log helper GitHub/Plane/
+jobspy already use (any web-search MCP the user registers under a name
+containing "web_search" — Brave, Tavily, ... — just works, same tolerant-
+naming pattern as everywhere else); with none registered it honestly
+returns `available: False` rather than asking the LLM to guess a
+company's hiring process. Always caches (even the empty result, 30-day
+freshness) and always carries the "signals, not facts" disclaimer.
+
+`prepare_application(ctx, posting_id, goal_id=None)` runs all four PREPARE
+steps deterministically/read-only — channel recommendation (regex email
+extraction from the posting text, agency-keyword heuristic, portal
+fallback; never fabricates a contact), ATS estimate (deterministic
+keyword-coverage math via `orchestrator._extract_keywords`, honestly
+`None` with a reason when no resume is on file — never a fabricated
+percentage), company intel (above), and a tailored draft (ONE
+`sensitive=True` LLM call referencing SHOWCASE repo names, degrading to a
+deterministic template). Showcase names come from a **cheap** reuse of
+Part 3's `_classify_repos` against just this one posting's keywords —
+deliberately NOT a full `portfolio_analyze()` call, which proposes its own
+gap-project batch approval and would spam one per application.
+
+Then ONE approval, always: email-channel posts go through `send_hr_email`
+(external, hard tier-2); portal/third-party posts go through
+`application_log` (status→`approved`, meaning "prep-pack ready, human
+submits manually" — Amy has no portal-submission executor by design, no
+scraping/portal automation). **The send is always gated via
+`tools.invoke(actor="agent")` inside `prepare_application` regardless of
+who called it** — a human clicking "apply" gets exactly the same approval
+gate as the agent auto-proposing for a high match score, satisfying "Amy
+NEVER submits an application without an explicit per-application
+approval" unconditionally. Dedup key `apply_{posting_id}`.
+
+`job_scout.py`'s `JobScoutSensor` gained `_maybe_propose_application()`:
+on a match-score notification, also calls `prepare_application` — gated by
+its OWN kill switch (`AMY_AGENT_APPLICATION_TRACKER`, separate from
+`AMY_AGENT_JOB_SCOUT` which only gates discovery/scoring).
+
+TRACK: new `application_followup_check` job (every 2 days).
+`followup_check()` proposes ONE follow-up email (tier-2, dedup
+`followup_{application_id}`) for `status='sent'` applications stale
+`AMY_CAREER_MATCH_THRESHOLD`-independent `_FOLLOWUP_STALE_DAYS` (10) with
+no response — reuses the dedup key's existence in the `approvals` table
+itself as the "already followed up" check (simpler and more reliable than
+parsing timeline text). Applications that already got a follow-up and are
+stale another `_GHOST_DAYS` (21) auto-mark `ghosted` — an internal status
+inference from already-known data, not an external send, so it executes
+directly (same "orchestrator's own bookkeeping" precedent as Part 2's
+goal/milestone writes) rather than parking for approval. Portal/third-
+party applications (no `to_email` captured) are structurally skipped —
+there's no automated way to follow up on those, documented as a known
+limitation (the human tracks those manually once submitted).
+
+Tests: `tests/test_career_apply.py` (20 passing, all MCP/LLM calls
+mocked) — channel recommendation (email/agency/portal); ATS estimate
+honest-no-resume vs computed; company intel stub vs connector-backed;
+prepare_application for both channels parks exactly one approval with the
+right tool/tier; dedup on repeat prepare calls; unknown posting error;
+follow-up proposes/skips/no-double-fires/ghosts/skips-portal/kill-switch;
+job_scout's auto-apply wiring fires only when
+`AMY_AGENT_APPLICATION_TRACKER` is on. Found and fixed a real bug while
+writing these: two job_scout auto-apply tests set `ctx.llm` to a stub for
+scoring, but the file's autouse "force `_get_llm` to `None`" fixture
+(added for speed/determinism, see Part 4) unconditionally overrode it —
+fixed by re-patching `_get_llm` to `lambda ctx: ctx.llm` in those two
+tests specifically. Full suite: 619 passed, same 23 pre-existing failures
+as Part 4's baseline (including the known-flaky filesystem-watcher test,
+which flipped back to failing this run — still not this work's doing).
 
 ### Design decisions (resolved before Part 1 started)
 

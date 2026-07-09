@@ -97,6 +97,12 @@ def _job_scout_poll(ctx: JobCtx) -> dict:
     return job_scout_poll(ctx)
 
 
+def _application_followup_check(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Part 5: staleness follow-up + ghosting, every 2 days."""
+    from ..career_apply import followup_check
+    return followup_check(ctx)
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -142,6 +148,7 @@ HANDLERS: dict[str, callable] = {
     "career_goal_stall_check": _career_goal_stall_check,
     "portfolio_review": _portfolio_review,
     "job_scout_poll": _job_scout_poll,
+    "application_followup_check": _application_followup_check,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -181,6 +188,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("career_goal_stall_check", {"daily_at": "09:30"}),
         ("portfolio_review",       {"monthly_day": 1, "at": "10:00"}),
         ("job_scout_poll",         {"every_hours": job_scout_interval_hours}),
+        ("application_followup_check", {"every_hours": 48}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).
