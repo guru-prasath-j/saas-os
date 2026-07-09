@@ -462,7 +462,7 @@ port 8935); no LLM-fabricated postings.
 | 1 | Career data model + Job Search MCP tools | DONE | 1b2f404 |
 | 2 | Career goal flow (orchestrator career template) | DONE | 5183bf1 |
 | 3 | Portfolio analyst (GitHub ↔ career) | DONE | c4b7054 |
-| 4 | Job scout + match scoring | DONE | |
+| 4 | Job scout + match scoring | DONE | 5c14c51 |
 | 5 | Application pipeline (prepare → approve → send → track) | PLANNED | |
 | 6 | Career tab + briefing integration | PLANNED | |
 
