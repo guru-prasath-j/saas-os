@@ -18,10 +18,18 @@ Agents:
                  topic that's trending up and isn't goal-linked yet, and
                  nudges (advisory only) a goal-linked focus with zero
                  engagement after repeated refreshes
+  pr_task      — (CONNECTOR COMPLETION Part 2) a GitHub PR that needs review
+                 or just went changes-requested proposes a Plane task
+                 (EXTERNAL tool, always tier 2, deduped per PR)
+  meeting_prep — (CONNECTOR COMPLETION Part 2) no event subscription — see
+                 meeting_prep_check(), driven by the meeting_prep_scan job.
+                 Read-only: writes a vault note + agent.insight, never a
+                 write proposal
 
 Rules honored here:
   - every insight/action carries an explicit reasoning string
-  - kill switches: AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE (default ON)
+  - kill switches: AMY_AGENT_BUDGET / _SUBSCRIPTION / _COMPLIANCE / _PR_TASK /
+    _MEETING_PREP (default ON)
   - agent errors are reported as agent.error events, never raised into the
     emitting route (the bus additionally retries once + dead-letters)
   - all proposals go through the tool registry with actor="agent", so the
@@ -560,6 +568,192 @@ def _errand_agent(events, ctx):
     events.subscribe("context.place_entered", on_place_entered)
 
 
+# ---------------------------------------------------------------------------
+# CONNECTOR COMPLETION Part 2 — pr_to_task + meeting_prep
+# ---------------------------------------------------------------------------
+
+_CHANGES_REQUESTED_STATES = {"changes_requested", "changesrequested", "request_changes"}
+
+
+def _pr_to_task_agent(events, ctx):
+    """A PR that needs the user's review — or one that just went to
+    changes-requested — becomes a Plane task proposal. plane_create_task is
+    an EXTERNAL tool (amy/tools/connector_tools.py), so this always parks at
+    tier 2 (amy/automation/executors.py's _tier_for) regardless of
+    AMY_AGENT_WRITE_TIER. Deduped per PR (dedup_key pr_task_{repo}_{number})
+    so re-polling the same PR — or a status-changed event landing right
+    after a review-requested one for the same PR — never proposes twice."""
+    def on_pr_event(ev):
+        try:
+            p = ev.get("payload") or {}
+            repo, number = p.get("repo"), p.get("number")
+            title, url = p.get("title") or "", p.get("url") or ""
+            if not repo or number is None:
+                return
+            if ev.get("type") == "github.pr_status_changed":
+                state = (p.get("state") or "").lower().replace(" ", "_")
+                if state not in _CHANGES_REQUESTED_STATES:
+                    return
+                reason = "went to changes-requested"
+            else:
+                reason = "needs your review"
+
+            summary = f"PR #{number} in {repo}: {title}".strip()
+            llm = _get_llm(ctx)
+            if llm is not None:
+                try:
+                    text, _ = llm.generate(
+                        "Summarize in ONE short sentence why this pull "
+                        "request needs the user's attention right now.",
+                        f"Repo: {repo}\nPR #{number}: {title}\nURL: {url}\n"
+                        f"Reason: {reason}")
+                    if text and text.strip():
+                        summary = text.strip()[:300]
+                except Exception:
+                    pass   # LLM summary is a nice-to-have; the reasoning below still works
+
+            reasoning = f"PR #{number} in {repo} ({title}) {reason}. {summary}"
+            _emit_insight(events, ctx, "pr_to_task", f"PR needs attention: {title}",
+                         reasoning, {"repo": repo, "number": number, "url": url,
+                                     "source_event_id": ev.get("id")})
+
+            from .. import tools
+            ctx._extras["agent_name"] = "pr_to_task_agent"
+            ctx._extras["agent_reasoning"] = reasoning
+            ctx._extras["agent_dedup_key"] = f"pr_task_{repo}_{number}"
+            tools.invoke(ctx, "plane_create_task",
+                         {"title": f"Review PR #{number}: {title}"[:200],
+                          "description": f"{url}\n\n{reasoning}"[:2000]},
+                         actor="agent")
+        except Exception as exc:
+            _report_error(events, "pr_to_task", exc)
+
+    events.subscribe("github.pr_review_requested", on_pr_event)
+    events.subscribe("github.pr_status_changed", on_pr_event)
+
+
+_MEETING_PREP_DEFAULT_WINDOW_MIN = 60
+
+
+def _meeting_prep_window_minutes() -> int:
+    try:
+        return int(config._env("AMY_MEETING_PREP_WINDOW_MIN",
+                               str(_MEETING_PREP_DEFAULT_WINDOW_MIN)))
+    except ValueError:
+        return _MEETING_PREP_DEFAULT_WINDOW_MIN
+
+
+def _meeting_prep_agent(events, ctx):
+    """No-op subscription: unlike every other agent here, meeting_prep has
+    no natural triggering EVENT — "a meeting is starting soon" only exists
+    by polling the calendar, so there's nothing to .subscribe() to. This
+    function exists only so meeting_prep is visible/consistent in
+    register_reactive_agents' registered-agents list and honors its kill
+    switch the same way the others do; the real work is
+    meeting_prep_check(), called directly by the meeting_prep_scan job
+    (amy/automation/jobs.py) every 15 minutes."""
+    return
+
+
+def meeting_prep_check(events, ctx) -> int:
+    """Read-only, tier 0 — NEVER proposes a write (unlike pr_to_task).
+    For each Google Calendar meeting starting within the prep window
+    (AMY_MEETING_PREP_WINDOW_MIN, default 60 min), keyword-matches its
+    title/attendees against Plane tasks and GitHub PRs, writes ONE
+    idempotent vault note per meeting id (MemoryWriter dedups on eid — safe
+    to call every 15 minutes without re-writing), and emits agent.insight.
+    Returns the number of meetings prepped this call. Never raises —
+    connector failures degrade to an empty related-items list, not a
+    skipped meeting."""
+    if not config.agent_enabled("meeting_prep"):
+        return 0
+    from .. import tools
+    from ..connectors.mcp_call import extract_list
+
+    window_min = _meeting_prep_window_minutes()
+    try:
+        meetings = tools.invoke(ctx, "meet_upcoming_meetings",
+                                {"hours": max(1, window_min // 60 + 1)}, actor="agent")
+    except Exception as exc:
+        _report_error(events, "meeting_prep", exc)
+        return 0
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    prepped = 0
+    for m in (meetings or {}).get("meetings", []):
+        try:
+            start_raw = m.get("start") or ""
+            try:
+                start = _dt.datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=_dt.timezone.utc)
+            except Exception:
+                continue   # all-day events (date, not dateTime) have no meaningful "minutes away"
+            minutes_away = (start - now).total_seconds() / 60
+            if not (0 <= minutes_away <= window_min):
+                continue
+            meeting_id = m.get("id") or ""
+            title = m.get("title") or "(no title)"
+            if not meeting_id:
+                continue
+
+            keywords = _errand_tokens(title)
+            for att in (m.get("attendees") or []):
+                keywords |= _errand_tokens(att.split("@")[0])
+
+            related_tasks: list[str] = []
+            try:
+                plane = tools.invoke(ctx, "plane_list_tasks", {}, actor="agent")
+                for t in extract_list(plane):
+                    name = str(t.get("name") or t.get("title") or "")
+                    if name and (_errand_tokens(name) & keywords):
+                        related_tasks.append(name)
+            except Exception:
+                pass   # related-item lookups are best-effort; the note still gets written
+
+            related_prs: list[str] = []
+            try:
+                gh = tools.invoke(ctx, "github_list_prs", {}, actor="agent")
+                for pr in extract_list(gh):
+                    ttl = str(pr.get("title") or "")
+                    if ttl and (_errand_tokens(ttl) & keywords):
+                        related_prs.append(ttl)
+            except Exception:
+                pass
+
+            lines = [f"Meeting: **{title}** at {start_raw}", ""]
+            if m.get("meet_link"):
+                lines.append(f"[Join]({m['meet_link']})")
+            if related_tasks:
+                lines.append("\nRelated Plane tasks:")
+                lines += [f"- {t}" for t in related_tasks[:5]]
+            if related_prs:
+                lines.append("\nRelated GitHub activity:")
+                lines += [f"- {t}" for t in related_prs[:5]]
+            if not related_tasks and not related_prs:
+                lines.append("\nNo related Plane tasks or GitHub activity found by keyword match.")
+
+            reasoning = (f"Meeting '{title}' starts in {int(minutes_away)} minute(s) — "
+                        f"prepped {len(related_tasks)} related task(s) and "
+                        f"{len(related_prs)} related PR/issue(s) by keyword match.")
+            try:
+                from ..memory.writer import MemoryWriter
+                from ..saas import tenancy
+                vault = tenancy.resolve_vault_dir(ctx.user_id)
+                vault.mkdir(parents=True, exist_ok=True)
+                MemoryWriter(vault).write_atomic(
+                    "meeting prep", title[:50], "\n".join(lines),
+                    eid=f"meetingprep-{meeting_id}", tags=["meeting", "prep"])
+            except Exception:
+                pass   # journaling is best-effort; the insight event is still the record
+            _emit_insight(events, ctx, "meeting_prep", f"Prepped: {title}", reasoning,
+                         {"meeting_id": meeting_id, "title": title})
+            prepped += 1
+        except Exception as exc:
+            _report_error(events, "meeting_prep", exc)
+    return prepped
+
+
 def register_reactive_agents(events, ctx) -> list[str]:
     """Wire enabled reactive agents onto this EventStore instance.
 
@@ -601,4 +795,8 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("errand", _errand_agent)
     if config.agent_enabled("learning"):
         _once("learning", _learning_agent)
+    if config.agent_enabled("pr_task"):
+        _once("pr_task", _pr_to_task_agent)
+    if config.agent_enabled("meeting_prep"):
+        _once("meeting_prep", _meeting_prep_agent)
     return sorted(seen)

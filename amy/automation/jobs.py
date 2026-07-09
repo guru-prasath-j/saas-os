@@ -58,6 +58,16 @@ def _preference_drift(ctx: JobCtx) -> dict:
     return preference_drift(ctx)
 
 
+def _meeting_prep_scan(ctx: JobCtx) -> dict:
+    """CONNECTOR COMPLETION Part 2: drives the meeting_prep agent's window
+    check every 15 min — cheap (one Google Calendar list call plus, only
+    for meetings actually inside the prep window, a couple of read tool
+    calls for keyword-matching)."""
+    from ..agents.reactive import meeting_prep_check
+    n = meeting_prep_check(ctx.events(), ctx)
+    return {"meetings_prepped": n}
+
+
 HANDLERS: dict[str, callable] = {
     "gmail_statement_ingest": ingest.gmail_statement_ingest,
     "auto_categorize": _auto_categorize,
@@ -75,6 +85,7 @@ HANDLERS: dict[str, callable] = {
     "pattern_tasks": _pattern_tasks,
     "relationship_nudges": _relationship_nudges,
     "preference_drift": _preference_drift,
+    "meeting_prep_scan": _meeting_prep_scan,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -99,6 +110,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("pattern_tasks",          {"daily_at": "06:30"}),
         ("relationship_nudges",    {"daily_at": "09:00"}),
         ("preference_drift",       {"monthly_day": 2, "at": "06:45"}),
+        ("meeting_prep_scan",      {"every_hours": 0.25}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

@@ -258,8 +258,8 @@ structural fix for quirk 20 (every EventStore emit site having to remember
 | Part | Description | Status | Commit |
 |---|---|---|---|
 | 0 | `amy/events/factory.py` + idempotent registration + zero-subscriber warning; migrate known emit sites | DONE | 41aec45 |
-| 1 | GitHub + Plane registry tools (read + external-pinned write) + connector_calls ledger | TODO | |
-| 2 | Sensors (GitHubSensor/PlaneSensor) + reactive agents (pr_to_task, meeting_prep) + jobs (project_pulse, meeting_prep_scan) | TODO | |
+| 1 | GitHub + Plane registry tools (read + external-pinned write) + connector_calls ledger | DONE | dd7fc24 |
+| 2 | Sensors (GitHubSensor/PlaneSensor) + reactive agents (pr_to_task, meeting_prep) + jobs (project_pulse, meeting_prep_scan) | DONE | (pending) |
 | 3 | `/api/connectors/status` + Connectors tab (index.html) | TODO | |
 
 ### Part 0 — structural fix for quirk 20 (DONE)
@@ -304,3 +304,85 @@ subprocess import of `amy.events.factory` succeeds. Full suite re-run:
 same 22 failed / 7 errors as the pre-change baseline (confirmed via `git
 stash`, all pre-existing/unrelated — categorizer/BYOK/career-agent/
 finance-import/orchestrator LLM-scripting tests), 536+ passing.
+
+### Part 1 — GitHub + Plane registry tools (DONE)
+
+Read tools (`github_list_prs`/`list_issues`/`pr_details`, `plane_list_tasks`/
+`task_details`, `meet_upcoming_meetings`) and external-pinned write tools
+(`github_comment`, `plane_create_task`, `plane_update_task`) — all in
+`amy/tools/connector_tools.py` — talk to the user's already-registered
+GitHub/Plane MCP connectors (Layer 1 `McpConnector` rows, the official
+`api.githubcopilot.com/mcp` + `mcp.plane.so` presets already in
+`index.html`'s MCP Sources panel) via a new shared helper,
+`amy/connectors/mcp_call.py::call_mcp_tool()` — resolve connector → list
+its advertised tools → pick the first candidate name it actually has → call
+→ log to `connector_calls` (new table, `amy/automation/store.py`, Part 3's
+health tab reads it). Real MCP servers for the same capability don't agree
+on tool/arg names (same problem `amy/learning_feed/aggregator.py` already
+solved for HN/YouTube/etc.), so every capability tries a short candidate
+list rather than assuming one name.
+
+`amy/tools/registry.py`'s `register_tool()` gained an `extras` dict;
+`amy/automation/executors.py`'s `_tier_for(risk, external=False)` hard-pins
+`external=True` to tier 2 exactly like `destructive` — `AMY_AGENT_WRITE_TIER`
+can soften an ordinary internal write but never an external send, since a
+GitHub comment or Plane task create is irreversible once delivered. Write
+tools follow the existing `add_subscription` convention: the registry
+handler delegates to `amy.automation.executors.execute()`, so an approved
+action and a direct human-actor call run through the exact same
+`github_comment`/`plane_create_task`/`plane_update_task` executors.
+
+Tests: `tests/test_connector_tools.py` (6 passing) — external-pin holds
+even with `AMY_AGENT_WRITE_TIER=0`; an ordinary write still honors it
+(negative control); human-actor calls execute + log to `connector_calls`;
+read tools resolve `owner`/`repo` from the connector's `default_target`;
+missing-connector error is clear. All MCP calls mocked.
+
+### Part 2 — Sensors + reactive agents + jobs (DONE)
+
+`amy/connectors/sensors.py`: `GitHubSensor` (→
+`github.pr_review_requested`/`pr_status_changed`/`issue_assigned`) and
+`PlaneSensor` (→ `plane.task_assigned`/`task_due_soon`/`task_status_changed`),
+same `Sensor` base as `GmailSensor`. Diffing uses a new
+`connector_sensor_seen` table (`amy/automation/store.py`,
+`sensor_seen_state`/`mark_sensor_seen`) — `None` means "never seen" (fires
+once), any other value is the last-known state (a `*_status_changed`/
+`*_STATUS_CHANGED` event only fires on an actual transition, never on first
+sighting). Known limitation, documented in the module: "assigned to
+me"/"review requested of me" isn't filtered against the authenticated
+identity — any non-empty reviewers/assignees list counts (fine for a
+single-user-per-connector deployment).
+
+`amy/agents/reactive.py`: `pr_to_task` (kill switch `AMY_AGENT_PR_TASK`)
+proposes a `plane_create_task` (external → always tier 2) on
+`github.pr_review_requested` or a changes-requested `pr_status_changed`,
+deduped per PR (`pr_task_{repo}_{number}`, blocks pending/executed re-
+proposals — the existing `create_approval` dedup semantics). `meeting_prep`
+(kill switch `AMY_AGENT_MEETING_PREP`) has NO event subscription — there's
+no natural "meeting starting soon" push event — so its registration is a
+documented no-op and the real logic, `meeting_prep_check()`, is called
+directly by a new job. It's read-only/tier-0: gathers keyword-matched Plane
+tasks + GitHub PRs for meetings inside the prep window
+(`AMY_MEETING_PREP_WINDOW_MIN`, default 60 min) and writes one idempotent
+vault note per meeting id (dedup on `eid`).
+
+Jobs (`amy/automation/jobs.py`): `meeting_prep_scan` (every 15 min) drives
+`meeting_prep_check`. "project_pulse" is NOT a competing briefing — per the
+brief, it's `amy/automation/closers.py::_work_section()`, a provider
+function `morning_briefing()` calls directly (PRs awaiting review, Plane
+tasks due within 48h, today's meetings) — every piece independently
+best-effort so a missing connector just omits that piece.
+
+Tests: `tests/test_connector_sensors_agents.py` (5 passing) — sensor diff
+cycle (first poll emits, identical second poll emits nothing); PR
+status-changed only fires on an actual transition, not first sighting; same
+PR event fired twice produces exactly one `plane_create_task` approval row
+(dedup, not a double-fire); kill switch suppresses the agent; meeting_prep
+writes a vault note + `agent.insight` and stays idempotent across repeated
+calls. All MCP/Google Calendar calls mocked.
+
+Also had to re-fix `tests/test_reactive_agents.py`'s registered-agent-set
+assertion a second time (grew by `pr_task`/`meeting_prep`, both default-on)
+— worth noting as a pattern: this assertion will need updating again
+whenever a new default-on agent is added; a set-based `>=` check or an
+explicit "these + at least" comment might be worth it if this recurs again.

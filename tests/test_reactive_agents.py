@@ -24,7 +24,7 @@ def env(tmp_path, monkeypatch):
     es = EventStore(cdb)
     registered = register_reactive_agents(es, ctx)
     assert set(registered) == {"budget", "subscription", "compliance", "screening",
-                               "errand", "learning"}
+                               "errand", "learning", "pr_task", "meeting_prep"}
     yield ctx, es, tmp_path
     cdb.close()
 

@@ -143,6 +143,41 @@ def call_mcp_tool(user_id: str, store, source: str, candidates: tuple[str, ...],
         raise ConnectorCallError(f"{source} connector call failed: {msg}") from exc
 
 
+_LIST_KEYS = ("items", "results", "pull_requests", "issues", "work_items",
+             "tasks", "data", "value", "entries")
+
+
+def extract_list(compacted: dict) -> list[dict]:
+    """Best-effort: pull a list[dict] out of a call_mcp_tool() result — the
+    remote "structured" payload if it's already a list, the first common
+    wrapper key if it's a dict, or JSON parsed out of the "text" field.
+    Mirrors amy/learning_feed/aggregator.py's tolerance for unstandardized
+    MCP response shapes (real servers for the same capability don't agree
+    on a top-level key name). Never raises; [] on anything unexpected
+    (including a truncated result, where "result" is a raw string, not a
+    dict — see _compact())."""
+    result = (compacted or {}).get("result")
+    if not isinstance(result, dict):
+        return []
+    candidate = result.get("structured")
+    if candidate is None:
+        text = result.get("text")
+        if isinstance(text, str) and text.strip():
+            import json
+            try:
+                candidate = json.loads(text)
+            except Exception:
+                candidate = None
+    if isinstance(candidate, list):
+        return [x for x in candidate if isinstance(x, dict)]
+    if isinstance(candidate, dict):
+        for k in _LIST_KEYS:
+            v = candidate.get(k)
+            if isinstance(v, list):
+                return [x for x in v if isinstance(x, dict)]
+    return []
+
+
 def _log(store, user_id: str, connector: str, tool: str, ok: bool, ms: int,
         error: str) -> None:
     try:

@@ -155,6 +155,14 @@ class AutomationStore:
                 created_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS connector_sensor_seen (
+                sensor    TEXT NOT NULL,
+                item_key  TEXT NOT NULL,
+                state     TEXT DEFAULT '',
+                ts        TEXT,
+                PRIMARY KEY (sensor, item_key)
+            );
+
             CREATE TABLE IF NOT EXISTS connector_calls (
                 id        TEXT PRIMARY KEY,
                 uid       TEXT NOT NULL,
@@ -492,6 +500,25 @@ class AutomationStore:
                 "SELECT * FROM connector_calls ORDER BY ts DESC LIMIT ?",
                 (limit,)).fetchall()
         return [dict(r) for r in rows]
+
+    # --- connector sensor diff state (Part 2: GitHubSensor/PlaneSensor) ------
+
+    def sensor_seen_state(self, sensor: str, item_key: str) -> str | None:
+        """None = never seen this item_key before (first sighting). Any
+        other value (including "") is the last-known state string, so a
+        sensor can tell "new item" apart from "item whose state changed"."""
+        row = self.conn.execute(
+            "SELECT state FROM connector_sensor_seen WHERE sensor=? AND item_key=?",
+            (sensor, item_key)).fetchone()
+        return None if row is None else (row["state"] or "")
+
+    def mark_sensor_seen(self, sensor: str, item_key: str, state: str = "") -> None:
+        self.conn.execute(
+            "INSERT INTO connector_sensor_seen(sensor,item_key,state,ts)"
+            " VALUES(?,?,?,?)"
+            " ON CONFLICT(sensor,item_key) DO UPDATE SET state=excluded.state, ts=excluded.ts",
+            (sensor, item_key, state, _now_iso()))
+        self.conn.commit()
 
 
 # ---------------------------------------------------------------------------

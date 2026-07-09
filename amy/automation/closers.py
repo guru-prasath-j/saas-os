@@ -167,6 +167,70 @@ def custodial_autopilot(ctx: JobCtx) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# "project_pulse" — Work section folded into the morning briefing
+# (CONNECTOR COMPLETION Part 2: explicitly NOT a competing briefing — a
+# provider function morning_briefing() calls, same shape as the obligations/
+# deadlines sections above it)
+# ---------------------------------------------------------------------------
+
+def _work_section(ctx: JobCtx) -> list[str]:
+    """PRs awaiting review, Plane tasks due within 48h, today's meetings.
+    Every piece is independently best-effort: no GitHub/Plane connector
+    registered, or Google Calendar not linked, just omits that piece —
+    never breaks the rest of the briefing. Read tools only (RISK_READ), so
+    actor="agent" here doesn't route through the approval gate."""
+    from .. import tools
+    from ..connectors.mcp_call import extract_list
+
+    lines: list[str] = []
+
+    try:
+        prs = extract_list(tools.invoke(ctx, "github_list_prs", {}, actor="agent"))
+        awaiting = [p for p in prs if p.get("requested_reviewers") or p.get("reviewers")]
+        if awaiting:
+            titles = "; ".join(str(p.get("title") or f"PR #{p.get('number')}")
+                               for p in awaiting[:4])
+            lines.append(f"PRs awaiting your review: {titles}.")
+    except Exception:
+        pass
+
+    try:
+        tasks = extract_list(tools.invoke(ctx, "plane_list_tasks", {}, actor="agent"))
+        cutoff = _dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(hours=48)
+        due_soon = []
+        for t in tasks:
+            due = t.get("due_date") or t.get("target_date")
+            if not due:
+                continue
+            try:
+                due_dt = _dt.datetime.fromisoformat(str(due))
+                if due_dt.tzinfo is None:
+                    due_dt = due_dt.replace(tzinfo=_dt.timezone.utc)
+            except Exception:
+                continue
+            if due_dt <= cutoff:
+                due_soon.append(t)
+        if due_soon:
+            titles = "; ".join(str(t.get("name") or t.get("title") or t.get("id"))
+                               for t in due_soon[:4])
+            lines.append(f"Plane tasks due within 48h: {titles}.")
+    except Exception:
+        pass
+
+    try:
+        meetings = (tools.invoke(ctx, "meet_upcoming_meetings", {"hours": 24},
+                                 actor="agent") or {}).get("meetings", [])
+        if meetings:
+            titles = "; ".join(f"{m.get('title') or '(no title)'} ({m.get('start', '')})"
+                               for m in meetings[:4])
+            lines.append(f"Today's meetings: {titles}.")
+    except Exception:
+        pass
+
+    return ["Work: " + " ".join(lines)] if lines else []
+
+
+# ---------------------------------------------------------------------------
 # Morning briefing — one daily message that closes the loop
 # ---------------------------------------------------------------------------
 
@@ -275,6 +339,12 @@ def morning_briefing(ctx: JobCtx) -> dict:
             summaries = [(_json.loads(r["payload"] or "{}")).get("summary", "")
                          for r in rows]
             lines.append("Agent insights: " + "; ".join(s for s in summaries if s) + ".")
+    except Exception:
+        pass
+
+    # 5.5 — Work: PRs/tasks/meetings ("project_pulse", CONNECTOR COMPLETION Part 2)
+    try:
+        lines.extend(_work_section(ctx))
     except Exception:
         pass
 
