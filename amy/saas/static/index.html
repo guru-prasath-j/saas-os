@@ -353,6 +353,9 @@
       <button data-tab="mcp">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 2v4M15 2v4M6 8h12l-1 6a5 5 0 0 1-10 0z" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 18v4" stroke-linecap="round"/></svg>
         <span class="label">MCP</span></button>
+      <button data-tab="connectors">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><path d="M8.4 6h7.2M6 8.4v7.2M18 8.4v7.2M8.4 18h7.2" stroke-linecap="round"/></svg>
+        <span class="label">Connectors</span></button>
 
       <!-- ── SYSTEM ── -->
       <div class="nav-sector">System</div>
@@ -1416,6 +1419,15 @@
         </div>
       </div>
 
+      <!-- TAB: CONNECTORS -->
+      <div class="tab hidden" id="tab-connectors">
+        <div class="card">
+          <h3>Connectors</h3>
+          <p class="muted">Every connector Amy can reach — Google services, the local MCP servers Amy supervises itself, and external MCP sources like GitHub/Plane. Green = healthy, amber = a config warning or nothing synced yet, red = the last call failed or it's unreachable.</p>
+          <div id="connectorsDashboard" class="grid" style="grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:10px"><span class="faint">Loading…</span></div>
+        </div>
+      </div>
+
       <!-- TAB: ACCOUNT -->
       <div class="tab hidden" id="tab-account">
         <div class="card">
@@ -1880,6 +1892,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='entities') loadEntities();
   if(tab==='account') loadAccount();
   if(tab==='mcp') loadMcpDashboard();
+  if(tab==='connectors') loadConnectorsDashboard();
 });
 
 // ---- notification bell ----
@@ -2824,6 +2837,85 @@ async function loadMcpDashboard(){
     el.innerHTML='<span class="faint">Could not load MCP dashboard.</span>';
   }
 }
+
+// ---- Connectors tab (CONNECTOR COMPLETION Part 3) ----
+const _CONN_KIND_LABEL={google:'Google',local_mcp:'Local MCP',external_mcp:'External MCP'};
+function _connEsc(s){ return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function _connAgo(iso){
+  if(!iso) return null;
+  const ms=Date.now()-new Date(iso).getTime();
+  if(ms<60000) return 'just now';
+  const mins=Math.floor(ms/60000);
+  if(mins<60) return mins+'m ago';
+  const hrs=Math.floor(mins/60);
+  if(hrs<24) return hrs+'h ago';
+  return Math.floor(hrs/24)+'d ago';
+}
+function _connLastCallFailed(c){
+  return !!c.last_error && (!c.last_success || (c.last_error_ts||'') > (c.last_success||''));
+}
+function _connDotColor(c){
+  if(c.kind==='local_mcp' && c.supervisor_up===false) return 'var(--danger)';
+  if((c.kind==='external_mcp' || c.kind==='google') && !c.connected) return 'var(--muted)';
+  if(_connLastCallFailed(c)) return 'var(--danger)';
+  if(c.config_warning) return 'var(--warn)';
+  if(!c.last_success) return 'var(--warn)';   // registered/connected but nothing synced yet
+  return 'var(--success)';
+}
+async function loadConnectorsDashboard(){
+  const el=document.getElementById('connectorsDashboard');
+  el.innerHTML='<span class="faint">Loading…</span>';
+  try{
+    const d=await jget('/api/connectors/status');
+    const rows=d.connectors||[];
+    if(!rows.length){ el.innerHTML='<span class="faint">No connectors found.</span>'; return; }
+    el.innerHTML=rows.map((c,i)=>{
+      const dot=_connDotColor(c);
+      const failed=_connLastCallFailed(c);
+      const activity=failed ? 'last call failed '+(_connAgo(c.last_error_ts)||'recently')
+        : (c.last_success ? 'last activity '+_connAgo(c.last_success) : 'no activity yet');
+      const tools=c.tools||[];
+      const toolsId='connTools-'+i;
+      const toolsToggle=tools.length
+        ? `<a href="#" class="faint" onclick="document.getElementById('${toolsId}').classList.toggle('hidden');return false">${tools.length} tool${tools.length===1?'':'s'} &#9662;</a>`
+        : '<span class="faint">no tools listed</span>';
+      const toolsList=tools.length
+        ? `<div id="${toolsId}" class="hidden" style="margin-top:6px">`
+          +tools.map(t=>`<span class="chip" style="margin:2px 4px 2px 0;color:${t.risk==='write'||t.risk==='destructive'?'var(--warn)':'var(--muted)'}">${_connEsc(t.name)} <i style="opacity:.65">${_connEsc(t.risk)}</i></span>`).join('')
+          +'</div>' : '';
+      const warn=c.config_warning ? `<div class="meta" style="color:var(--warn);margin-top:6px">${_connEsc(c.config_warning)}</div>` : '';
+      const err=(failed) ? `<div class="meta" style="color:var(--danger);margin-top:4px">${_connEsc(c.last_error)}</div>` : '';
+      const syncBtn=c.sync_job
+        ? `<button class="ghost sm" style="margin-top:8px" onclick="connectorsSyncNow('${c.sync_job}',this)">Sync now</button>` : '';
+      const portNote=c.kind==='local_mcp' ? `<div class="faint" style="font-size:11px">localhost:${c.port}${c.supervisor_up?' &middot; supervised, up':' &middot; not reachable'}</div>` : '';
+      return `<div class="card" style="margin:0">
+        <div style="display:flex;align-items:center;gap:8px">
+          <span style="width:9px;height:9px;border-radius:50%;background:${dot};flex:none;display:inline-block"></span>
+          <b style="flex:1">${_connEsc(c.name)}</b>
+          <span class="chip">${_CONN_KIND_LABEL[c.kind]||c.kind}</span>
+        </div>
+        ${portNote}
+        <div class="faint" style="font-size:11.5px;margin-top:6px">${activity}</div>
+        <div style="margin-top:6px">${toolsToggle}</div>
+        ${toolsList}${warn}${err}${syncBtn}
+      </div>`;
+    }).join('');
+  }catch(e){
+    el.innerHTML='<span class="faint">Could not load connector status.</span>';
+  }
+}
+async function connectorsSyncNow(jobName, btn){
+  const orig=btn.textContent;
+  btn.disabled=true; btn.textContent='Syncing…';
+  try{
+    await api('/api/automation/jobs/'+jobName+'/run',{method:'POST'});
+    await loadConnectorsDashboard();
+  }catch(e){
+    btn.textContent='error'; btn.disabled=false;
+    setTimeout(()=>{ btn.textContent=orig; },2000);
+  }
+}
+
 async function _mcpLoadToolsFor(c){
   const actionsEl=document.getElementById('mcpActions-'+c.id);
   try{

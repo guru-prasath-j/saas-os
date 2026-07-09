@@ -68,6 +68,29 @@ def _meeting_prep_scan(ctx: JobCtx) -> dict:
     return {"meetings_prepped": n}
 
 
+def _connector_sensor_scan(ctx: JobCtx) -> dict:
+    """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
+    on the interval below (poll_hours configurable via
+    AMY_CONNECTOR_SENSOR_INTERVAL_HOURS — the 'poll intervals
+    env-configurable' requirement). Each sensor independently try/excepted
+    so GitHub being unreachable never blocks Plane polling or vice versa;
+    a missing connector for either just makes that sensor's poll() a no-op
+    (find_connector_row returns None). Also what Part 3's connectors tab
+    'Sync now' button triggers for GitHub/Plane."""
+    from ..connectors.sensors import GitHubSensor, PlaneSensor
+    out = {"github": 0, "plane": 0, "errors": []}
+    events = ctx.events()
+    try:
+        out["github"] = len(GitHubSensor(events, ctx).poll())
+    except Exception as exc:
+        out["errors"].append(f"github: {exc}"[:200])
+    try:
+        out["plane"] = len(PlaneSensor(events, ctx).poll())
+    except Exception as exc:
+        out["errors"].append(f"plane: {exc}"[:200])
+    return out
+
+
 HANDLERS: dict[str, callable] = {
     "gmail_statement_ingest": ingest.gmail_statement_ingest,
     "auto_categorize": _auto_categorize,
@@ -86,6 +109,7 @@ HANDLERS: dict[str, callable] = {
     "relationship_nudges": _relationship_nudges,
     "preference_drift": _preference_drift,
     "meeting_prep_scan": _meeting_prep_scan,
+    "connector_sensor_scan": _connector_sensor_scan,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -94,6 +118,11 @@ def _default_jobs() -> list[tuple[str, dict]]:
     never overridden; edit via PATCH /api/automation/jobs/{name}."""
     from .. import config
     briefing_at = config._env("AMY_BRIEFING_AT", "07:00")
+    try:
+        sensor_interval_hours = float(
+            config._env("AMY_CONNECTOR_SENSOR_INTERVAL_HOURS", "0.5"))
+    except ValueError:
+        sensor_interval_hours = 0.5
     jobs = [
         ("gmail_statement_ingest", {"every_hours": 6}),
         ("auto_categorize",        {"every_hours": 12}),
@@ -111,6 +140,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("relationship_nudges",    {"daily_at": "09:00"}),
         ("preference_drift",       {"monthly_day": 2, "at": "06:45"}),
         ("meeting_prep_scan",      {"every_hours": 0.25}),
+        ("connector_sensor_scan",  {"every_hours": sensor_interval_hours}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

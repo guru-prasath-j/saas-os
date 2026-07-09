@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from ..db import User
 from .. import paths, security
-from ..deps import current_user, _connector_dir, _journal_user
+from ..deps import current_user, _connector_dir, _journal_user, _collab_db_path
 
 router = APIRouter()
 
@@ -188,6 +188,156 @@ def google_sync_now(user: User = Depends(current_user)):
             results[kind] = _friendly_google_error(kind, e)
     _journal_user(user)
     return {"synced": results}
+
+
+# ---------------------------------------------------------------------------
+# CONNECTOR COMPLETION Part 3 — unified health status for the Connectors tab
+# ---------------------------------------------------------------------------
+
+# name -> (script filename stem, port) for the four self-hosted servers
+# amy/saas/app.py's supervisor loop launches (see _LOCAL_MCP_SERVERS there —
+# duplicated here as a plain data tuple, not imported, since importing
+# amy.saas.app at module load time from a router it itself includes would be
+# a circular import; the supervisor's live process/port state IS imported,
+# lazily, inside the endpoint below).
+_LOCAL_MCP_DESCRIPTORS = [
+    ("Job Search (jobspy)", "jobspy", 8935),
+    ("HackerNews", "hackernews", 8001),
+    ("YouTube", "youtube", 8003),
+    ("Dev.to", "devto", 8004),
+]
+
+
+def _rollup(store, connector_name: str) -> dict:
+    """This connector's connector_status() row (there's at most one — the
+    query GROUP BYs on connector name), or {} if it's never been called."""
+    rows = store.connector_status(connector_name)
+    return rows[0] if rows else {}
+
+
+def _google_service_status(creds, store, scope_substring: str,
+                           call_connector_name: str) -> dict:
+    connected = creds is not None
+    granted = list(getattr(creds, "scopes", None) or [])
+    scopes_ok = connected and (not granted or any(scope_substring in s for s in granted))
+    rollup = _rollup(store, call_connector_name)
+    return {
+        "connected": connected,
+        "scopes_ok": scopes_ok,
+        "last_success": rollup.get("last_ok_ts"),
+        "last_error": rollup.get("last_error"),
+        "last_error_ts": rollup.get("last_error_ts"),
+    }
+
+
+@router.get("/api/connectors/status")
+def connectors_status(user: User = Depends(current_user)):
+    """Everything the Connectors tab renders: Google services (from the
+    OAuth token), local MCP servers (from the supervisor + registered
+    connector rows), and external MCP connectors (GitHub/Plane/anything
+    else registered) — reachability/health from the Part 1
+    connector_calls ledger, never a live call made by this endpoint itself
+    (keeps status checks fast and non-blocking)."""
+    from ...collab import CollabDB
+    from ...automation.store import AutomationStore
+    from ...connectors.google import load_credentials
+    from ...learning_feed.aggregator import tool_for as _learning_source_tool
+    from ...saas.db import SessionLocal, McpConnector
+    from ... import tools as tool_registry
+    import os as _os
+
+    cdb = CollabDB(_collab_db_path(user))
+    try:
+        store = AutomationStore(cdb)
+
+        connectors_out: list[dict] = []
+
+        # --- Google services -------------------------------------------------
+        token_path = _google_token_path(user)
+        creds = load_credentials(str(token_path))
+        gmail = _google_service_status(creds, store, "gmail", "gmail")
+        gmail.update({"name": "Gmail", "kind": "google", "tools": [],
+                      "config_warning": None})
+        connectors_out.append(gmail)
+
+        calendar = _google_service_status(creds, store, "calendar", "google_calendar")
+        calendar.update({"name": "Calendar / Meet", "kind": "google", "tools": [],
+                         "config_warning": None, "sync_job": "meeting_prep_scan"})
+        connectors_out.append(calendar)
+
+        sheets = _google_service_status(creds, store, "spreadsheets", "sheets")
+        sheets.update({"name": "Sheets", "kind": "google", "tools": [],
+                       "config_warning": None})
+        connectors_out.append(sheets)
+
+        # --- registered MCP connectors (Layer 1) ------------------------------
+        db = SessionLocal()
+        try:
+            rows = db.query(McpConnector).filter(McpConnector.user_id == user.id).all()
+        finally:
+            db.close()
+        registered_by_key = {r.name.strip().lower(): r for r in rows}
+
+        # --- local MCP servers (supervisor-managed) --------------------------
+        try:
+            from .. import app as _amy_app   # lazy: circular at module scope
+            supervisor_procs = _amy_app._local_mcp_procs
+            port_open = _amy_app._port_open
+        except Exception:
+            supervisor_procs, port_open = {}, (lambda p: False)
+
+        for label, key, port in _LOCAL_MCP_DESCRIPTORS:
+            row = next((r for k, r in registered_by_key.items() if key in k), None)
+            proc = supervisor_procs.get(key)
+            proc_alive = bool(proc is not None and proc.poll() is None)
+            reachable = proc_alive or port_open(port)
+            warning = None
+            if key == "youtube" and not _os.getenv("YOUTUBE_API_KEY"):
+                warning = ("YOUTUBE_API_KEY not set — the server starts but "
+                          "search_videos returns no results.")
+            rollup = _rollup(store, key)
+            connectors_out.append({
+                "name": label, "kind": "local_mcp", "port": port,
+                "supervisor_up": reachable, "connected": row is not None,
+                "last_success": rollup.get("last_ok_ts"),
+                "last_error": rollup.get("last_error"),
+                "last_error_ts": rollup.get("last_error_ts"),
+                "tools": [{"name": t, "risk": "read"}
+                         for t in (_learning_source_tool(label) or ())],
+                "config_warning": warning if row is not None else (
+                    warning or f"not registered as an MCP source yet — add it "
+                    f"in Account -> MCP Sources (http://localhost:{port})"),
+                "sync_job": "learning_feed_refresh" if key != "jobspy" else None,
+            })
+
+        # --- external MCP connectors (GitHub/Plane/anything else) ------------
+        local_keys = {k for _l, k, _p in _LOCAL_MCP_DESCRIPTORS}
+        for row in rows:
+            key = row.name.strip().lower()
+            if any(lk in key for lk in local_keys):
+                continue   # already covered above as a local server
+            prefix = "github_" if "github" in key else ("plane_" if "plane" in key else None)
+            reg_tools = ([{"name": t["name"], "risk": t["risk"]}
+                         for t in tool_registry.list_tools()
+                         if t["name"].startswith(prefix)] if prefix else [])
+            # connector_calls rows are logged under the literal names
+            # "github"/"plane" (see amy/connectors/mcp_call.py call sites),
+            # not the user's own connector row name — an unrecognized
+            # connector (no prefix) has no ledger rows to roll up either way.
+            call_name = "github" if prefix == "github_" else ("plane" if prefix == "plane_" else key)
+            rollup = _rollup(store, call_name)
+            connectors_out.append({
+                "name": row.name, "kind": "external_mcp", "connected": True,
+                "last_success": rollup.get("last_ok_ts"),
+                "last_error": rollup.get("last_error"),
+                "last_error_ts": rollup.get("last_error_ts"),
+                "tools": reg_tools, "config_warning": None,
+                "sync_job": "connector_sensor_scan" if prefix else None,
+            })
+
+        return {"connectors": connectors_out}
+    finally:
+        cdb.close()
 
 
 @router.get("/api/connectors")
