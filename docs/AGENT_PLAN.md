@@ -259,7 +259,7 @@ structural fix for quirk 20 (every EventStore emit site having to remember
 |---|---|---|---|
 | 0 | `amy/events/factory.py` + idempotent registration + zero-subscriber warning; migrate known emit sites | DONE | 41aec45 |
 | 1 | GitHub + Plane registry tools (read + external-pinned write) + connector_calls ledger | DONE | dd7fc24 |
-| 2 | Sensors (GitHubSensor/PlaneSensor) + reactive agents (pr_to_task, meeting_prep) + jobs (project_pulse, meeting_prep_scan) | DONE | (pending) |
+| 2 | Sensors (GitHubSensor/PlaneSensor) + reactive agents (pr_to_task, meeting_prep) + jobs (project_pulse, meeting_prep_scan) | DONE | ba4a863 |
 | 3 | `/api/connectors/status` + Connectors tab (index.html) | TODO | |
 
 ### Part 0 — structural fix for quirk 20 (DONE)
