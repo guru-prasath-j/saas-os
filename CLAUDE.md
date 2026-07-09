@@ -69,8 +69,10 @@ amy/
   tools/                 Tool registry (R1): JSON-schema tools with risk levels
                          read|write|destructive; AGENT_GATE parks agent writes
   agents/reactive.py     Reactive agents (R2): budget/subscription/compliance/
-                         screening/errand/learning — wired onto EventStore at
-                         emit points (register_reactive_agents(events, ctx))
+                         screening/errand/learning/pr_task/meeting_prep — wired
+                         onto EventStore at emit points via amy/events/factory.py
+                         (register_reactive_agents(events, ctx), idempotent
+                         per-instance — see "Event System" below)
   calendars/             Calendar abstraction (R7A-3): gregorian|hijri|fiscal
   jurisdictions/         Packs (R7B): {uae,us,india}.json + loader/versioning
                          + fx_seed.json. New jurisdiction = new JSON only
@@ -143,6 +145,25 @@ amy/
                          "Learning Feed" section below.
   memory/writer.py       MemoryWriter: idempotent vault journaling (daily + atomic notes)
   knowledge_graph/store.py  GraphStore: typed nodes+edges, edge UPSERT with timestamps
+  connectors/
+    mcp.py                MCPConnector: generic MCP client (list_tools/call_tool),
+                          Layer 1 of the connector architecture — no per-source code
+    mcp_call.py            CONNECTOR COMPLETION: call_mcp_tool() — resolve a
+                          registered connector by name → pick the first
+                          candidate remote tool name it advertises → call →
+                          log to connector_calls (collab.db). Shared by
+                          tools/connector_tools.py (reads) and
+                          automation/executors.py (external writes).
+    sensors.py              GitHubSensor/PlaneSensor (CONNECTOR COMPLETION):
+                          poll via mcp_call, diff against connector_sensor_seen
+                          (collab.db), emit github.*/plane.* events. See
+                          "Connectors" section below for the full detail.
+  tools/
+    connector_tools.py     CONNECTOR COMPLETION: github_list_prs/list_issues/
+                          pr_details, plane_list_tasks/task_details,
+                          meet_upcoming_meetings (read); github_comment,
+                          plane_create_task/update_task (write,
+                          extras={"external":True} — hard-pinned tier 2)
   saas/
     app.py               FastAPI entry — all routers included
     db.py                SQLAlchemy users table (amy_saas.db)
@@ -156,10 +177,12 @@ amy/
       obligations.py     /api/obligations activate/status/config
       values.py          /api/values presets/profiles/flags
       auth.py            JWT login, OpenAI key, private folder
-      connectors.py      Google OAuth flow + disconnect
+      connectors.py      Google OAuth flow + disconnect + GET /api/connectors/status
+                         (CONNECTOR COMPLETION Part 3 — unified connector health)
       learning_feed.py   Focus CRUD, feed list, save/progress — /api/learning-feed/...
       [10 others: vault, knowledge, habits, events, memory, twin, intelligence, agents…]
-    static/index.html    Entire frontend (~3000 lines, one file)
+    static/index.html    Entire frontend (~3000 lines, one file) — includes the
+                         data-tab="connectors" health dashboard
 ```
 
 ## Data Paths
@@ -171,7 +194,7 @@ up, don't hardcode one (see "What It Is").
 |---|---|
 | User DB | `saas_data/amy_saas.db` |
 | Finance DB | `saas_data/index/{uid}/finance.db` |
-| Collab DB | `saas_data/index/{uid}/collab.db` — events, automation_jobs/runs/approvals, goals/tasks/milestones, learning_focuses/learning_feed_items, geo_places/visits/cells, values screening_flags, prefs, activities |
+| Collab DB | `saas_data/index/{uid}/collab.db` — events, automation_jobs/runs/approvals, goals/tasks/milestones, learning_focuses/learning_feed_items, geo_places/visits/cells, values screening_flags, prefs, activities, connector_calls, connector_sensor_seen |
 | Google token | `saas_data/index/{uid}/connectors/google_token.json` |
 
 ## Finance DB Tables
@@ -350,6 +373,84 @@ POST                    /api/learning-feed/save/{item_id}
 PATCH                   /api/learning-feed/progress/{item_id}   # watch-progress heartbeat, ≥90% = completed
 ```
 
+## Connectors
+
+GitHub + Plane integration, meeting prep, and a unified connector health tab
+— built on the existing generic MCP connector registration (Layer 1,
+`amy/connectors/mcp.py` + `McpConnector` rows in `amy_saas.db`, registered
+via Account → MCP Sources with the `github`/`plane` presets pointing at the
+official `api.githubcopilot.com/mcp` and `mcp.plane.so` servers).
+
+- `amy/connectors/mcp_call.py::call_mcp_tool(user_id, store, source,
+  candidates, args, target_style)` — the one place that resolves a
+  connector by name, lists its advertised tools, picks the first candidate
+  name it actually has (real MCP servers for the same capability don't
+  agree on naming — same problem `learning_feed/aggregator.py` solved for
+  HN/YouTube/etc.), calls it, and logs the attempt to `connector_calls`
+  (collab.db: connector, tool, ok, ms, error, ts). `extract_list()` pulls a
+  `list[dict]` out of the (often differently-shaped) result.
+- Registry tools (`amy/tools/connector_tools.py`): `github_list_prs` /
+  `github_list_issues` / `github_pr_details`, `plane_list_tasks` /
+  `plane_task_details` (read, call through `call_mcp_tool`);
+  `meet_upcoming_meetings` (read, Google Calendar directly — not MCP,
+  mirrors `agents/calendar.py`'s `_google_calendar_context`);
+  `github_comment`, `plane_create_task`, `plane_update_task` (write,
+  `extras={"external": True}` — `amy/automation/executors.py`'s
+  `_tier_for(risk, external=...)` hard-pins these to tier 2 exactly like
+  `destructive`, so `AMY_AGENT_WRITE_TIER` can never auto-execute an
+  irreversible external send). Write-tool handlers delegate to
+  `automation.executors.execute()`, same convention as `add_subscription` —
+  an approved action and a direct human-actor call run through the same
+  `github_comment`/`plane_create_task`/`plane_update_task` executors.
+- Sensors (`amy/connectors/sensors.py`, same `Sensor` base as
+  `GmailSensor`): `GitHubSensor` → `github.pr_review_requested` /
+  `pr_status_changed` / `issue_assigned`; `PlaneSensor` → `plane.
+  task_assigned` / `task_due_soon` / `task_status_changed`. Diffed against
+  `connector_sensor_seen` (collab.db: sensor, item_key, state, ts) —
+  `sensor_seen_state()` returns `None` for "never seen" (fires once) vs.
+  any other value for "last known state" (a `*_status_changed` event only
+  fires on an actual transition, never on first sighting). **Known
+  limitation**: "assigned to me"/"review requested of me" isn't filtered
+  against the authenticated identity — any non-empty reviewers/assignees
+  list counts (fine for a single-user-per-connector deployment; revisit if
+  a connector is ever shared). Driven by the `connector_sensor_scan` job.
+- Reactive agents (`amy/agents/reactive.py`): `pr_to_task`
+  (`AMY_AGENT_PR_TASK`) proposes a `plane_create_task` (external → always
+  tier 2) when a PR needs review or goes to changes-requested, deduped per
+  PR (`pr_task_{repo}_{number}`). `meeting_prep` (`AMY_AGENT_MEETING_PREP`)
+  is registered but subscribes to nothing — there's no natural "meeting
+  starting soon" push event — its real logic is
+  `meeting_prep_check(events, ctx)`, called directly by the
+  `meeting_prep_scan` job (every 15 min): for each Google Calendar meeting
+  inside the prep window (`AMY_MEETING_PREP_WINDOW_MIN`, default 60 min),
+  keyword-matches its title/attendees against Plane tasks + GitHub PRs,
+  writes ONE idempotent vault note per meeting id, emits `agent.insight`.
+  Read-only/tier-0 — never a write proposal.
+- "project_pulse" is NOT a competing briefing: `amy/automation/
+  closers.py::_work_section(ctx)` is a provider function `morning_briefing()`
+  calls directly (PRs awaiting review, Plane tasks due within 48h, today's
+  meetings) — every piece independently best-effort, a missing connector
+  just omits that piece.
+- `GET /api/connectors/status` (`amy/saas/routers/connectors.py`) — health
+  for every connector: Google services (Gmail/Calendar-Meet/Sheets, from
+  the OAuth token + granted scopes), local MCP servers (jobspy/HackerNews/
+  YouTube/Dev.to — supervisor process+port state from
+  `_local_mcp_supervisor_loop`, imported *lazily* inside the endpoint to
+  avoid a circular import with `amy/saas/app.py`; YouTube's missing
+  `YOUTUBE_API_KEY` surfaces as a `config_warning`, not an error), and
+  external MCP connectors (GitHub/Plane/anything else registered —
+  connected + exposed tool names/risk from the **local** `amy.tools`
+  registry, never a live remote `list_tools()` call). Health signals come
+  from `connector_calls`; the endpoint itself never makes a live call, so
+  status checks stay fast. Frontend: `data-tab="connectors"` in
+  `index.html` — status dot (green=healthy, amber=config warning/nothing
+  synced yet, red=last call failed/unreachable), expandable tool list,
+  "Sync now" (`POST /api/automation/jobs/{job}/run`) where a job exists.
+
+```
+GET               /api/connectors/status
+```
+
 ## Automation Layer
 
 App loop ticks every 60s (`AMY_AUTOMATION_TICK_SECONDS`), runs due jobs per user,
@@ -357,14 +458,17 @@ logs every run to `automation_runs`. All automated writes go through
 `submit_action(ctx, tier, …)` — **tier 0** auto, **tier 1** auto+notify,
 **tier 2** parked in the Approval Inbox until approved. Executors:
 `import_statement` · `custodial_disburse` · `add_subscription` · `set_budget` ·
-`add_transaction` · `add_place` · `add_task` · `external_draft` (ack-only).
+`add_transaction` · `add_place` · `add_task` · `external_draft` (ack-only) ·
+`github_comment` · `plane_create_task` · `plane_update_task` (external —
+see "Connectors" below).
 Approve/reject decisions are recorded via DecisionEngine.
 
 Default jobs: `gmail_statement_ingest` (6h, hybrid: saved-map/preset/pdfplumber
 → auto-import tier 1; auto-detect/LLM-map/ambiguous → tier 2 approval, map saved
 on approve) · `auto_categorize` (12h, learned rules first) · `anomaly_sentinel` ·
-`cashflow_alerts` · `morning_briefing` (07:00, email if SMTP set) ·
-`custodial_autopilot` (proposes prefilled cycle as tier 2) · `autopilot` (05:00) ·
+`cashflow_alerts` · `morning_briefing` (07:00, email if SMTP set — folds in a
+"Work" section, see "Connectors" below) · `custodial_autopilot` (proposes
+prefilled cycle as tier 2) · `autopilot` (05:00) ·
 `monthly_close` (1st, CFO report + subscription proposals + compliance refresh) ·
 `capture_digest` (20:30, photo-memory day-over-day compare, Sunday = weekly
 rollup, writes 09_Memory note so chat recalls it next day) · `place_learning`
@@ -372,7 +476,10 @@ rollup, writes 09_Memory note so chat recalls it next day) · `place_learning`
 `commitment_scan` (08:20, return-window/warranty detection + deadline ladder) ·
 `pattern_tasks` (06:30, cadence-due merchants → prefilled task proposals) ·
 `relationship_nudges` (09:00, broken transfer rhythms → advisory nudge) ·
-`preference_drift` (monthly 2nd, decision-history signals).
+`preference_drift` (monthly 2nd, decision-history signals) ·
+`meeting_prep_scan` (every 15 min, drives the read-only meeting_prep agent) ·
+`connector_sensor_scan` (every `AMY_CONNECTOR_SENSOR_INTERVAL_HOURS`, default
+30 min — polls GitHubSensor/PlaneSensor).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
@@ -410,7 +517,7 @@ github.pr_review_requested / pr_status_changed / issue_assigned   # CONNECTOR CO
 plane.task_assigned / task_due_soon / task_status_changed
 ```
 
-## Event System — factory + reactive-agent wiring (quirk 20)
+### Event bus factory + reactive-agent wiring (quirk 20)
 
 `amy.events.factory.get_events(user_id, collab_db, index_dir=None,
 user_email="", ctx=None)` is now THE way to build an `EventStore` whose
@@ -493,8 +600,10 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 17. Jurisdiction packs: everything country-specific is JSON in `amy/jurisdictions/` (validated on load, effective-date versioned). No jurisdiction/religion logic in Python — new jurisdiction = new pack file (docs/jurisdictions.md). Obligation/screening presets are data; custodial accounts are excluded from obligation wealth math as a hard rail packs cannot override.
 18. Currency display: never hardcode ₹ — backend formats via `amy/locale_fmt.py` (+ `AMY_CURRENCY_SYMBOL` for context.py), frontend via `fmtMoney()` driven by `/api/settings/locale`.
 19. `docs/AGENT_PLAN.md` is the source of truth for the agentic-finance project (phases, commits, binding R7B spec).
-20. A new event-emit site ALWAYS needs its own `register_reactive_agents(events, ctx)` call before `.emit(...)` — copy the `_emit_fin`/`_events_with_agents` idiom. Forgetting it doesn't error; the agent just never fires (found and fixed twice in the learning-feed router/sensor during that feature's build).
+20. A new event-emit site that might trigger a reactive agent should use `amy.events.factory.get_events(...)`, not a bare `EventStore(cdb)` — see "Event bus factory + reactive-agent wiring (quirk 20)" above. A bare store emitting an `AGENT_RELEVANT_EVENTS` type now warns loudly (once per process per call-site) instead of silently dropping the reaction — but the warning is dev-time-only (a log line), so still prefer the factory over discovering the gap in production logs.
 21. Refresh-by-topic-text on a multi-row feature (learning_focuses) can resurrect a row a user just deleted, if a `BackgroundTasks` refresh was queued before the delete lands and only runs after. Refresh by row id, not by the text a lookup-or-create query matches on, whenever an id is available.
+22. `connector_calls`' `connector` column is a literal hardcoded string ("github", "plane", "google_calendar", or a local-server key like "hackernews") chosen at the `call_mcp_tool(...)`/`log_connector_call(...)` call site — it is NOT the user's own `McpConnector.name` (a user could register their GitHub connector as "my github" or "Work GitHub"). `GET /api/connectors/status` and any new connector-health code must roll up by the call-site's literal name, not by `row.name`, or health data silently won't match.
+23. GitHub/Plane sensors and tools don't filter "assigned to me"/"review requested of me" against the authenticated identity — any non-empty reviewers/assignees list counts as a hit (see `amy/connectors/sensors.py`'s module docstring). Correct for today's single-user-per-connector deployment; would need a `get_me`-equivalent lookup if a connector is ever shared across users.
 
 ## Common Pattern
 

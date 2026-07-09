@@ -260,7 +260,7 @@ structural fix for quirk 20 (every EventStore emit site having to remember
 | 0 | `amy/events/factory.py` + idempotent registration + zero-subscriber warning; migrate known emit sites | DONE | 41aec45 |
 | 1 | GitHub + Plane registry tools (read + external-pinned write) + connector_calls ledger | DONE | dd7fc24 |
 | 2 | Sensors (GitHubSensor/PlaneSensor) + reactive agents (pr_to_task, meeting_prep) + jobs (project_pulse, meeting_prep_scan) | DONE | ba4a863 |
-| 3 | `/api/connectors/status` + Connectors tab (index.html) | TODO | |
+| 3 | `/api/connectors/status` + Connectors tab (index.html) | DONE | (pending) |
 
 ### Part 0 — structural fix for quirk 20 (DONE)
 
@@ -386,3 +386,60 @@ assertion a second time (grew by `pr_task`/`meeting_prep`, both default-on)
 — worth noting as a pattern: this assertion will need updating again
 whenever a new default-on agent is added; a set-based `>=` check or an
 explicit "these + at least" comment might be worth it if this recurs again.
+
+### Part 3 — /api/connectors/status + Connectors tab (DONE)
+
+`GET /api/connectors/status` (`amy/saas/routers/connectors.py`) unifies
+health for Google services (Gmail/Calendar-Meet/Sheets — connected +
+scopes_ok from the OAuth token), local MCP servers (jobspy/HackerNews/
+YouTube/Dev.to — supervisor process+port state imported *lazily* from
+`amy/saas/app.py` inside the endpoint to avoid a circular import, since
+routers are imported before `_local_mcp_procs`/`_LOCAL_MCP_SERVERS` are
+defined in `app.py`; YouTube's missing `YOUTUBE_API_KEY` surfaces as a
+`config_warning`), and external MCP connectors (GitHub/Plane/anything else
+registered — tool names/risk from the **local** `amy.tools` registry, not a
+live remote call). All health data comes from the `connector_calls` ledger
+— the endpoint itself never makes a live call.
+
+Found and fixed a real gap left by Part 2: the sensors had no job driving
+`.poll()` periodically (Part 2's spec only listed `meeting_prep_scan`).
+Added `connector_sensor_scan` (interval via
+`AMY_CONNECTOR_SENSOR_INTERVAL_HOURS`, default 30 min) to `DEFAULT_JOBS`,
+running both `GitHubSensor` and `PlaneSensor` each tick (independently
+try/excepted) — also what the Connectors tab's "Sync now" button triggers
+for GitHub/Plane.
+
+Frontend: new `data-tab="connectors"` card grid in `index.html` — status
+dot (green/amber/red, computed from `connected`/`supervisor_up`/
+`config_warning`/`last_error` vs `last_success` recency), expandable tool
+list with risk-colored chips, "Sync now" wired to
+`POST /api/automation/jobs/{job}/run` where a job exists. All inline JS
+syntax-checked (`node -e "new Function(...)"` over every `<script>` block).
+
+Tests: `tests/test_connectors_status.py` (2 passing, via `TestClient`) —
+status shape with nothing registered, and with a seeded healthy GitHub call
++ a seeded failing Plane call (401) in `connector_calls`.
+
+Manually verified live end-to-end (not just mocked tests) via Playwright
+against a running `uvicorn` instance: registered real `github`/`plane`
+`McpConnector` rows (intentionally-invalid dummy tokens), loaded the
+Connectors tab (screenshot confirmed: Gmail/Calendar/Sheets gray-dot
+"not connected", the four local servers amber-dot "supervised, up" +
+"not registered as an MCP source yet" warning, GitHub green-dot
+"last activity 1m ago" after a seeded ledger row), then clicked "Sync now"
+on GitHub — it made a REAL network call to `api.githubcopilot.com/mcp`,
+got a genuine `HTTP 401 ... check your token/credentials`, and both
+GitHub and Plane cards flipped red with that exact error text after the
+page re-fetched status. Confirms Parts 1–3 work together end-to-end
+against real external MCP servers, not just against mocks.
+
+## CONNECTOR COMPLETION — summary
+
+All four parts DONE. Full test suite after Part 3: 555 passed, 23 failed
+(22 pre-existing baseline failures unrelated to this work, confirmed via
+`git stash` at each part boundary, plus one known-flaky filesystem-watcher
+timing test that passes in isolation). New test files: `test_events_
+factory.py` (4), `test_connector_tools.py` (6), `test_connector_sensors_
+agents.py` (5), `test_connectors_status.py` (2) — 17 new tests, all
+passing, all external calls mocked except the one manual live-server
+Playwright verification above.

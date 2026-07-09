@@ -251,6 +251,25 @@ Base URL: `http://localhost:8849`
 
 ---
 
+## Connector Health (CONNECTOR COMPLETION Part 3)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/connectors/status` | Every connector's health: Google services (Gmail/Calendar-Meet/Sheets), local MCP servers (jobspy/HackerNews/YouTube/Dev.to — supervisor state), external MCP connectors (GitHub/Plane/…). No live calls — reads the `connector_calls` ledger + registered rows. |
+
+Registry tools (not REST routes — consumed by agents/the orchestrator via
+`amy.tools.invoke`, see `amy/tools/connector_tools.py`):
+
+| Tool | Risk | Notes |
+|------|------|-------|
+| `github_list_prs` / `github_list_issues` / `github_pr_details` | read | Against the registered `github` MCP connector |
+| `plane_list_tasks` / `plane_task_details` | read | Against the registered `plane` MCP connector |
+| `meet_upcoming_meetings` | read | Google Calendar directly (not MCP) |
+| `github_comment` | write, **external** | Always tier 2 — `AMY_AGENT_WRITE_TIER` cannot soften it |
+| `plane_create_task` / `plane_update_task` | write, **external** | Always tier 2 |
+
+---
+
 ## Events
 
 | Method | Path | Description |
@@ -312,6 +331,13 @@ Amy routes LLM calls automatically:
 | GET | `/api/automation/learned-rules` | Learned categorizer rules |
 | POST | `/api/automation/pause` / `resume` | Global automation kill switch |
 | POST | `/api/assistant/chat` | Tool-loop assistant — body: `{message, history?}` |
+
+Jobs added by CONNECTOR COMPLETION: `meeting_prep_scan` (every 15 min —
+drives the read-only `meeting_prep` agent's calendar-window check) and
+`connector_sensor_scan` (interval via `AMY_CONNECTOR_SENSOR_INTERVAL_HOURS`,
+default 30 min — polls `GitHubSensor`/`PlaneSensor`; also what the
+Connectors tab's "Sync now" button triggers for GitHub/Plane). Both run via
+the existing `POST /api/automation/jobs/{name}/run` for a manual trigger.
 
 ## Agent (orchestrator + audit)
 
