@@ -68,6 +68,14 @@ def _meeting_prep_scan(ctx: JobCtx) -> dict:
     return {"meetings_prepped": n}
 
 
+def _career_goal_stall_check(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Part 2: drives the career_goal agent's stall-nudge
+    check daily — 'N days of silence' has no natural push event, same
+    structural choice as meeting_prep_scan above."""
+    from ..agents.reactive import career_goal_stall_check
+    return career_goal_stall_check(ctx.events(), ctx)
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -110,6 +118,7 @@ HANDLERS: dict[str, callable] = {
     "preference_drift": _preference_drift,
     "meeting_prep_scan": _meeting_prep_scan,
     "connector_sensor_scan": _connector_sensor_scan,
+    "career_goal_stall_check": _career_goal_stall_check,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -141,6 +150,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("preference_drift",       {"monthly_day": 2, "at": "06:45"}),
         ("meeting_prep_scan",      {"every_hours": 0.25}),
         ("connector_sensor_scan",  {"every_hours": sensor_interval_hours}),
+        ("career_goal_stall_check", {"daily_at": "09:30"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

@@ -460,7 +460,7 @@ port 8935); no LLM-fabricated postings.
 | Part | Description | Status | Commit |
 |---|---|---|---|
 | 1 | Career data model + Job Search MCP tools | DONE | 1b2f404 |
-| 2 | Career goal flow (orchestrator career template) | PLANNED | |
+| 2 | Career goal flow (orchestrator career template) | DONE | |
 | 3 | Portfolio analyst (GitHub ↔ career) | PLANNED | |
 | 4 | Job scout + match scoring | PLANNED | |
 | 5 | Application pipeline (prepare → approve → send → track) | PLANNED | |
@@ -618,6 +618,25 @@ port 8935); no LLM-fabricated postings.
   goal + linked learning_focuses + one batched Plane approval (not N);
   stall nudge fires once per window, not per tick; non-career goal still
   takes the generic 4-step path (regression guard).
+
+**Result (DONE)**: built as specced above, plus `AMY_AGENT_CAREER_GOAL`
+kill switch (falls back to the generic planner when off) and a daily
+`career_goal_stall_check` job (no natural push event for "N days of
+silence", same structural choice as `meeting_prep_scan`). One line worth
+recording for future sessions: the template's own goal/milestone creation
+(`GoalEngine.create_goal`/`add_milestone`) runs UNGATED — treated as the
+orchestrator's own plan bookkeeping, the same line `_store_plan_graph`
+already draws for its GraphStore writes — only the batched Plane task
+proposal (an external send) goes through `tools.invoke(actor="agent")` and
+gets gated. `career_goal_stall_check`'s "progress" signal is system-wide
+(any `career.*` event since goal creation), not tagged per-goal, since
+exactly one active career-domain goal is the expected steady state; call
+this out if multi-goal career tracking is ever added. Full suite: 582
+passed, same 23 pre-existing failures as Part 1's baseline (confirmed via
+`git stash`), +15 new tests all passing. Also fixed `tests/
+test_reactive_agents.py`'s registered-agent-set assertion again (grew by
+`career_goal`) — the same recurring maintenance note CONNECTOR COMPLETION
+Part 2 already flagged.
 
 ### Design decisions (resolved before Part 1 started)
 

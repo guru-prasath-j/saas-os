@@ -481,6 +481,131 @@ def _learning_agent(events, ctx):
 
 
 # ---------------------------------------------------------------------------
+# career_goal (CAREER AUTOPILOT Part 2)
+# ---------------------------------------------------------------------------
+
+# Duplicated (not imported) from amy/automation/orchestrator.py's role-word
+# list on purpose — same stance as executors.py/connector_tools.py's
+# duplicated Plane candidate tuples: importing orchestrator here would
+# couple the reactive-agents module to the orchestrator module for one
+# small constant, and reactive.py is imported from amy.events.factory,
+# which orchestrator.py's own callers sit downstream of.
+_CAREER_ROLE_WORDS = ("engineer", "developer", "dev", "designer", "scientist",
+                     "analyst", "manager", "architect", "specialist",
+                     "consultant", "researcher", "programmer")
+
+_CAREER_STALL_DEFAULT_DAYS = 5
+_CAREER_STALL_WINDOW_DAYS = 3   # nudge once in this window, then go quiet — same idiom as relationship_nudges
+
+
+def _active_career_goal(ctx) -> str | None:
+    row = ctx.collab.conn.execute(
+        "SELECT id FROM goals WHERE domain='career' AND status='active'"
+        " ORDER BY created_at DESC LIMIT 1").fetchone()
+    return row["id"] if row else None
+
+
+def _career_goal_agent(events, ctx):
+    """(a) No active career goal yet, but a learning focus is trending
+    toward a role-shaped topic ('genai engineer', ...) — propose a career
+    goal (tier-2, dedup 'career_goal_suggest') so it gets a real plan
+    (portfolio, job search, milestones) instead of staying just a reading
+    topic. Reuses the exact trend signal _learning_agent already computes
+    via LearningAgent.trends() — no new instrumentation.
+
+    (b) Stall nudge (an active career goal with no recent career.* activity)
+    has no natural push event ('N days of silence' isn't a thing that
+    happens) — see career_goal_stall_check() below, driven by the
+    career_goal_stall_check job, same structural choice as meeting_prep's
+    job-driven meeting_prep_check()."""
+    def on_feed_refreshed(ev):
+        try:
+            if _active_career_goal(ctx):
+                return
+            p = ev.get("payload") or {}
+            topic = (p.get("focus") or "").strip()
+            focus_id = p.get("focus_id")
+            if not topic or not focus_id:
+                return
+            if not any(r in topic.lower() for r in _CAREER_ROLE_WORDS):
+                return
+            from ..collab.learning import LearningAgent
+            trend = LearningAgent(ctx.collab, None).trends().get(topic)
+            if not trend or trend["trend"] != "increasing":
+                return
+            from .. import tools
+            reasoning = (f"'{topic}' is trending up in your learning feed "
+                         f"({trend['recent']} recent vs {trend['prior']} prior "
+                         "engagement) and looks role-shaped — proposing a "
+                         "career goal so it gets a real plan (portfolio "
+                         "review, job search, weekly milestones) instead of "
+                         "staying just a reading topic.")
+            _emit_insight(events, ctx, "career_goal",
+                          f"'{topic}' looks like a career direction", reasoning,
+                          {"topic": topic, "focus_id": focus_id})
+            ctx._extras["agent_name"] = "career_goal_agent"
+            ctx._extras["agent_reasoning"] = reasoning
+            ctx._extras["agent_dedup_key"] = "career_goal_suggest"
+            tools.invoke(ctx, "create_goal",
+                         {"title": f"Become a {topic}", "domain": "career"},
+                         actor="agent")
+        except Exception as exc:
+            _report_error(events, "career_goal", exc)
+
+    events.subscribe("learning.feed_refreshed", on_feed_refreshed)
+
+
+def career_goal_stall_check(events, ctx) -> dict:
+    """Job-driven (career_goal_stall_check job — daily). Advisory nudge
+    only, fired once in a bounded window then goes quiet, same non-nag
+    idiom as amy/patterns.py's relationship_nudges.
+
+    Known simplification: checks for ANY career.* event since the goal was
+    created (system-wide), not one tagged with this specific goal_id — most
+    career.* payloads (job_discovered, application_*) aren't per-goal
+    today. Acceptable because exactly one active career-domain goal is the
+    expected steady state; if multi-goal career tracking is ever added,
+    tag goal_id on every career.* emit and tighten this query."""
+    from .. import config
+    stall_days = int(config._env("AMY_CAREER_STALL_DAYS", str(_CAREER_STALL_DEFAULT_DAYS)))
+    rows = ctx.collab.conn.execute(
+        "SELECT id, title, created_at FROM goals WHERE domain='career' AND status='active'"
+    ).fetchall()
+    ns = ctx.notify_store()
+    nudged = 0
+    for g in rows:
+        last = ctx.collab.conn.execute(
+            "SELECT MAX(ts) m FROM events WHERE type LIKE 'career.%' AND ts>?",
+            (g["created_at"],)).fetchone()
+        anchor = (last["m"] if last else None) or g["created_at"]
+        if not anchor:
+            continue
+        try:
+            age_days = (_dt.datetime.now(_dt.timezone.utc)
+                       - _dt.datetime.fromisoformat(anchor)).days
+        except ValueError:
+            continue
+        days_over = age_days - stall_days
+        if not (0 <= days_over <= _CAREER_STALL_WINDOW_DAYS):
+            continue
+        ref = f"career_stall_{g['id']}"
+        if ns.exists_today("career_stall", ref):
+            continue
+        reasoning = (f"Career goal '{g['title']}' has had no application/"
+                     f"portfolio/job-discovery activity in {age_days} day(s) "
+                     f"(stall threshold: {stall_days}d) — flagging once in "
+                     "case it's just been busy, not because it's overdue.")
+        ns.create(type="career_stall", title=f"No recent progress: {g['title']}",
+                  body=reasoning, priority="normal",
+                  related_entity={"id": ref, "entity_type": "goal", "goal_id": g["id"]})
+        _emit_insight(events, ctx, "career_goal",
+                      f"No progress on '{g['title']}' in {age_days}d", reasoning,
+                      {"goal_id": g["id"]})
+        nudged += 1
+    return {"checked": len(rows), "nudged": nudged}
+
+
+# ---------------------------------------------------------------------------
 # Registration
 # ---------------------------------------------------------------------------
 
@@ -799,4 +924,6 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("pr_task", _pr_to_task_agent)
     if config.agent_enabled("meeting_prep"):
         _once("meeting_prep", _meeting_prep_agent)
+    if config.agent_enabled("career_goal"):
+        _once("career_goal", _career_goal_agent)
     return sorted(seen)

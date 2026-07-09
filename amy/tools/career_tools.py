@@ -199,6 +199,22 @@ def _t_application_log(ctx, args):
     return {"id": aid}
 
 
+@register_tool("plane_batch_create_tasks",
+               "Create several Plane tasks at once as ONE approval item "
+               "(e.g. a weekly milestone breakdown) instead of one approval "
+               "per task. AGENT calls always require human approval "
+               "(external send) regardless of AMY_AGENT_WRITE_TIER. "
+               "Approving creates every task atomically.",
+               _obj({"project_id": {"type": "string"},
+                     "tasks": {"type": "array",
+                              "description": "[{title, description?}, ...]"}},
+                    ["tasks"]),
+               RISK_WRITE, extras={"external": True})
+def _t_plane_batch_create_tasks(ctx, args):
+    from ..automation import executors
+    return executors.execute(ctx, "plane_batch_create_tasks", args)
+
+
 @register_tool("send_hr_email",
                "Send (or, without SMTP configured, prepare a copy-ready "
                "draft of) an application email to an HR/recruiter contact. "

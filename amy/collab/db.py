@@ -109,6 +109,15 @@ class CollabDB:
             self.conn.commit()
         except Exception:
             pass   # column already exists
+        # career_meta on goals — target_role/weekly plan for a domain='career'
+        # goal (CAREER AUTOPILOT Part 2), sibling to finance_meta above: one
+        # goal row per objective stays consistent across every domain rather
+        # than adding a career-specific goals table.
+        try:
+            self.conn.execute("ALTER TABLE goals ADD COLUMN career_meta TEXT DEFAULT '{}'")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
 
     def reset(self):
         for t in ("prefs", "summaries", "activities", "note_access", "agent_cards",

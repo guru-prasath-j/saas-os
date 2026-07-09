@@ -604,3 +604,32 @@ def _exec_send_hr_email(ctx: JobCtx, payload: dict) -> dict:
 
     return {"sent": sent, "to": to_email, "subject": subject, "body": body,
            "note": note}
+
+
+@register("plane_batch_create_tasks")
+def _exec_plane_batch_create_tasks(ctx: JobCtx, payload: dict) -> dict:
+    """Atomic batch: one approval row creates every task in payload['tasks']
+    (CAREER AUTOPILOT Part 2 — a weekly milestone breakdown can be 10-20+
+    tasks; batching into ONE approval avoids flooding the inbox, per the
+    resolved design decision in docs/AGENT_PLAN.md). Loops the same Plane
+    connector call plane_create_task uses one task at a time, mirroring how
+    _exec_custodial_disburse loops per-beneficiary inside one approval. A
+    per-task failure doesn't abort the batch — partial results are returned
+    so the caller can see exactly which tasks landed."""
+    from ..connectors.mcp_call import call_mcp_tool
+    project_id = payload.get("project_id")
+    results = []
+    for t in payload.get("tasks") or []:
+        call_args = {"name": t["title"], "title": t["title"]}
+        if t.get("description"):
+            call_args["description"] = t["description"]
+        if project_id:
+            call_args["project_id"] = project_id
+        try:
+            r = call_mcp_tool(ctx.user_id, ctx.store, "plane", _PLANE_CREATE_TASK,
+                              call_args, target_style="single")
+            results.append({"title": t["title"], "ok": True, "result": r})
+        except Exception as exc:
+            results.append({"title": t["title"], "ok": False, "error": str(exc)[:300]})
+    return {"created": sum(1 for r in results if r["ok"]), "total": len(results),
+           "results": results}

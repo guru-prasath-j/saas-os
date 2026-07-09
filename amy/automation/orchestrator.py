@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import logging
 import uuid
 from pathlib import Path
 
@@ -21,6 +22,8 @@ import re
 
 from .assistant import _catalog
 from .executors import JobCtx
+
+_log = logging.getLogger("amy.automation.orchestrator")
 
 _MAX_TOOL_CALLS = 10
 _PLAN_MAX_STEPS = 4     # was 6 — with a slow thinking-model each extra step
@@ -77,12 +80,12 @@ def list_goal_runs(ctx: JobCtx, limit: int = 20) -> list[dict]:
 # LLM plumbing
 # ---------------------------------------------------------------------------
 
-def _gen(ctx: JobCtx, system: str, prompt: str) -> dict | None:
+def _gen(ctx: JobCtx, system: str, prompt: str, sensitive: bool = False) -> dict | None:
     for _ in range(2):   # one retry on provider flake
         try:
             # fast=True: each call here is a one-JSON-object decision, not
             # analysis — thinking mode made these 46s median (measured)
-            raw, _p = ctx.llm.generate(system, prompt, sensitive=False, fast=True)
+            raw, _p = ctx.llm.generate(system, prompt, sensitive=sensitive, fast=True)
             return _first_obj(raw)
         except Exception:
             continue
@@ -179,6 +182,293 @@ def _persist_run(ctx: JobCtx, run_id: str, goal: str, plan: list,
     ctx.collab.conn.commit()
 
 
+
+# ---------------------------------------------------------------------------
+# Career plan template (CAREER AUTOPILOT Part 2)
+#
+# The generic loop above plans a max of _PLAN_MAX_STEPS (4) LLM-improvised
+# tool calls in one pass — fine for "cut spending 10%", not enough to fan a
+# career goal out across Learning Focus, Plane milestones, a portfolio
+# first-look, and a persisted career profile (docs/AGENT_PLAN.md's CAREER
+# AUTOPILOT pre-flight finding 7). Goals matching a career shape run this
+# hardcoded fan-out instead — same "detect a known shape, run a template"
+# pattern jurisdiction packs and the Learning Feed's focus->goal linkage
+# already use elsewhere. Every WRITE still goes through
+# tools.invoke(actor="agent"), so AGENT_GATE still gates it; only the goal/
+# milestone bookkeeping the orchestrator does about ITS OWN plan (like
+# _store_plan_graph above) happens directly — the same line the generic
+# path already draws for its GraphStore/agent_goals writes.
+# ---------------------------------------------------------------------------
+
+_CAREER_ROLE_WORDS = ("engineer", "developer", "dev", "designer", "scientist",
+                     "analyst", "manager", "architect", "specialist",
+                     "consultant", "researcher", "programmer")
+_CAREER_ACTION_PHRASES = ("become a", "become an", "land a job", "get a job",
+                          "get hired", "break into", "transition into",
+                          "transition to", "switch to", "switch career",
+                          "new career", "career change", "career goal")
+
+_CAREER_PARSE_SYSTEM = (
+    "Extract the target job role and duration from this career goal. "
+    "Respond with EXACTLY ONE JSON object: "
+    '{"target_role": "<role>", "weeks": <int>}. If no duration is stated, '
+    "estimate a reasonable one (8-12 weeks)."
+)
+
+_SKILL_GAP_SYSTEM = (
+    "Compare the candidate's current skills against what real job postings "
+    "for this role ask for. List 3-6 concrete skill/technology gaps worth "
+    "learning next, ordered by impact. Respond with EXACTLY ONE JSON "
+    'object: {"gaps": ["<topic>", ...]}'
+)
+
+_SKILL_STOPWORDS = {"with", "that", "this", "from", "have", "will", "your",
+                    "team", "work", "role", "years", "experience", "skills",
+                    "strong", "ability", "using", "including", "across",
+                    "other", "such", "also", "into", "about", "need",
+                    "looking", "join", "help", "build", "develop", "working",
+                    "must", "should", "which", "they", "them", "their",
+                    "what", "when", "where", "company", "candidate"}
+
+
+def _is_career_goal(text: str) -> bool:
+    """Heuristic detector for a career-shaped goal ('become a GenAI engineer
+    in 2 months'). Requires an action phrase ('become a', 'switch to', ...)
+    AND a role-ish noun together (not either alone — 'become debt-free' or
+    'become a morning person' shouldn't misfire), or an explicit 'career'
+    mention."""
+    low = text.lower()
+    if "career" in low:
+        return True
+    has_action = any(a in low for a in _CAREER_ACTION_PHRASES)
+    has_role = any(r in low for r in _CAREER_ROLE_WORDS)
+    return has_action and has_role
+
+
+def _log_career_template_failure(ctx: JobCtx, run_id: str, goal: str, exc: Exception) -> None:
+    _log.warning("career plan template failed for run %s (%r): %s", run_id, goal, exc)
+    try:
+        ctx.events().emit("agent.error",
+                          {"agent": "career_goal", "error": str(exc)[:400],
+                           "reasoning": "career template raised; falling back "
+                                        "to the generic planner"},
+                          source="career_goal_agent")
+    except Exception:
+        pass
+
+
+def _extract_role_and_deadline(ctx: JobCtx, goal: str) -> tuple[str, str, int]:
+    """One LLM call to pull {target_role, weeks} out of the free-text goal —
+    NOT sensitive, it's parsing the goal sentence itself, not resume/profile
+    data. Degrades to a naive fallback (whole goal text as role, 8 weeks) on
+    any LLM failure, same stance as every other degrade-gracefully call in
+    this codebase (learning_feed/ranker.py, finance/budget_suggest.py, ...)."""
+    resp = _gen(ctx, _CAREER_PARSE_SYSTEM, f"Goal: {goal}") if ctx.llm else None
+    weeks = 8
+    role = goal[:120]
+    if resp and resp.get("target_role"):
+        role = str(resp["target_role"])[:120]
+        try:
+            weeks = max(1, int(resp.get("weeks") or 8))
+        except (TypeError, ValueError):
+            weeks = 8
+    deadline = (_dt.date.today() + _dt.timedelta(weeks=weeks)).isoformat()
+    return role, deadline, weeks
+
+
+def _extract_keywords(postings: list[dict], top_n: int = 8) -> list[str]:
+    """Deterministic keyword-frequency fallback for _skill_gaps() when no
+    LLM is available — never as good as the LLM pass, just never blocks the
+    plan (mirrors ranker.py's 'return items unranked' stance)."""
+    from collections import Counter
+    counts: Counter = Counter()
+    for p in postings:
+        text = f"{p.get('title', '')} {p.get('description', '')}"
+        for w in re.findall(r"[A-Za-z][A-Za-z0-9+.#]{2,}", text):
+            if w.lower() in _SKILL_STOPWORDS or len(w) < 3:
+                continue
+            counts[w] += 1
+    return [w for w, _n in counts.most_common(top_n)]
+
+
+def _skill_gaps(ctx: JobCtx, target_role: str, profile: dict) -> list[str]:
+    """Real postings (job_search tool) + career_profile.skills -> LLM skill-
+    gap analysis. sensitive=True: this call reasons about the user's own
+    skills, same class of data as GSTIN/PAN (CLAUDE.md quirk on sensitive
+    routing). Degrades to a deterministic keyword-diff on any LLM/job_search
+    failure — never blocks the plan."""
+    from .. import tools
+    postings: list[dict] = []
+    try:
+        out = tools.invoke(ctx, "job_search",
+                           {"search_term": target_role, "results_wanted": 10},
+                           actor="agent")
+        postings = out.get("jobs") or []
+    except Exception as exc:
+        _log.warning("career template: job_search failed during skill-gap analysis: %s", exc)
+
+    have = {s.lower() for s in (profile.get("skills") or [])}
+    fallback = [k for k in _extract_keywords(postings) if k.lower() not in have][:5]
+
+    if ctx.llm is None or not postings:
+        return fallback or [target_role]
+
+    desc_sample = "\n".join((p.get("description") or "")[:400] for p in postings[:6])
+    prompt = (f"Target role: {target_role}\n"
+             f"Current skills: {', '.join(profile.get('skills') or []) or 'none on file'}\n\n"
+             f"Sample postings:\n{desc_sample}")
+    resp = _gen(ctx, _SKILL_GAP_SYSTEM, prompt, sensitive=True)
+    gaps = resp.get("gaps") if resp else None
+    if isinstance(gaps, list) and gaps:
+        return [str(g)[:80] for g in gaps[:6]]
+    return fallback or [target_role]
+
+
+def _weekly_milestones(target_role: str, weeks: int, gaps: list[str]) -> list[str]:
+    """Deterministic phase breakdown (skills 40% / portfolio 25% /
+    applications 25% / interview prep 10%) — not LLM-dependent, so this
+    step never fails regardless of provider availability."""
+    weeks = max(weeks, 4)
+    skill_weeks = max(1, round(weeks * 0.4))
+    portfolio_weeks = max(1, round(weeks * 0.25))
+    apply_weeks = max(1, round(weeks * 0.25))
+    interview_weeks = max(1, weeks - skill_weeks - portfolio_weeks - apply_weeks)
+
+    gap_list = gaps or [target_role]
+    out: list[str] = []
+    cursor = 1
+    for i in range(skill_weeks):
+        out.append(f"Week {cursor}: Skill building — {gap_list[i % len(gap_list)]}")
+        cursor += 1
+    for i in range(portfolio_weeks):
+        out.append(f"Week {cursor}: Portfolio project #{i + 1} for {target_role}")
+        cursor += 1
+    for i in range(apply_weeks):
+        out.append(f"Week {cursor}: Applications — {target_role} roles")
+        cursor += 1
+    for i in range(interview_weeks):
+        out.append(f"Week {cursor}: Interview prep for {target_role}")
+        cursor += 1
+    return out
+
+
+def _run_career_template(ctx: JobCtx, goal: str, run_id: str) -> dict:
+    from .. import tools
+    from ..autonomous import GoalEngine
+
+    plan = [
+        "Parse target role and timeline from the goal",
+        "Create the career goal and profile",
+        "Identify skill gaps from real job postings",
+        "Create weekly milestones + a batched task breakdown",
+        "Pull portfolio repos for a first look",
+    ]
+    task_ids = _store_plan_graph(ctx, run_id, goal, plan)
+    steps_log: list[dict] = []
+    queued = 0
+
+    def _log_step(i: int, tool_name: str, args: dict, result, reasoning: str) -> None:
+        nonlocal queued
+        is_pending = isinstance(result, dict) and result.get("status") == "pending"
+        ok = not (isinstance(result, dict) and result.get("error"))
+        if is_pending:
+            queued += 1
+        steps_log.append({"step": i, "tool": tool_name, "args": args,
+                          "reasoning": reasoning, "ok": ok,
+                          "queued": is_pending, "result": result})
+        if i < len(task_ids):
+            _mark_task(ctx, task_ids[i], plan[i],
+                      "queued for approval" if is_pending else str(result)[:200])
+
+    # 1. parse target role + deadline
+    target_role, deadline, weeks = _extract_role_and_deadline(ctx, goal)
+    _log_step(0, "-", {}, {"target_role": target_role, "deadline": deadline, "weeks": weeks},
+              "Parsed target role/timeline from the goal text (sensitive=False — "
+              "no resume/profile data touched here).")
+
+    # 2. create the goal + sync the profile (orchestrator bookkeeping about
+    # its own plan, same line _store_plan_graph already draws — not gated)
+    engine = GoalEngine(ctx.collab, events=ctx.events())
+    gid = engine.create_goal(goal, domain="career", target_date=deadline)
+    ctx.collab.conn.execute(
+        "UPDATE goals SET career_meta=? WHERE id=?",
+        (json.dumps({"target_role": target_role, "weeks": weeks}), gid))
+    ctx.collab.conn.commit()
+    ctx.store.set_career_profile(ctx.user_id, target_role=target_role, deadline=deadline)
+    _log_step(1, "create_goal", {"title": goal, "domain": "career"}, {"id": gid},
+              f"New career goal: {target_role} by {deadline} ({weeks} weeks).")
+
+    # 3. skill gaps -> learning focuses (linked to this goal, same pattern
+    # the Learning Feed already uses for goal-linked focuses)
+    profile = ctx.store.get_career_profile(ctx.user_id) or {}
+    gaps = _skill_gaps(ctx, target_role, profile)
+    from ..learning_feed.sensor import add_focus
+    for topic in gaps:
+        try:
+            add_focus(ctx.collab.conn, ctx.user_id, topic, goal_id=gid)
+        except Exception as exc:
+            _log.warning("career template: add_focus(%r) failed: %s", topic, exc)
+    _log_step(2, "-", {"target_role": target_role}, {"gaps": gaps},
+              "Skill gaps from real postings (job_search) vs current profile "
+              "skills — degrades to a keyword diff if the LLM/search is unavailable.")
+
+    # 4. weekly milestones (tracked progress, internal — not gated) + a
+    # batched Plane task proposal (external send — IS gated, one approval
+    # for the whole breakdown per the resolved design decision)
+    milestones = _weekly_milestones(target_role, weeks, gaps)
+    for title in milestones:
+        try:
+            engine.add_milestone(gid, title)
+        except Exception as exc:
+            _log.warning("career template: add_milestone(%r) failed: %s", title, exc)
+    batch_reasoning = (f"Weekly milestone breakdown for '{target_role}' over "
+                       f"{weeks} weeks, batched into one approval per the "
+                       "CAREER AUTOPILOT design decision (atomic — approve "
+                       "creates every task, reject creates none).")
+    ctx._extras["agent_name"] = "career_goal_agent"
+    ctx._extras["agent_reasoning"] = batch_reasoning
+    ctx._extras["agent_dedup_key"] = f"career_milestones_{gid}"
+    batch_result = tools.invoke(
+        ctx, "plane_batch_create_tasks",
+        {"tasks": [{"title": t} for t in milestones]}, actor="agent")
+    _log_step(3, "plane_batch_create_tasks", {"tasks": milestones}, batch_result,
+              batch_reasoning)
+
+    # 5. portfolio first look — read-only, informational; the full SHOWCASE/
+    # NEEDS WORK/GAPS classification + vault note is the portfolio agent (Part 3)
+    try:
+        repos = tools.invoke(ctx, "portfolio_repo_list", {}, actor="agent")
+    except Exception as exc:
+        repos = {"error": str(exc)[:200]}
+    _log_step(4, "portfolio_repo_list", {}, repos,
+              "First-look repo pull for the career plan — full portfolio "
+              "analysis (SHOWCASE/NEEDS WORK/GAPS) is a separate on-demand step.")
+
+    summary = (f"Career plan for {target_role} over {weeks} weeks: goal created, "
+              f"{len(gaps)} learning focus(es) linked, {len(milestones)} "
+              "milestone(s) proposed as one batched approval, portfolio "
+              "pulled for a first look.")
+    status = "completed"
+    _persist_run(ctx, run_id, goal, plan, steps_log, summary, status)
+
+    try:
+        from ..events.store import CAREER_GOAL_SET
+        payload = {"agent": "career_goal_agent", "goal_id": gid,
+                  "target_role": target_role, "deadline": deadline,
+                  "reasoning": summary}
+        eid = ctx.events().emit(CAREER_GOAL_SET, payload, source="orchestrator")
+        from ..agents.reactive import _journal
+        _journal(ctx, {"id": eid, "type": CAREER_GOAL_SET, "payload": payload,
+                       "ts": None, "source": "orchestrator"})
+    except Exception:
+        pass   # fire-and-forget: the run row above is already the record
+
+    return {"run_id": run_id, "goal": goal, "plan": plan,
+            "plan_reasoning": "Career-shaped goal — used the career plan template.",
+            "steps": steps_log, "summary": summary, "queued_approvals": queued,
+            "status": status, "goal_id": gid}
+
+
 def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS,
              run_id: str | None = None) -> dict:
     """When run_id is given (background mode), the caller pre-inserted a
@@ -186,6 +476,19 @@ def run_goal(ctx: JobCtx, goal: str, max_tool_calls: int = _MAX_TOOL_CALLS,
     always sees the run finish (completed / failed)."""
     _ensure_table(ctx)
     run_id = run_id or uuid.uuid4().hex[:12]
+
+    if _is_career_goal(goal):
+        from .. import config
+        if config.agent_enabled("career_goal"):
+            try:
+                return _run_career_template(ctx, goal, run_id)
+            except Exception as exc:
+                # Falls through to the generic planner below rather than
+                # failing the whole run — the template degrades on its own
+                # LLM-unavailable paths already; this is a last-resort net
+                # for anything else (a DB error, a bad tool call).
+                _log_career_template_failure(ctx, run_id, goal, exc)
+
     if ctx.llm is None:
         _persist_run(ctx, run_id, goal, [], [],
                      "No LLM provider is available right now.", "failed")
