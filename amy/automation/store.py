@@ -268,6 +268,25 @@ class AutomationStore:
             self.conn.commit()
         except Exception:
             pass   # column already exists
+        # CAREER AUTOPILOT Part 5D: thread_refs on applications — JSON
+        # {"sent": [rfc2822 Message-IDs we sent], "seen": [inbound gmail msg
+        # ids already processed]} so inbound replies can be thread-matched
+        # and never double-processed across poll cycles.
+        try:
+            self.conn.execute(
+                "ALTER TABLE applications ADD COLUMN thread_refs TEXT DEFAULT '{}'")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
+        # CAREER AUTOPILOT Part 5E: cross-source posting dedup — the same job
+        # discovered on a second board appends {source,url} here instead of
+        # creating a second row (first-seen row wins).
+        try:
+            self.conn.execute(
+                "ALTER TABLE job_postings ADD COLUMN alt_sources TEXT DEFAULT '[]'")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
 
     # --- global pause -------------------------------------------------------
 
@@ -637,15 +656,46 @@ class AutomationStore:
 
     # --- job postings (CAREER AUTOPILOT Part 1) -------------------------------
 
+    @staticmethod
+    def _posting_fuzzy_key(title: str, company: str, location: str) -> str:
+        """Normalized title+company+location — the Part 5E cross-source dedup
+        key. Lowercase, non-alphanumerics collapsed to single spaces, so
+        'Sr. ML Engineer — Acme, Bangalore' from two boards normalizes the
+        same regardless of each board's punctuation habits."""
+        import re as _re
+        raw = f"{title} {company} {location}".lower()
+        return _re.sub(r"[^a-z0-9]+", " ", raw).strip()
+
     def add_posting_if_new(self, uid: str, posting: dict) -> tuple[str, bool]:
-        """Dedup on (uid, url) — a re-discovered posting is a no-op, matching
-        connector_sensor_seen's diff-not-duplicate idiom. Returns
-        (posting_id, is_new)."""
+        """Dedup on (uid, url), then fuzzy on normalized title+company+
+        location (CAREER AUTOPILOT Part 5E: the same job cross-posted to a
+        second board must not become a second row/event). A fuzzy hit keeps
+        the FIRST-seen row and appends this sighting's {source, url} to its
+        alt_sources. Returns (posting_id, is_new)."""
         url = (posting.get("url") or "").strip()
         if url:
             row = self.conn.execute(
                 "SELECT id FROM job_postings WHERE uid=? AND url=?", (uid, url)).fetchone()
             if row:
+                return row["id"], False
+        fuzzy_key = self._posting_fuzzy_key(posting.get("title") or "",
+                                            posting.get("company") or "",
+                                            posting.get("location") or "")
+        if fuzzy_key:
+            for row in self.conn.execute(
+                    "SELECT id, title, company, location, alt_sources"
+                    " FROM job_postings WHERE uid=?", (uid,)).fetchall():
+                if self._posting_fuzzy_key(row["title"], row["company"],
+                                           row["location"]) != fuzzy_key:
+                    continue
+                alt = json.loads(row["alt_sources"] or "[]")
+                sighting = {"source": posting.get("source") or "jobspy", "url": url}
+                if sighting not in alt:
+                    alt.append(sighting)
+                    self.conn.execute(
+                        "UPDATE job_postings SET alt_sources=? WHERE uid=? AND id=?",
+                        (json.dumps(alt), uid, row["id"]))
+                    self.conn.commit()
                 return row["id"], False
         pid = _uuid()
         self.conn.execute(
@@ -668,6 +718,8 @@ class AutomationStore:
         d = dict(row)
         d["keywords"] = json.loads(d["keywords"] or "[]")
         d["match_factors"] = json.loads(d["match_factors"] or "{}")
+        d["alt_sources"] = json.loads(d.get("alt_sources") or "[]")
+        d["sources_count"] = 1 + len(d["alt_sources"])
         return d
 
     def list_postings(self, uid: str, status: str | None = None,
@@ -687,6 +739,8 @@ class AutomationStore:
             d = dict(r)
             d["keywords"] = json.loads(d["keywords"] or "[]")
             d["match_factors"] = json.loads(d["match_factors"] or "{}")
+            d["alt_sources"] = json.loads(d.get("alt_sources") or "[]")
+            d["sources_count"] = 1 + len(d["alt_sources"])
             out.append(d)
         return out
 
@@ -707,8 +761,11 @@ class AutomationStore:
 
     # --- applications (CAREER AUTOPILOT Part 1) --------------------------------
 
+    # "accepted" (Part 5E) is the new terminal success status — an accepted
+    # offer triggers the goal wind-down proposal (agents/reactive.py).
     _APPLICATION_STATUSES = ("prepared", "approved", "sent", "response",
-                             "interview", "offer", "rejected", "ghosted")
+                             "interview", "offer", "accepted", "rejected",
+                             "ghosted")
 
     def create_application(self, uid: str, posting_id: str, channel: str = "",
                            match_score: float | None = None,
@@ -734,7 +791,28 @@ class AutomationStore:
             return None
         d = dict(row)
         d["timeline"] = json.loads(d["timeline"] or "[]")
+        d["thread_refs"] = json.loads(d.get("thread_refs") or "{}")
         return d
+
+    def add_application_thread_ref(self, uid: str, application_id: str,
+                                   kind: str, ref: str) -> bool:
+        """Part 5D: record either a sent Message-ID (kind='sent') or an
+        already-processed inbound gmail message id (kind='seen') on the
+        application, so replies thread-match and never double-process."""
+        row = self.conn.execute(
+            "SELECT thread_refs FROM applications WHERE uid=? AND id=?",
+            (uid, application_id)).fetchone()
+        if row is None:
+            return False
+        refs = json.loads(row["thread_refs"] or "{}")
+        bucket = refs.setdefault(kind, [])
+        if ref not in bucket:
+            bucket.append(ref)
+        self.conn.execute(
+            "UPDATE applications SET thread_refs=? WHERE uid=? AND id=?",
+            (json.dumps(refs), uid, application_id))
+        self.conn.commit()
+        return True
 
     def list_applications(self, uid: str, status: str | None = None) -> list[dict]:
         if status:
@@ -749,6 +827,7 @@ class AutomationStore:
         for r in rows:
             d = dict(r)
             d["timeline"] = json.loads(d["timeline"] or "[]")
+            d["thread_refs"] = json.loads(d.get("thread_refs") or "{}")
             out.append(d)
         return out
 

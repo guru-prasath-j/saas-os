@@ -498,6 +498,7 @@ def sync_gmail(
     max_messages: int = 200,
     category: str = "Uncategorized",
     cc_account_id: str | None = None,
+    inbound_hook=None,
 ) -> SyncResult:
     """
     Fetch bank-related emails, extract transactions via LLM, and import them.
@@ -505,6 +506,11 @@ def sync_gmail(
     creds  — google.oauth2.credentials.Credentials (from existing google.py logic)
     engine — FinanceEngine instance
     llm    — LLMRouter instance for LLM-based extraction
+    inbound_hook — optional CareerInboundHook (amy/career_inbound.py, Part
+    5D): adds ONE extra targeted messages.list for open applications' HR
+    contacts inside this same sync pass (never a second poll loop) and
+    routes those messages through career matching INSTEAD of the finance
+    parser. None (the default) leaves this function's behavior untouched.
     """
     try:
         from googleapiclient.discovery import build
@@ -533,12 +539,43 @@ def sync_gmail(
 
     combined_result = SyncResult()
 
+    # ── Career inbound pass (Part 5D) — same sync, own precise query ────────
+    # A separate targeted list call so HR replies never eat into the finance
+    # message budget above; matched messages are handled by the hook and
+    # excluded from finance parsing below.
+    career_handled: set[str] = set()
+    if inbound_hook is not None and getattr(inbound_hook, "active", False):
+        career_q = (inbound_hook.gmail_query() or "").strip()
+        if career_q:
+            try:
+                res2 = svc.users().messages().list(
+                    userId="me",
+                    maxResults=int(getattr(inbound_hook, "max_messages", 25)),
+                    q=" ".join(p for p in (career_q, date_q) if p)).execute()
+                for msg_ref in res2.get("messages", []) or []:
+                    try:
+                        msg = svc.users().messages().get(
+                            userId="me", id=msg_ref["id"], format="full").execute()
+                        payload = msg.get("payload", {})
+                        hdrs = {h["name"].lower(): h["value"]
+                                for h in payload.get("headers", [])}
+                        if inbound_hook.handle(msg_ref["id"], hdrs,
+                                               _extract_body(payload)):
+                            career_handled.add(msg_ref["id"])
+                    except Exception as exc:
+                        combined_result.errors.append(
+                            f"career inbound {msg_ref['id']}: {exc}")
+            except Exception as exc:
+                combined_result.errors.append(f"career inbound query: {exc}")
+
     # ── Pass 1: parse all emails, collect raw transactions ──────────────────
     # msg_batches: list of (raw_txns, email_body_snippet, is_cc_flag)
     msg_batches: list[tuple[list[dict], str, bool]] = []
 
     for msg_ref in messages:
         try:
+            if msg_ref["id"] in career_handled:
+                continue   # already consumed by the career inbound pass
             msg = svc.users().messages().get(
                 userId="me", id=msg_ref["id"], format="full").execute()
             payload = msg.get("payload", {})

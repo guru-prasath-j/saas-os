@@ -428,12 +428,29 @@ def _run_gmail_poll():
 
         fe = FinanceEngine(str(finance_path))
         cdb = None
+        hook_cdb = None
         try:
             accounts = fe.list_accounts()
             try:
                 llm = LLMRouter(use_global_keys=True)
             except Exception:
                 llm = None
+
+            # CAREER AUTOPILOT Part 5D: inbound HR-response detection rides
+            # this same poll (never a second Gmail poll loop). None when
+            # there are no open post-send applications — zero overhead.
+            inbound_hook = None
+            try:
+                collab_path = paths.index_dir(uid) / "collab.db"
+                if collab_path.exists():
+                    from ..automation import build_ctx as _build_ctx
+                    from ..career_inbound import build_inbound_hook
+                    from ..collab import CollabDB as _CollabDB
+                    hook_cdb = _CollabDB(str(collab_path))
+                    inbound_hook = build_inbound_hook(
+                        _build_ctx(uid, user.email, hook_cdb, paths.index_dir(uid)))
+            except Exception:
+                inbound_hook = None
 
             savings_accounts = [a for a in accounts
                                 if a.get("account_type") in ("savings", "current", None, "")]
@@ -456,7 +473,8 @@ def _run_gmail_poll():
                 _sync_gmail(creds, fe, aid, llm,
                             since=since,
                             max_messages=100,
-                            cc_account_id=cc_aid)
+                            cc_account_id=cc_aid,
+                            inbound_hook=inbound_hook)
 
             # Custodial accounts get bank alerts too — refills just aren't
             # the user's own income (see amy/finance/custodial.py).
@@ -481,6 +499,8 @@ def _run_gmail_poll():
             fe.close()
             if cdb is not None:
                 cdb.close()
+            if hook_cdb is not None:
+                hook_cdb.close()
 
 
 async def _gmail_poll_loop():

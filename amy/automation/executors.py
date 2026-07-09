@@ -572,6 +572,8 @@ def _exec_send_hr_email(ctx: JobCtx, payload: dict) -> dict:
     copy-ready draft — smtp_configured() self-detects, no config the caller
     needs to branch on. Either way the application's timeline is updated so
     the funnel reflects what actually happened."""
+    from email.utils import make_msgid
+
     from ..notifications.email import send_email, smtp_configured
     from ..events.store import CAREER_APPLICATION_SENT
 
@@ -581,11 +583,16 @@ def _exec_send_hr_email(ctx: JobCtx, payload: dict) -> dict:
     application_id = payload.get("application_id")
 
     if smtp_configured():
-        sent = send_email(to_email, subject, body)
+        # Stamp + record our own Message-ID (Part 5D): an HR reply carries it
+        # in In-Reply-To/References, which is the strongest inbound-match
+        # signal career_inbound has (SMTP gives us no Gmail thread id).
+        message_id = make_msgid()
+        sent = send_email(to_email, subject, body, message_id=message_id)
         status = "sent" if sent else "prepared"
         note = "Sent via SMTP" if sent else "SMTP send failed — see logs"
     else:
         sent = False
+        message_id = None
         status = "prepared"
         note = "SMTP not configured — copy-ready draft only, not sent"
 
@@ -594,6 +601,12 @@ def _exec_send_hr_email(ctx: JobCtx, payload: dict) -> dict:
             ctx.store.update_application_status(ctx.user_id, application_id, status, note)
         except Exception:
             pass
+        if sent and message_id:
+            try:
+                ctx.store.add_application_thread_ref(
+                    ctx.user_id, application_id, "sent", message_id)
+            except Exception:
+                pass
         if sent:
             try:
                 ctx.events().emit(CAREER_APPLICATION_SENT,
@@ -633,3 +646,109 @@ def _exec_plane_batch_create_tasks(ctx: JobCtx, payload: dict) -> dict:
             results.append({"title": t["title"], "ok": False, "error": str(exc)[:300]})
     return {"created": sum(1 for r in results if r["ok"]), "total": len(results),
            "results": results}
+
+
+@register("application_status_update")
+def _exec_application_status_update(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Part 5D: the tier-1 backend for inbound response
+    detection — updating my own tracking data to reflect what an HR reply
+    already said is not an external action, so it executes immediately
+    (tier 1 = executed + notification via submit_action). Emits
+    career.application_status_changed, which is also the extension point
+    for the not-yet-built interview-prep pack / offer analysis (Parts
+    5A-5C): they subscribe to the event when they land."""
+    from ..events.store import CAREER_APPLICATION_STATUS_CHANGED
+
+    application_id = payload["application_id"]
+    status = payload["status"]
+    note = payload.get("note") or ""
+    ok = ctx.store.update_application_status(ctx.user_id, application_id, status, note)
+    if ok:
+        try:
+            ctx.events().emit(CAREER_APPLICATION_STATUS_CHANGED,
+                              {"application_id": application_id, "status": status,
+                               "trigger": payload.get("trigger") or "inbound_email",
+                               "classification": payload.get("classification") or ""},
+                              source="career_inbound")
+        except Exception:
+            pass
+    return {"updated": ok, "application_id": application_id, "status": status}
+
+
+@register("resume_update")
+def _exec_resume_update(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Part 5E (master resume evolution): applies an
+    approved resume_text update to career_profile. Always parked tier 2 by
+    the proposer with the unified diff in the approval body — the resume is
+    the user's own words about themselves; Amy never rewrites it silently."""
+    new_text = payload.get("resume_text") or ""
+    if not new_text.strip():
+        return {"updated": False, "error": "empty resume_text"}
+    ctx.store.set_career_profile(ctx.user_id, resume_text=new_text)
+    return {"updated": True, "chars": len(new_text)}
+
+
+@register("career_wind_down")
+def _exec_career_wind_down(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Part 5E: the approved wind-down bundle after an
+    accepted offer — ONE approval executes every step; nothing winds down
+    silently. Closing the goal is what deactivates JobScoutSensor and the
+    career agents for it (they all no-op without an active career goal —
+    no separate 'disable' flag to forget to reset). Withdrawal emails for
+    other active applications are NOT sent here: each one is re-proposed
+    through the send_hr_email tool (external -> hard tier 2), so every
+    individual outbound send still gets its own explicit approval."""
+    goal_id = payload.get("goal_id")
+    closed_goal = False
+    if goal_id:
+        cur = ctx.collab.conn.execute(
+            "UPDATE goals SET status='completed' WHERE id=? AND status='active'",
+            (goal_id,))
+        ctx.collab.conn.commit()
+        closed_goal = cur.rowcount > 0
+
+    archived = 0
+    for posting in ctx.store.list_postings(ctx.user_id, status="discovered",
+                                           limit=1000):
+        if ctx.store.set_posting_status(ctx.user_id, posting["id"], "archived"):
+            archived += 1
+
+    withdrawals_proposed = 0
+    if payload.get("withdraw_others"):
+        import json as _json
+
+        from .. import tools
+        for app in ctx.store.list_applications(ctx.user_id):
+            if app["id"] == payload.get("accepted_application_id"):
+                continue
+            if app["status"] not in ("sent", "response", "interview", "offer"):
+                continue
+            try:
+                draft = _json.loads(app.get("draft") or "{}")
+            except Exception:
+                draft = {}
+            to_email = draft.get("to_email")
+            if not to_email:
+                continue   # portal/third-party — nothing to withdraw by email
+            posting = ctx.store.get_posting(ctx.user_id, app["posting_id"]) or {}
+            ctx._extras["agent_name"] = "application_tracker_agent"
+            ctx._extras["agent_reasoning"] = (
+                "Wind-down after an accepted offer: proposing a withdrawal "
+                "email for this still-active application.")
+            ctx._extras["agent_dedup_key"] = f"withdraw_{app['id']}"
+            try:
+                tools.invoke(ctx, "send_hr_email",
+                             {"application_id": app["id"], "to_email": to_email,
+                              "subject": f"Withdrawing my application: "
+                                         f"{posting.get('title', '')}",
+                              "body": ("Hello,\n\nI'm writing to withdraw my "
+                                       "application as I've accepted another "
+                                       "offer. Thank you for your time and "
+                                       "consideration.\n\nBest regards")},
+                             actor="agent")
+                withdrawals_proposed += 1
+            except Exception:
+                pass
+
+    return {"closed_goal": closed_goal, "archived_postings": archived,
+           "withdrawal_sends_proposed": withdrawals_proposed}

@@ -911,6 +911,20 @@ async def upload_pdf(
 # Gmail sync (B2)
 # ---------------------------------------------------------------------------
 
+def _career_inbound_hook(user: User, cdb):
+    """CAREER AUTOPILOT Part 5D: inbound HR-response detection rides the
+    finance Gmail sync (same pass, never a second poll). None whenever
+    there's nothing to match (no open applications / tracker disabled) —
+    the sync then behaves exactly as before."""
+    try:
+        from ...automation import build_ctx
+        from ...career_inbound import build_inbound_hook
+        return build_inbound_hook(
+            build_ctx(user.id, user.email, cdb, paths.index_dir(user.id)))
+    except Exception:
+        return None
+
+
 @router.post("/api/finance/accounts/{aid}/sync/gmail")
 def sync_gmail(
     aid: str,
@@ -958,7 +972,8 @@ def sync_gmail(
         result = _sync(creds, fe, aid, llm,
                        since=since, until=until,
                        max_messages=max_messages,
-                       cc_account_id=cc_aid)
+                       cc_account_id=cc_aid,
+                       inbound_hook=_career_inbound_hook(user, cdb))
 
         from ...finance.custodial import emit_refill_events
         from ...events.factory import get_events
@@ -1029,6 +1044,11 @@ def sync_gmail_all(
         all_errors: list = []
         all_transactions: list = []
 
+        # One career-inbound pass per sync, not per account (Part 5D) —
+        # handed to the first account's _sync only; seen-dedup makes a
+        # repeat harmless but there's no reason to pay the Gmail calls twice.
+        inbound_hook = _career_inbound_hook(user, cdb)
+
         for acc in targets:
             aid = acc["id"]
             bank = acc.get("bank_name", "Bank")
@@ -1059,7 +1079,9 @@ def sync_gmail_all(
             r = _sync(creds, fe, aid, llm,
                       since=acc_since, until=until,
                       max_messages=acc_max,
-                      cc_account_id=cc_aid)
+                      cc_account_id=cc_aid,
+                      inbound_hook=inbound_hook)
+            inbound_hook = None   # career pass runs once per sync, not per account
             total_imported += r.imported
             total_skipped  += r.skipped
             all_errors.extend(r.errors)

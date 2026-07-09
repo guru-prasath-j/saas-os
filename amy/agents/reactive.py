@@ -837,7 +837,246 @@ def portfolio_analyze(events, ctx, target_role: str | None = None,
     except Exception:
         pass   # fire-and-forget: the result dict + vault note are the record
 
+    # Part 5E master resume evolution: the analysis just produced real,
+    # repo-evidenced bullets — propose folding them into the master resume
+    # (tier 2, diff in the approval body) instead of letting it stay frozen.
+    try:
+        result["resume_proposal"] = _propose_resume_evolution(ctx, entries)
+    except Exception as exc:
+        _log.warning("portfolio: resume evolution proposal failed: %s", exc)
+
     return result
+
+
+_RESUME_HIGHLIGHTS_HEADER = "## Project highlights"
+
+
+def _propose_resume_evolution(ctx, showcase_entries: list[dict]) -> str | None:
+    """Part 5E: propose a career_profile.resume_text update from portfolio
+    bullets — ONLY repo-evidenced content (each bullet names a real repo the
+    classifier just verified), never ATS keyword stuffing: missing ATS
+    keywords are skills the resume doesn't evidence, and inserting them
+    would put claims in the user's mouth. Tier 2 with a unified diff in the
+    approval body; the resume_update executor applies it on approve. Deduped
+    per month so a re-run doesn't re-propose the same evolution."""
+    from difflib import unified_diff
+
+    from ..automation.executors import submit_action
+
+    profile = ctx.store.get_career_profile(ctx.user_id) or {}
+    current = (profile.get("resume_text") or "").strip()
+    if not current:
+        return None   # no master resume on file — nothing to evolve
+    bullets: list[str] = []
+    for e in showcase_entries:
+        repo = str(e.get("repo") or "").strip()
+        for b in (e.get("bullets") or []):
+            line = f"- {b}" if repo and repo in str(b) else f"- {repo}: {b}"
+            if line.lower() not in current.lower():
+                bullets.append(line)
+    if not bullets:
+        return None   # everything already reflected in the resume
+
+    section = f"{_RESUME_HIGHLIGHTS_HEADER}\n" + "\n".join(bullets[:6])
+    proposed = f"{current}\n\n{section}\n"
+    diff = "\n".join(unified_diff(current.splitlines(), proposed.splitlines(),
+                                  fromfile="resume (current)",
+                                  tofile="resume (proposed)", lineterm=""))
+    month = _dt.date.today().strftime("%Y-%m")
+    out = submit_action(
+        ctx, 2, "resume_update",
+        title="Resume update: fold in portfolio highlights",
+        body=("Portfolio analysis produced repo-evidenced resume bullets. "
+              "Diff of the proposed change:\n\n" + diff[:3500]),
+        payload={"resume_text": proposed},
+        source="portfolio_agent",
+        dedup_key=f"resume_evolve_{month}",
+        reasoning="Master resume evolution (Part 5E): repo-evidenced bullets "
+                  "only — ATS gap keywords are deliberately NOT inserted, "
+                  "since the portfolio doesn't evidence them.",
+        risk="write")
+    return out.get("status")
+
+
+# ---------------------------------------------------------------------------
+# Application lifecycle (CAREER AUTOPILOT Part 5E) — wind-down on accepted
+# ---------------------------------------------------------------------------
+
+def _application_lifecycle_agent(events, ctx):
+    """Subscribes to career.application_status_changed; an 'accepted'
+    transition (the new terminal success status) proposes the goal
+    wind-down bundle as ONE tier-2 approval — close the career goal (which
+    is itself what deactivates JobScoutSensor + the career agents: they all
+    no-op without an active career goal), archive open postings, and
+    optionally draft withdrawal emails for other active applications (each
+    of those re-parks as its own external-pinned send on execution).
+    Nothing winds down silently."""
+
+    def on_status_changed(ev):
+        try:
+            payload = ev.get("payload") or {}
+            if payload.get("status") != "accepted":
+                return
+            application_id = payload.get("application_id") or ""
+            goal_row = ctx.collab.conn.execute(
+                "SELECT id, title FROM goals WHERE domain='career' AND"
+                " status='active' ORDER BY created_at DESC LIMIT 1").fetchone()
+            goal_id = goal_row["id"] if goal_row else None
+            open_postings = len(ctx.store.list_postings(
+                ctx.user_id, status="discovered", limit=1000))
+            others = [a for a in ctx.store.list_applications(ctx.user_id)
+                      if a["id"] != application_id
+                      and a["status"] in ("sent", "response", "interview", "offer")]
+
+            from ..automation.executors import submit_action
+            steps = [f"- close career goal: {goal_row['title']}" if goal_row
+                     else "- no active career goal to close",
+                     f"- archive {open_postings} open posting(s)",
+                     f"- propose withdrawal emails for {len(others)} other "
+                     "active application(s) — each send parks as its own "
+                     "tier-2 approval"]
+            submit_action(
+                ctx, 2, "career_wind_down",
+                title="Offer accepted — wind down the job search?",
+                body="One approval executes every step:\n" + "\n".join(steps),
+                payload={"goal_id": goal_id,
+                         "accepted_application_id": application_id,
+                         "withdraw_others": bool(others)},
+                source="application_lifecycle_agent",
+                dedup_key=f"winddown_{goal_id or application_id}",
+                reasoning="An accepted offer ends the search; continuing to "
+                          "scout/apply now wastes everyone's time. Nothing "
+                          "winds down without this approval.",
+                risk="write")
+        except Exception as exc:
+            _report_error(events, "application_lifecycle", exc)
+
+    events.subscribe("career.application_status_changed", on_status_changed)
+
+
+# ---------------------------------------------------------------------------
+# Interview debrief (CAREER AUTOPILOT Part 5E) — advisory, exactly once
+# ---------------------------------------------------------------------------
+
+_DEBRIEF_LOOKBACK_HOURS = 6
+
+
+def _debrief_already_prompted(ctx, event_id: str) -> bool:
+    row = ctx.collab.conn.execute(
+        "SELECT value FROM prefs WHERE key=?",
+        (f"debrief_prompted_{event_id}",)).fetchone()
+    return row is not None
+
+
+def _mark_debrief_prompted(ctx, event_id: str) -> None:
+    ctx.collab.conn.execute(
+        "INSERT OR IGNORE INTO prefs(key,value) VALUES(?,?)",
+        (f"debrief_prompted_{event_id}", _dt.datetime.now(
+            _dt.timezone.utc).isoformat()))
+    ctx.collab.conn.commit()
+
+
+def interview_debrief_check(events, ctx) -> int:
+    """Part 5E: after a career-linked calendar event ENDS, prompt once
+    (notification) for a quick debrief and pre-create the note skeleton
+    (09_Memory/Interview Debrief - {company} - {date}) for the user to fill
+    in — it feeds future prep packs (Part 5A-5C, when built) and
+    preference drift. Advisory and skippable; the prefs-table guard makes
+    it exactly-once per calendar event, never a re-prompt. Calendar is
+    queried directly (mirroring meet_upcoming_meetings) because that tool
+    only looks forward and this needs just-ended events."""
+    if not config.agent_enabled("application_tracker"):
+        return 0
+    interviewing = [a for a in ctx.store.list_applications(ctx.user_id)
+                    if a["status"] in ("interview", "offer")]
+    if not interviewing:
+        return 0
+    creds = ctx.google_creds()
+    if creds is None:
+        return 0
+
+    from ..career_inbound import _company_token
+    companies = {}
+    for app in interviewing:
+        posting = ctx.store.get_posting(ctx.user_id, app["posting_id"]) or {}
+        token = _company_token(posting.get("company") or "")
+        if token:
+            companies[token] = posting.get("company") or token
+
+    now = _dt.datetime.now(_dt.timezone.utc)
+    try:
+        from googleapiclient.discovery import build
+        svc = build("calendar", "v3", credentials=creds, cache_discovery=False)
+        res = svc.events().list(
+            calendarId="primary",
+            timeMin=(now - _dt.timedelta(hours=_DEBRIEF_LOOKBACK_HOURS)).isoformat(),
+            timeMax=now.isoformat(), maxResults=25, singleEvents=True,
+            orderBy="startTime").execute()
+        items = res.get("items", [])
+    except Exception as exc:
+        _report_error(events, "interview_debrief", exc)
+        return 0
+
+    prompted = 0
+    for e in items:
+        try:
+            end_raw = (e.get("end") or {}).get("dateTime", "")
+            try:
+                end = _dt.datetime.fromisoformat(end_raw.replace("Z", "+00:00"))
+            except Exception:
+                continue   # all-day events don't "end" in a debriefable sense
+            if end > now:
+                continue   # still running
+            event_id = e.get("id") or ""
+            title = e.get("summary") or ""
+            if not event_id or _debrief_already_prompted(ctx, event_id):
+                continue
+            title_low = title.lower()
+            company = next((c for t, c in companies.items() if t in title_low),
+                           None)
+            if company is None:
+                continue   # not career-linked — plain meetings stay meeting_prep's turf
+
+            date_str = end.date().isoformat()
+            try:
+                from ..memory.writer import MemoryWriter
+                from ..saas import tenancy
+                vault = tenancy.resolve_vault_dir(ctx.user_id)
+                vault.mkdir(parents=True, exist_ok=True)
+                MemoryWriter(vault).write_atomic(
+                    "interview debrief",
+                    f"Interview Debrief - {company} - {date_str}",
+                    (f"Interview: **{title}** ended {end_raw}\n\n"
+                     "Fill in while it's fresh (this note feeds future prep "
+                     "packs):\n\n- What they asked:\n- What went well:\n"
+                     "- What to sharpen:\n- Next step / their timeline:\n"),
+                    eid=f"debrief-{event_id}", tags=["career", "interview"])
+            except Exception:
+                pass   # the notification below is still the prompt
+            try:
+                ns = ctx.notify_store()
+                ns.create(
+                    type="career_interview_debrief",
+                    title=f"Quick debrief? {company} interview just ended",
+                    body=("A debrief note skeleton is in your vault "
+                          f"(Interview Debrief - {company} - {date_str}) — "
+                          "two minutes now beats a blank memory next round. "
+                          "Skippable; this is the only prompt for this event."),
+                    priority="normal",
+                    related_entity={"entity_type": "calendar_event",
+                                    "id": event_id})
+            except Exception:
+                pass
+            _mark_debrief_prompted(ctx, event_id)
+            _emit_insight(events, ctx, "interview_debrief",
+                          f"Debrief prompted: {company}",
+                          f"Career-linked calendar event '{title}' ended at "
+                          f"{end_raw}; prompted once for a debrief.",
+                          {"event_id": event_id, "company": company})
+            prompted += 1
+        except Exception as exc:
+            _report_error(events, "interview_debrief", exc)
+    return prompted
 
 
 # ---------------------------------------------------------------------------
@@ -1163,4 +1402,6 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("career_goal", _career_goal_agent)
     if config.agent_enabled("portfolio"):
         _once("portfolio", _portfolio_agent)
+    if config.agent_enabled("application_tracker"):
+        _once("application_lifecycle", _application_lifecycle_agent)
     return sorted(seen)

@@ -134,15 +134,26 @@ def get_career_portfolio(user: User = Depends(current_user)):
 
 
 @router.post("/api/career/postings/{posting_id}/apply")
-def apply_to_career_posting(posting_id: str, user: User = Depends(current_user)):
+def apply_to_career_posting(posting_id: str, force: bool = False,
+                            user: User = Depends(current_user)):
     """PREPARE + one approval (Part 5) — never sends anything itself; the
-    approval still requires an explicit approve in the Approval Inbox."""
+    approval still requires an explicit approve in the Approval Inbox.
+
+    Part 5E duplicate guard: a company with an active (or recently
+    rejected/ghosted) application 409s with the reason; the human can
+    override with ?force=true. The agent path has no override — for
+    job_scout's auto-proposals the guard is absolute."""
     cdb, ctx = _ctx(user)
     try:
         from ...career_apply import prepare_application
-        result = prepare_application(ctx, posting_id)
+        result = prepare_application(ctx, posting_id, force=force)
         if "error" in result:
             raise HTTPException(status_code=404, detail=result["error"])
+        if "blocked" in result:
+            raise HTTPException(
+                status_code=409,
+                detail=f"{result['blocked']} — re-apply anyway with "
+                       f"?force=true if this is intentional.")
         return result
     finally:
         cdb.close()

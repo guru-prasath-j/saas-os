@@ -178,7 +178,9 @@ def test_prepare_application_dedup_no_duplicate_approval(ctx, monkeypatch):
 
     prepare_application(ctx, pid)
     out2 = prepare_application(ctx, pid)
-    assert out2["proposal"]["status"] == "duplicate"
+    # Part 5E: the duplicate-application guard catches the repeat BEFORE the
+    # approval-dedup layer even sees it (same company, active application)
+    assert "blocked" in out2
 
     pending = ctx.store.list_approvals("pending")
     batch = [a for a in pending if a["payload"].get("tool") == "send_hr_email"]

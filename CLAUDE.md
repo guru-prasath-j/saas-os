@@ -145,7 +145,27 @@ amy/
                          tools.invoke(actor="agent") regardless of caller.
                          application_followup_check job (every 2 days):
                          one follow-up email after 10 days' silence, auto-
-                         ghosted after another 21.
+                         ghosted after another 21. Part 5E adds the
+                         duplicate-application guard (same company active
+                         or rejected/ghosted < AMY_CAREER_REAPPLY_DAYS=60
+                         → blocked; agent path absolute, manual apply
+                         route 409s with ?force=true override) + the
+                         referral check (knowledge graph + vault mentions
+                         as "warm paths" in the approval — own data only).
+  career_inbound.py      CAREER AUTOPILOT Part 5D: inbound HR-response
+                         detection riding sync_gmail(inbound_hook=) — one
+                         extra targeted messages.list in the SAME pass
+                         (never a second poll), thread-match via recorded
+                         send_hr_email Message-IDs (applications.
+                         thread_refs) then sender/domain/company-token,
+                         LOCAL-ONLY classification (keyword-ladder
+                         fallback; rejection outranks interview), tier-1
+                         application_status_update executor + event +
+                         vault journal. Interview/offer notifications are
+                         the 5A-5C extension points (prep pack/offer
+                         analysis NOT built). Never auto-replies. Seen-
+                         dedup in thread_refs → sent→response moves
+                         exactly once per reply.
   financing.py           Financing models (R7A-4): amortized|markup|zero|lease
   fx.py                  FxConverter (pluggable source, daily cache) + multi_currency_summary
   locale_fmt.py          lakh/crore vs western grouping, format_money, prompt_hint
@@ -613,7 +633,9 @@ logs every run to `automation_runs`. All automated writes go through
 `import_statement` · `custodial_disburse` · `add_subscription` · `set_budget` ·
 `add_transaction` · `add_place` · `add_task` · `external_draft` (ack-only) ·
 `github_comment` · `plane_create_task` · `plane_update_task` (external —
-see "Connectors" below).
+see "Connectors" below) · `application_status_update` (tier-1 backend for
+Part 5D inbound detection) · `resume_update` (tier-2, diff in approval) ·
+`career_wind_down` (tier-2 bundle; withdrawal emails re-park individually).
 Approve/reject decisions are recorded via DecisionEngine.
 
 Default jobs: `gmail_statement_ingest` (6h, hybrid: saved-map/preset/pdfplumber
@@ -637,7 +659,11 @@ rollup, writes 09_Memory note so chat recalls it next day) · `place_learning`
 `portfolio_review` (monthly 1st, re-analyzes the active career goal's
 portfolio) · `career_goal_stall_check` (daily, advisory nudge only) ·
 `application_followup_check` (every 2 days, one follow-up + auto-ghosting —
-see "Career Autopilot" below).
+see "Career Autopilot" below) · `interview_debrief_scan` (hourly, prompts
+ONCE for a debrief after a career-linked calendar event ends — durable
+prefs-table guard, advisory) · `career_retention` (monthly 3rd, archives
+90-day-old unapplied postings + compacts their events; applications are
+NEVER deleted).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules

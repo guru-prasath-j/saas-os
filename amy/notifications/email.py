@@ -25,11 +25,16 @@ def smtp_configured() -> bool:
     return bool(os.environ.get("SMTP_HOST", "").strip())
 
 
-def send_email(to: str, subject: str, body: str) -> bool:
+def send_email(to: str, subject: str, body: str,
+               message_id: str | None = None) -> bool:
     """Send a plain-text email. Returns True on success, False on any failure.
 
     Never raises — all exceptions are swallowed so callers don't need try/except.
     When SMTP is not configured, returns False immediately without any I/O.
+
+    message_id — optional RFC 2822 Message-ID to stamp on the outgoing mail
+    (CAREER AUTOPILOT Part 5D: send_hr_email records it on the application so
+    an HR reply's In-Reply-To/References header thread-matches back to it).
     """
     if not smtp_configured():
         return False   # silently degrade to in-app-only
@@ -45,6 +50,8 @@ def send_email(to: str, subject: str, body: str) -> bool:
         msg["Subject"] = subject
         msg["From"] = from_addr
         msg["To"] = to
+        if message_id:
+            msg["Message-ID"] = message_id
         msg.set_content(body)
 
         with smtplib.SMTP(host, port, timeout=10) as smtp:

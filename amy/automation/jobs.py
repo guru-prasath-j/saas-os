@@ -103,6 +103,50 @@ def _application_followup_check(ctx: JobCtx) -> dict:
     return followup_check(ctx)
 
 
+def _interview_debrief_scan(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Part 5E: prompts once for a debrief after a
+    career-linked calendar event ends — polling-driven like
+    meeting_prep_scan because 'a meeting just ended' has no push event.
+    No-ops instantly with no interview-stage applications."""
+    from ..agents.reactive import interview_debrief_check
+    return {"prompted": interview_debrief_check(ctx.events(), ctx)}
+
+
+def _career_retention(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Part 5E: monthly hygiene — archive
+    discovered/dismissed postings older than AMY_CAREER_RETENTION_DAYS
+    (default 90) that never became an application, and compact their
+    career.job_discovered event rows. Applications are NEVER deleted:
+    outcome learning depends on full history."""
+    import datetime as _dt
+
+    from .. import config
+    try:
+        days = int(config._env("AMY_CAREER_RETENTION_DAYS", "90"))
+    except ValueError:
+        days = 90
+    cutoff = (_dt.datetime.now(_dt.timezone.utc)
+              - _dt.timedelta(days=days)).isoformat()
+    applied_pids = {a["posting_id"]
+                    for a in ctx.store.list_applications(ctx.user_id)}
+    archived = compacted = 0
+    for p in ctx.store.list_postings(ctx.user_id, limit=10000):
+        if p["status"] not in ("discovered", "dismissed"):
+            continue
+        if (p.get("discovered_at") or "") >= cutoff:
+            continue
+        if p["id"] in applied_pids:
+            continue   # became an application — its posting stays queryable
+        if ctx.store.set_posting_status(ctx.user_id, p["id"], "archived"):
+            archived += 1
+            cur = ctx.collab.conn.execute(
+                "DELETE FROM events WHERE type='career.job_discovered'"
+                " AND payload LIKE ?", (f'%{p["id"]}%',))
+            compacted += cur.rowcount
+    ctx.collab.conn.commit()
+    return {"archived": archived, "events_compacted": compacted}
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -149,6 +193,8 @@ HANDLERS: dict[str, callable] = {
     "portfolio_review": _portfolio_review,
     "job_scout_poll": _job_scout_poll,
     "application_followup_check": _application_followup_check,
+    "interview_debrief_scan": _interview_debrief_scan,
+    "career_retention": _career_retention,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -189,6 +235,8 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("portfolio_review",       {"monthly_day": 1, "at": "10:00"}),
         ("job_scout_poll",         {"every_hours": job_scout_interval_hours}),
         ("application_followup_check", {"every_hours": 48}),
+        ("interview_debrief_scan", {"every_hours": 1}),
+        ("career_retention",       {"monthly_day": 3, "at": "06:15"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

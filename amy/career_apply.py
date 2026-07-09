@@ -30,6 +30,113 @@ _INTEL_FRESH_DAYS = 30
 _FOLLOWUP_STALE_DAYS = 10
 _GHOST_DAYS = 21
 
+# Part 5E: statuses that block a second application at the same company.
+# Everything pre-terminal counts — "accepted" too (you work there now).
+_ACTIVE_APP_STATUSES = ("prepared", "approved", "sent", "response",
+                        "interview", "offer", "accepted")
+
+
+def _reapply_days() -> int:
+    from . import config
+    try:
+        return int(config._env("AMY_CAREER_REAPPLY_DAYS", "60"))
+    except ValueError:
+        return 60
+
+
+def _company_key(company: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", (company or "").lower()).strip()
+
+
+def duplicate_application_block(ctx, posting: dict) -> dict | None:
+    """Part 5E HARD RULE: never a second application at a company that has
+    one in a non-terminal state, or that rejected/ghosted us within
+    AMY_CAREER_REAPPLY_DAYS (default 60). Returns {reason, application_id}
+    when blocked, None when clear. Callers decide override semantics:
+    prepare_application(force=True) is only reachable from the manual
+    route — the agent path never passes force, so for agents this rule is
+    absolute."""
+    company_key = _company_key(posting.get("company") or "")
+    if not company_key:
+        return None
+    now = _dt.datetime.now(_dt.timezone.utc)
+    reapply_days = _reapply_days()
+    for app in ctx.store.list_applications(ctx.user_id):
+        other = ctx.store.get_posting(ctx.user_id, app["posting_id"]) or {}
+        if _company_key(other.get("company") or "") != company_key:
+            continue
+        if app["status"] in _ACTIVE_APP_STATUSES:
+            return {"reason": f"an application at {other.get('company')} is "
+                              f"already active (status: {app['status']})",
+                    "application_id": app["id"]}
+        if app["status"] in ("rejected", "ghosted"):
+            timeline = app.get("timeline") or []
+            last_ts = (timeline[-1]["ts"] if timeline else None) or app.get("updated_at")
+            try:
+                age_days = (now - _dt.datetime.fromisoformat(last_ts)).days
+            except Exception:
+                continue
+            if age_days < reapply_days:
+                return {"reason": f"{other.get('company')} {app['status']} a "
+                                  f"previous application {age_days} day(s) ago — "
+                                  f"re-apply window is {reapply_days} days",
+                        "application_id": app["id"]}
+    return None
+
+
+def _referral_paths(ctx, company: str) -> list[str]:
+    """Part 5E referral check — OWN DATA ONLY, suggestions only: knowledge-
+    graph nodes mentioning the company (the graph's vocabulary is
+    note/email/calendar/task/goal/memory — no person type exists, so an
+    email or note node that names the company IS the warm-path signal,
+    surfaced with its connected nodes for context), plus vault note titles.
+    Never an external lookup, never fabricated; empty when nothing is on
+    file."""
+    from .career_inbound import _company_token
+    token = _company_token(company)
+    if not token:
+        return []
+    hits: list[str] = []
+    try:
+        from pathlib import Path
+
+        from .knowledge_graph.store import GraphStore
+        g = GraphStore(str(Path(ctx.finance_path).parent / "graph.db"))
+        try:
+            for n in g.nodes(limit=2000):
+                if token not in str(n.get("label", "")).lower():
+                    continue
+                neighbors = []
+                for nb in g.neighbors(n["id"])[:2]:
+                    node = g.get_node(nb["id"])
+                    if node and node.get("label"):
+                        neighbors.append(str(node["label"]))
+                ctx_part = f" — linked: {', '.join(neighbors)}" if neighbors else ""
+                hits.append(f"graph {n.get('type', 'node')}: "
+                            f"{n['label']}{ctx_part}")
+        finally:
+            g.close()
+    except Exception:
+        pass
+    try:
+        from .saas import tenancy
+        vault = tenancy.resolve_vault_dir(ctx.user_id)
+        for i, p in enumerate(vault.rglob("*.md")):
+            if i > 500:
+                break
+            if token in p.stem.lower():
+                hits.append(f"vault note: {p.stem}")
+    except Exception:
+        pass
+    # dedup, keep it short — this rides inside an approval body
+    seen: set[str] = set()
+    out = []
+    for h in hits:
+        if h not in seen:
+            seen.add(h)
+            out.append(h)
+    return out[:5]
+
 _DRAFT_SYSTEM = (
     "Write a concise, professional application email for this job posting. "
     "Reference the candidate's showcase projects where genuinely relevant. "
@@ -204,12 +311,20 @@ def _draft_application(ctx, posting: dict, profile: dict, showcase_names: list[s
 # 5. Orchestration — PREPARE then ONE approval
 # ---------------------------------------------------------------------------
 
-def prepare_application(ctx, posting_id: str, goal_id: str | None = None) -> dict:
+def prepare_application(ctx, posting_id: str, goal_id: str | None = None,
+                        force: bool = False) -> dict:
     from . import tools
 
     posting = ctx.store.get_posting(ctx.user_id, posting_id)
     if posting is None:
         return {"error": f"no job posting {posting_id!r} on file"}
+
+    # Part 5E duplicate guard — absolute for agents (they never pass force);
+    # the manual route surfaces the warning + an explicit override.
+    block = duplicate_application_block(ctx, posting)
+    if block is not None and not force:
+        return {"blocked": block["reason"],
+                "duplicate_of": block["application_id"]}
 
     profile = ctx.store.get_career_profile(ctx.user_id) or {}
     target_role = profile.get("target_role") or posting.get("title") or ""
@@ -233,11 +348,17 @@ def prepare_application(ctx, posting_id: str, goal_id: str | None = None) -> dic
     intel_line = (intel["notes"][:300] if intel.get("available") else
                  "No company intel available (no web-search MCP connector "
                  "registered — add one in Account -> MCP Sources to enable this).")
+    referrals = _referral_paths(ctx, posting.get("company") or "")
+    referral_line = ("Possible warm paths (own data only, suggestions only): "
+                     + "; ".join(referrals) if referrals
+                     else "No existing connections to this company found in "
+                          "the knowledge graph or vault.")
     reasoning = (
         f"Channel: {channel_info['channel']} — {channel_info['reasoning']}\n"
         f"Match score: {posting.get('match_score')}\n"
         f"{ats_line}\n"
         f"Company intel (signals, not facts): {intel_line}\n"
+        f"{referral_line}\n"
         f"Draft subject: {draft['subject']}")
 
     ctx._extras["agent_name"] = "application_tracker_agent"
@@ -271,7 +392,8 @@ def prepare_application(ctx, posting_id: str, goal_id: str | None = None) -> dic
         pass
 
     return {"application_id": app_id, "channel": channel_info["channel"],
-           "ats": ats, "company_intel": intel, "draft": draft, "proposal": proposal}
+           "ats": ats, "company_intel": intel, "draft": draft,
+           "warm_paths": referrals, "proposal": proposal}
 
 
 # ---------------------------------------------------------------------------

@@ -853,10 +853,124 @@ passed, same 22-23 pre-existing failures (the known-flaky filesystem-
 watcher test passed this run, same as it did after Part 4 — still not
 this work's doing).
 
+### Part 5D — Inbound response detection (DONE)
+
+`amy/career_inbound.py` (new flat module) closes the tracking loop:
+sent → response/interview/offer/rejected happens automatically from the
+HR reply itself. Design decision honored: 5D references an interview-prep
+pack and a Part 5C offer analysis that DO NOT exist in this codebase (no
+5A-5C was ever built here) — per the resolved scope decision, those wire-in
+points are event-based extension hooks today: the
+`career.application_status_changed` emit plus a high-priority notification
+(`career_interview_invite` / `career_offer_detected`) are exactly where
+5A-5C subscribe when they land. Nothing fabricated in the meantime.
+
+- Rides the EXISTING Gmail sync (`sync_gmail(..., inbound_hook=)`) — one
+  extra targeted `messages.list` (`from:(contact OR contact-domain ...)`)
+  inside the same pass, never a second poll loop, and never eating the
+  finance parser's message budget. Wired at all three live call sites
+  (app.py `_run_gmail_poll`, both finance-router sync endpoints);
+  `build_inbound_hook()` returns None with no open post-send applications,
+  so the common path is zero-overhead.
+- Matching, strongest first: (a) reply-thread — `send_hr_email` now stamps
+  + records an RFC 2822 Message-ID (`applications.thread_refs` JSON,
+  `{"sent": [...], "seen": [...]}`) and the inbound In-Reply-To/References
+  is checked against it; (b) exact sender == recorded contact; (c) contact
+  domain / conservative company-token-vs-registrable-domain-label match.
+  Unmatched HR-looking mail (newsletters, job-board digests) is ignored —
+  never classified, never parsed. Own outbound copies skipped by From.
+- Classification is LOCAL-ONLY (`sensitive=True` — reply bodies can carry
+  compensation detail), degrading to a deterministic keyword ladder where
+  rejection outranks interview ("thank you for interviewing…
+  unfortunately" is a rejection). Status updates go through a new
+  `application_status_update` executor at tier 1 (executed + notification
+  — it's Amy's own tracking data, not an external action), journal to the
+  vault, and emit the event. The ladder only moves forward; terminal stays
+  terminal; `thread_refs["seen"]` makes a re-fetched message a no-op, so
+  sent→response moves exactly once per reply, not once per poll window.
+- NEVER auto-replies: the module drafts nothing, and a test pins that no
+  send_hr_email approval appears from handling any reply.
+
+Tests: `tests/test_career_inbound.py` (15 passing, no Gmail/no LLM — the
+hook is transport-free by construction): thread-match moves sent→response
+exactly once; sender/domain/company-token matching; newsletter + own-copy
+ignored; rejection never triggers a follow-up (and beats the interview
+keyword); ladder never demotes; interview/offer extension-point
+notifications; status-changed event emitted; never-auto-reply; no-open-
+apps → no hook; kill switch (`AMY_AGENT_APPLICATION_TRACKER`); query
+covers contacts + domains.
+
+### Part 5E — Pipeline safety + lifecycle (DONE)
+
+- **Duplicate-application guard (HARD RULE)**:
+  `career_apply.duplicate_application_block()` — same company (normalized)
+  with a non-terminal application, or rejected/ghosted within
+  `AMY_CAREER_REAPPLY_DAYS` (default 60), blocks `prepare_application`.
+  The agent path (job_scout auto-propose) never passes `force` — absolute;
+  the manual route (`POST /api/career/postings/{id}/apply`) 409s with the
+  reason + `?force=true` override. One pre-existing Part 5 test updated:
+  the guard now catches a repeat prepare before the approval-dedup layer
+  even sees it.
+- **Cross-source fuzzy dedup**: `add_posting_if_new` falls back from URL
+  to normalized title+company+location; a fuzzy hit keeps the FIRST-seen
+  row and appends `{source, url}` to a new `job_postings.alt_sources`
+  column (`sources_count` computed on read). Same job from two boards →
+  one row, one event, sources=2 (pinned by test).
+- **Goal wind-down**: "accepted" added to the application status ladder
+  (terminal success). New `application_lifecycle` reactive agent (same
+  `AMY_AGENT_APPLICATION_TRACKER` switch) subscribes to
+  `career.application_status_changed` and proposes ONE tier-2
+  `career_wind_down` bundle (dedup `winddown_{goal_id}`): close the career
+  goal — which is itself what deactivates JobScoutSensor + the career
+  agents, they all no-op without an active career goal — archive open
+  postings, and optionally propose withdrawal emails for other active
+  applications, each of which re-parks as its OWN external-pinned
+  send_hr_email approval on bundle execution. Nothing winds down silently.
+- **Interview debrief**: `interview_debrief_check` (reactive.py) driven by
+  the new `interview_debrief_scan` job (hourly — "a meeting just ended"
+  has no push event, same structural choice as meeting_prep_scan): a
+  calendar event that ENDED in the last 6h whose title matches an
+  interview/offer-stage application's company prompts ONCE (prefs-table
+  guard `debrief_prompted_{event_id}` — durable, not just same-day) and
+  pre-creates the note skeleton `Interview Debrief - {company} - {date}`.
+  Advisory, skippable, never re-prompts.
+- **Master resume evolution**: after portfolio analysis produces
+  repo-evidenced bullets, `_propose_resume_evolution` proposes a
+  `career_profile.resume_text` update — tier 2, unified diff in the
+  approval body, `resume_update` executor applies on approve, deduped per
+  month. ATS gap keywords are deliberately NOT inserted: the portfolio
+  doesn't evidence them, and injecting them would put claims in the
+  user's mouth. Skips honestly with no master resume on file.
+- **Referral check**: `_referral_paths` in PREPARE — knowledge-graph nodes
+  mentioning the company + vault note titles, surfaced as "possible warm
+  paths" in the approval reasoning. OWN DATA ONLY, suggestions only. Note:
+  the graph vocabulary is note/email/calendar/task/goal/memory — there IS
+  no person node type, so a mentioning email/note node (with its linked
+  nodes as context) is the honest signal, discovered while writing the
+  test against the real GraphStore.
+- **Retention**: new `career_retention` job (monthly day 3): archive
+  discovered/dismissed postings older than `AMY_CAREER_RETENTION_DAYS`
+  (90) that never became an application + compact their
+  `career.job_discovered` event rows. Applications are NEVER deleted —
+  outcome learning depends on full history.
+
+Tests: `tests/test_career_lifecycle.py` (16 passing) — guard blocks
+active/recent-rejection, allows aged/different-company; agent absolute vs
+manual override; fuzzy dedup merges (and distinct locations stay
+separate); accepted → exactly one wind-down bundle (dedup pinned);
+execution closes the goal + archives postings + the scout's next poll is
+a no-op; withdrawals park as individual tier-2 sends; debrief prompts
+exactly once and ignores unrelated meetings; resume evolution
+tier-2-with-diff + approve applies it + honest no-resume skip; referral
+check finds graph mentions/empty is honest; retention archives old
+unapplied postings, keeps applications.
+
 ## CAREER AUTOPILOT — summary
 
 All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3
-`c4b7054`, Part 4 `5c14c51`, Part 5 `c254613`, Part 6 `f76bebe`). New modules:
+`c4b7054`, Part 4 `5c14c51`, Part 5 `c254613`, Part 6 `f76bebe`;
+follow-ups: Part 5D + 5E — commits recorded below their sections once
+landed). New modules:
 `amy/tools/career_tools.py`, `amy/career_scout.py`, `amy/career_apply.py`,
 `amy/saas/routers/career.py`; extended `amy/automation/{store,executors,
 orchestrator,jobs,closers}.py`, `amy/agents/reactive.py`,
