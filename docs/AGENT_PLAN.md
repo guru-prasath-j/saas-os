@@ -464,7 +464,7 @@ port 8935); no LLM-fabricated postings.
 | 3 | Portfolio analyst (GitHub ↔ career) | DONE | c4b7054 |
 | 4 | Job scout + match scoring | DONE | 5c14c51 |
 | 5 | Application pipeline (prepare → approve → send → track) | DONE | c254613 |
-| 6 | Career tab + briefing integration | DONE | |
+| 6 | Career tab + briefing integration | DONE | f76bebe |
 
 ### Pre-flight findings (verified before planning Parts 1-2)
 
@@ -856,7 +856,7 @@ this work's doing).
 ## CAREER AUTOPILOT — summary
 
 All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3
-`c4b7054`, Part 4 `5c14c51`, Part 5 `c254613`, Part 6 below). New modules:
+`c4b7054`, Part 4 `5c14c51`, Part 5 `c254613`, Part 6 `f76bebe`). New modules:
 `amy/tools/career_tools.py`, `amy/career_scout.py`, `amy/career_apply.py`,
 `amy/saas/routers/career.py`; extended `amy/automation/{store,executors,
 orchestrator,jobs,closers}.py`, `amy/agents/reactive.py`,
