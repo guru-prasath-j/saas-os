@@ -969,8 +969,13 @@ unapplied postings, keeps applications.
 
 All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3
 `c4b7054`, Part 4 `5c14c51`, Part 5 `c254613`, Part 6 `f76bebe`;
-follow-ups: Part 5D + 5E — commits recorded below their sections once
-landed). New modules:
+follow-ups: Part 5D + 5E together in `e673e9a` — their store/executors/
+reactive changes interleave, so one commit is the honest boundary. Note:
+the "pre-existing failures" baseline drifted from the 22-23 recorded at
+Part 6 to 31 on the dev machine — re-verified for 5D/5E by running the
+full suite against a stashed baseline of `e75b342`: identical failure
+list, zero new failures, delta only the documented flaky watcher test).
+New modules:
 `amy/tools/career_tools.py`, `amy/career_scout.py`, `amy/career_apply.py`,
 `amy/saas/routers/career.py`; extended `amy/automation/{store,executors,
 orchestrator,jobs,closers}.py`, `amy/agents/reactive.py`,
