@@ -286,8 +286,15 @@ def connectors_status(user: User = Depends(current_user)):
         except Exception:
             supervisor_procs, port_open = {}, (lambda p: False)
 
+        # Users register sources under free-form names ("Hacker News",
+        # "Dev.to") — strip non-alphanumerics before matching descriptor keys
+        # ("hackernews", "devto") or the row never links up.
+        def _squash(name: str) -> str:
+            return "".join(ch for ch in name.lower() if ch.isalnum())
+
         for label, key, port in _LOCAL_MCP_DESCRIPTORS:
-            row = next((r for k, r in registered_by_key.items() if key in k), None)
+            row = next((r for k, r in registered_by_key.items()
+                        if key in _squash(k)), None)
             proc = supervisor_procs.get(key)
             proc_alive = bool(proc is not None and proc.poll() is None)
             reachable = proc_alive or port_open(port)
@@ -314,7 +321,7 @@ def connectors_status(user: User = Depends(current_user)):
         local_keys = {k for _l, k, _p in _LOCAL_MCP_DESCRIPTORS}
         for row in rows:
             key = row.name.strip().lower()
-            if any(lk in key for lk in local_keys):
+            if any(lk in _squash(key) for lk in local_keys):
                 continue   # already covered above as a local server
             prefix = "github_" if "github" in key else ("plane_" if "plane" in key else None)
             reg_tools = ([{"name": t["name"], "risk": t["risk"]}
