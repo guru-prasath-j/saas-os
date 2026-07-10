@@ -5,11 +5,75 @@ Merges chronological events from notes, activities, events, decisions, and
 source, keyword search, grouping by day/week/month, and summaries.
 
 Backward-compatible: build(notes, limit) keeps its original behavior.
+
+Connector items are cached per user with stale-while-revalidate semantics
+(_connector_items below): GmailProvider.list() alone is one messages.list
+plus one messages.get PER MESSAGE, serially — pulling that live on every
+timeline render made the tab take 30-90s (found live). The timeline now
+never blocks on Google: a cold cache returns immediately (connector items
+appear on the next refresh once the background fill lands), a warm one is
+instant, and a stale one is served as-is while a background thread
+refreshes it.
 """
 from __future__ import annotations
 
 import json
+import threading
+import time
 from collections import Counter, defaultdict
+
+_CONNECTOR_TTL_SECONDS = 600
+_CONNECTOR_EMAIL_LIMIT = 30          # per-message HTTP round-trips — keep small
+_connector_cache: dict[str, tuple[float, list]] = {}
+_connector_refreshing: set[str] = set()
+_connector_lock = threading.Lock()
+
+
+def _fetch_connector_items(connector_dir) -> list[dict]:
+    items: list[dict] = []
+    try:
+        from ..connectors import ConnectorRegistry
+        reg = ConnectorRegistry(connector_dir)
+        # per-kind try/except: one failing provider must not drop the others
+        for kind, limit in (("email", _CONNECTOR_EMAIL_LIMIT),
+                            ("calendar", 100), ("tasks", 100)):
+            try:
+                for it in reg.list(kind, mode="private", limit=limit):
+                    if it.get("ts"):
+                        items.append({"ts": str(it["ts"]), "source": kind,
+                                      "kind": kind, "text": it.get("title", "")})
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return items
+
+
+def _connector_items(connector_dir) -> list[dict]:
+    """Cached connector items (see module docstring). Never blocks: a miss
+    or stale entry kicks a background refresh and returns what's on hand."""
+    key = str(connector_dir)
+    now = time.time()
+    with _connector_lock:
+        hit = _connector_cache.get(key)
+        fresh = hit is not None and (now - hit[0]) < _CONNECTOR_TTL_SECONDS
+        should_refresh = not fresh and key not in _connector_refreshing
+        if should_refresh:
+            _connector_refreshing.add(key)
+
+    if should_refresh:
+        def _refill():
+            try:
+                items = _fetch_connector_items(connector_dir)
+                with _connector_lock:
+                    _connector_cache[key] = (time.time(), items)
+            finally:
+                with _connector_lock:
+                    _connector_refreshing.discard(key)
+        threading.Thread(target=_refill, daemon=True,
+                         name=f"timeline-connectors-{key[-12:]}").start()
+
+    return hit[1] if hit else []
 
 
 def _short(payload: str, n: int = 80) -> str:
@@ -63,16 +127,9 @@ class TimelineEngine:
                 if ts:
                     items.append({"ts": str(ts), "source": "note", "kind": "note", "text": n.title})
         if connector_dir:
-            try:
-                from ..connectors import ConnectorRegistry
-                reg = ConnectorRegistry(connector_dir)
-                for kind in ("email", "calendar", "tasks"):
-                    for it in reg.list(kind, mode="private", limit=100):
-                        if it.get("ts"):
-                            items.append({"ts": str(it["ts"]), "source": kind, "kind": kind,
-                                          "text": it.get("title", "")})
-            except Exception:
-                pass
+            # cached + background-refreshed — the live Google pull here was
+            # what made the Timeline tab hang for 30-90s (module docstring)
+            items.extend(_connector_items(connector_dir))
 
         if sources:
             keep = set(sources)
