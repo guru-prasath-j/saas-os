@@ -1069,7 +1069,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | DONE | 86f9c7f |
 | L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | DONE | 5ec3292 |
 | L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | DONE | f014e07 |
-| L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | PENDING | |
+| L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | DONE | (pending commit) |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | PENDING | |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | PENDING | |
 | L6 | Life review + integration (monthly vault note, briefing Life section) | PENDING | |
@@ -1464,3 +1464,112 @@ switch while other agents still run.
 
 Full suite: 696 passed (18 new), same 22 pre-existing failures
 (unchanged baseline).
+
+### Part L9 — Place opportunity triggers (DONE)
+
+`amy/life/opportunity_rules.py` — a plain registry (`RULES: dict[str,
+callable]`, `@rule("name")` decorator, same idiom as
+`amy/automation/executors.py`'s `EXECUTORS`/`@register`) so new rule
+types are added here only, never touching the dispatcher — satisfied
+literally: `amy/life/opportunity.py`'s `dispatch()` iterates `RULES`
+generically and has zero rule-specific code. Each rule is `(ctx, place)
+-> dict | None`, `place = {place_id, name, kind}` (no coordinates ever
+reach this module — the dispatcher only forwards the
+`context.place_entered` payload's identity fields).
+
+Anti-nag has four independent controls, exactly as specified:
+- **dedup per rule×place×need**: `NotificationStore.exists_today()` keyed
+  on `life_opp_{rule}_{place_id}_{need_key}`.
+- **`AMY_LIFE_OPP_MAX_PER_DAY`**: a `prefs`-table counter per calendar
+  day, checked before evaluating each rule.
+- **grace suppression**: the most recently COMPUTED `life_metrics` row's
+  grace flag — today's own `day_type` isn't known until tomorrow's job
+  run (L2's aggregator only computes "yesterday"), so yesterday's grace
+  is the honest proxy for "currently in a low-signal/away stretch."
+- **drift pruning per rule category (two dismissals → silenced)**: a
+  NEW mechanism, not `amy/automation/drift.py`'s approval-rejection
+  signals — L9 fires notifications, not approvals, so there is nothing
+  for `drift.py`'s `_signals()` to see. A `POST
+  /api/life/opportunities/{id}/dismiss` route marks the notification read
+  AND increments a `prefs` counter (`life_opp_dismiss_{rule}`); the
+  dispatcher checks that counter (`>=2`) before ever evaluating that rule
+  again. Every notification's `related_entity` carries the rule name so
+  dismiss can find it back.
+
+`gym_prompt` is the one rule that's a REAL write (tier 0, one-tap
+check) rather than an advisory notification, per hard rule 3 ("L9 nudges
+are dismissible notifications, never writes" — with this one named
+exception). It routes through `submit_action` directly, exactly like
+every other auto-completion in this codebase, never through the tools
+registry/AGENT_GATE.
+
+Per-rule grounding (each checked against real signals, or explicitly
+left a documented no-op where none exist):
+- **grocery**: a habit titled "cook" exists + no grocery-token merchant
+  transaction in 10 days.
+- **pharmacy**: an open `commitments` row titled "refill" — refill
+  commitments don't exist until L8 creates them, so this honestly no-ops
+  until then (L8's spec explicitly adds this).
+- **return_window**: fuzzy-matches the place name against open
+  `return_window`/`warranty` commitments' merchant/title — a direct
+  live match rather than depending on `place_learning`'s correlation
+  (confirmed in the L1/L2 pre-flight findings to be computed transiently,
+  never persisted, so unsuited to a real-time per-entry check anyway).
+- **cadence** (refuel/etc.): `patterns.merchant_cadences()` fuzzy-matched
+  against the place name, fires when overdue past `gap_days` + tolerance
+  + a small slack.
+- **spend_caution extend**: reuses the existing kind→budget-category
+  alias map (`_KIND_BUDGET_ALIASES`, same idea as `_budget_agent`'s) at
+  `AMY_LIFE_SPEND_CAUTION_PCT` (85%, deliberately below the existing
+  `_budget_agent`'s 90% warn threshold — an earlier, place-triggered
+  heads-up ahead of the stricter categorical one).
+- **cafe_habit**: an existing home-brew `txn_absence` link with ≥4 missed
+  check-ins in the last 7 days.
+- **subscription_brand**: fuzzy-matches the place name against active
+  subscription names.
+- **person_proximity**: **documented permanent no-op** — no
+  person↔place association exists anywhere in this codebase
+  (`person_cadences` tracks merchant/transfer names, not locations);
+  compliant with "a trigger with no pending need never fires" rather than
+  a violation of it.
+- **gym_prompt**: median hour-of-day from past `geo_visits` at a
+  gym-kind place (±1h "usual time" window) + an existing
+  `geo_place_visit` link + today's check-in still unmarked.
+- **office_gap**: uses the REAL `meet_upcoming_meetings` and
+  `plane_list_tasks` tools (both already exist and return genuine data,
+  unlike L2's still-stubbed `meeting_count`/`focus_blocks` columns —
+  a different gap than L3's meeting-load agent hits) to compute an actual
+  ≥45-minute gap before the next meeting plus a task due today.
+- **travel_mode**: reuses `aggregator._has_home_signal`/`_home_place_id`/
+  `infer_home_cell` directly (no home signal today AND yesterday was
+  already `day_type='away'`, so it fires once travel is ESTABLISHED, not
+  on a single day's noise) + open commitments titled "travel"/"flight" +
+  a one-line home-currency note from the jurisdiction pack (no live FX
+  conversion — there's no specific amount to convert at a place-entry
+  moment, so a currency-code line is the honest scope for "FX line").
+- **custodial_bank**: reuses `amy/finance/custodial.py::run_validation()`
+  directly (the exact "pending custodial validation" signal — no new
+  validation logic invented).
+
+No LLM anywhere in `opportunity_rules.py` — every rule is a deterministic
+local check (hard rule 6's "pure local rules, no LLM" satisfied by simply
+not needing one, not by a separate phrasing-sanitization layer).
+
+Tests: `tests/test_life_opportunity.py` (18 passing) — the spec's
+explicit L9 test list: rule fires only with a real need (and the
+converse: no need → no fire); dedup across repeated entries; daily cap;
+two dismissals silence a category (and a third place stays silent);
+grace-day suppression; no-kind place skip; no coordinates in the
+notification body; gym one-tap checks exactly once at tier 0 (two
+dispatches, one approval row). Plus direct rule-level tests for
+return_window, cadence, spend_caution, subscription_brand, custodial_bank
+(honest None with no configured commitment — never a false positive),
+person_proximity's permanent None, pharmacy's no-op-until-L8, and
+travel_mode; a reactive-agent wiring smoke test confirming
+`context.place_entered` reaches the dispatcher end-to-end.
+
+Full suite: 713 passed, 23 failed — the same 22 pre-existing baseline
+failures plus `test_live_watcher.py::test_live_watcher_flow`, which
+passes in isolation (confirmed) and matches the "known-flaky filesystem-
+watcher timing test" documented recurring across CONNECTOR COMPLETION
+Part 3 and multiple CAREER AUTOPILOT parts — not this work's doing.

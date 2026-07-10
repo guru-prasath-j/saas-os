@@ -48,6 +48,19 @@ def list_life_metrics(from_: str = Query("", alias="from"), to: str = "",
         cdb.close()
 
 
+@router.post("/api/life/opportunities/{notification_id}/dismiss")
+def dismiss_opportunity(notification_id: str, user: User = Depends(current_user)):
+    from ...life.opportunity import dismiss
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        result = dismiss(ctx, notification_id)
+        if not result.get("ok"):
+            raise HTTPException(status_code=404, detail=result.get("error", "not found"))
+        return result
+    finally:
+        cdb.close()
+
+
 @router.get("/api/life/habits/link-suggestions")
 def link_suggestions(title: str, user: User = Depends(current_user)):
     from ...life.habits import suggest_link_for_title

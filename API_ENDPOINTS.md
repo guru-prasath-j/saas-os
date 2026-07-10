@@ -314,6 +314,7 @@ Full spec: `docs/LIFE_AUTOPILOT.md`.
 | GET | `/api/life/habits/{habit_id}/links` | List links for a habit. |
 | DELETE | `/api/life/habit-links/{link_id}` | Remove a link (habit stays fully manual again). |
 | GET | `/api/life/habits/link-suggestions` | `?title=` — keyword-matched signal suggestion for the Add-habit flow, or `null`. Suggestion only, never forced. |
+| POST | `/api/life/opportunities/{notification_id}/dismiss` | Marks the notification read + increments that rule category's dismiss counter (2 → permanently silenced). |
 
 Registry tools:
 
@@ -333,7 +334,8 @@ day-close habit-link evaluation + adaptation checks, idempotent),
 
 Kill switches: `AMY_AGENT_LIFE_HEALTH`, `AMY_AGENT_LIFE_HABITS`,
 `AMY_AGENT_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,ADMIN,
-SEASONAL,SOCIAL}`. Master switch: `AMY_LIFE_AUTOPILOT`.
+SEASONAL,SOCIAL}`, `AMY_AGENT_LIFE_OPPORTUNITY`. Master switch:
+`AMY_LIFE_AUTOPILOT`.
 
 Backfill: `python -m amy.life.backfill <email> <start-date> <end-date>`.
 

@@ -1408,6 +1408,23 @@ def _life_agent_noop(events, ctx):
     return
 
 
+def _life_opportunity_agent(events, ctx):
+    """LIFE AUTOPILOT L9: the ONE dispatcher for place-opportunity rules
+    (amy/life/opportunity_rules.py). Subscribes to context.place_entered
+    (dwell only — existing geo hysteresis already filters pass-bys).
+    Never touches coordinates — only place_id/name/kind from the payload,
+    same rail as _errand_agent/_habit_signals_agent."""
+    from ..life import opportunity as life_opportunity
+
+    def on_place_entered(ev):
+        try:
+            life_opportunity.dispatch(ctx, events, ev.get("payload") or {})
+        except Exception as exc:
+            _report_error(events, "life_opportunity", exc)
+
+    events.subscribe("context.place_entered", on_place_entered)
+
+
 def _meeting_prep_agent(events, ctx):
     """No-op subscription: unlike every other agent here, meeting_prep has
     no natural triggering EVENT — "a meeting is starting soon" only exists
@@ -1577,4 +1594,6 @@ def register_reactive_agents(events, ctx) -> list[str]:
     for _name in _LIFE_INFERENCE_AGENT_NAMES:
         if config.agent_enabled(_name):
             _once(_name, _life_agent_noop)
+    if config.agent_enabled("life_opportunity"):
+        _once("life_opportunity", _life_opportunity_agent)
     return sorted(seen)

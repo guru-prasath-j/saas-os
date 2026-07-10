@@ -762,6 +762,29 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   calendar signal source built yet) so meeting-load's calendar-block
   half is a documented no-op; `seasonal_notes` in the jurisdiction packs
   had zero Python readers before this — this agent is the first consumer.
+- `amy/life/opportunity_rules.py` + `amy/life/opportunity.py` (L9) — a
+  plain registry (`RULES`, `@rule("name")`, same idiom as executors.py's
+  `EXECUTORS`) of 12 `(ctx, place) -> dict|None` place-triggered checks;
+  the dispatcher (`dispatch()`, wired via the `life_opportunity` reactive
+  agent on `context.place_entered`) iterates the registry generically —
+  new rule types never touch it. Four independent anti-nag controls:
+  dedup per rule×place×need (`NotificationStore.exists_today`),
+  `AMY_LIFE_OPP_MAX_PER_DAY` (a `prefs` counter), grace suppression
+  (yesterday's `life_metrics.grace` — today's own day_type isn't known
+  until tomorrow's job run), and drift pruning per rule category (two
+  dismissals silence a rule permanently — a NEW `prefs`-counter mechanism
+  via `POST /api/life/opportunities/{id}/dismiss`, distinct from
+  `amy/automation/drift.py`'s approval-rejection signals since L9 fires
+  notifications, not approvals). `gym_prompt` is the one rule that's a
+  real tier-0 write (one-tap habit check) rather than an advisory
+  notification, per the spec's named exception — routed through
+  `submit_action` directly like every other auto-completion. Known
+  permanent no-ops (never fire, by honest design not bug):
+  `person_proximity` (no person↔place association exists anywhere),
+  `pharmacy` (refill commitments don't exist until L8 creates them).
+  `custodial_bank` reuses `amy/finance/custodial.py::run_validation()`
+  directly; `office_gap` uses the real `meet_upcoming_meetings`/
+  `plane_list_tasks` tools (unlike L2's still-stubbed calendar columns).
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -902,7 +925,7 @@ Kill switches: `AMY_AGENT_BUDGET` / `_SUBSCRIPTION` / `_COMPLIANCE` /
 `_SCREENING` / `_OBLIGATION` / `_ERRAND` / `_LEARNING` / `_PR_TASK` /
 `_MEETING_PREP` / `_LIFE_HEALTH` / `_LIFE_HABITS` /
 `_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,ADMIN,SEASONAL,
-SOCIAL}` (LIFE AUTOPILOT L1/L3/L4, below).
+SOCIAL}` / `_LIFE_OPPORTUNITY` (LIFE AUTOPILOT L1/L3/L4/L9, below).
 
 ## LLM Routing
 
