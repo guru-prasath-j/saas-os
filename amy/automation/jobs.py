@@ -112,6 +112,15 @@ def _interview_debrief_scan(ctx: JobCtx) -> dict:
     return {"prompted": interview_debrief_check(ctx.events(), ctx)}
 
 
+def _github_projects_sync(ctx: JobCtx) -> dict:
+    """GitHub → vault project notes, ADDITIONS ONLY (amy/projects_sync.py):
+    a new repo gets a 01_Profile/Projects note in the existing frontmatter
+    shape; notes already covering a repo are never touched. No-ops cleanly
+    without a GitHub connector."""
+    from ..projects_sync import github_projects_sync
+    return github_projects_sync(ctx)
+
+
 def _career_retention(ctx: JobCtx) -> dict:
     """CAREER AUTOPILOT Part 5E: monthly hygiene — archive
     discovered/dismissed postings older than AMY_CAREER_RETENTION_DAYS
@@ -307,6 +316,7 @@ HANDLERS: dict[str, callable] = {
     "job_scout_poll": _job_scout_poll,
     "application_followup_check": _application_followup_check,
     "interview_debrief_scan": _interview_debrief_scan,
+    "github_projects_sync": _github_projects_sync,
     "career_retention": _career_retention,
     "health_bootstrap_check": _health_bootstrap_check,
     "life_metrics_daily": _life_metrics_daily,
@@ -355,6 +365,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("application_followup_check", {"every_hours": 48}),
         ("interview_debrief_scan", {"every_hours": 1}),
         ("career_retention",       {"monthly_day": 3, "at": "06:15"}),
+        ("github_projects_sync",   {"daily_at": "05:45"}),
         ("health_bootstrap_check", {"daily_at": "06:05"}),
         ("life_metrics_daily",     {"daily_at": "00:30"}),
         ("life_inference_scan",    {"daily_at": "10:00"}),
