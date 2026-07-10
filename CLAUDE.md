@@ -39,7 +39,18 @@ Primary: **Finance CFO** — CSV/XLS/PDF import, Gmail sync, budgets, subscripti
 amy/
   config.py              env vars (.env.personal → .env, override=False, first wins)
   llm.py                 LLMRouter: nvidia→openai→groq→ollama→template
-  context.py             ContextModule: rolling event window for LLM injection
+  context.py             ContextModule: rolling event window for LLM prompt
+                         injection, manually fed by ONE call site
+                         (automation/orchestrator.py::_context_block(), goal
+                         planning only) — not a general-purpose "context
+                         engine" and not pub/sub (its old .attach() bus
+                         subscription had zero callers and was removed).
+                         Chat context assembly is a separate, federated path:
+                         CollabMaster.handle() (collab/orchestrator.py)
+                         stitches MemoryRecall.context_block() + FinanceEngine
+                         .context_block() + captures.context_block() + a live
+                         Plane MCP call directly — GeoStore/patterns.py feed
+                         neither path, only reactive agents via events.
   vault_watcher.py       VaultWatcher: mtime-poll, emits vault.note_edited
   finance/
     engine.py            FinanceEngine: SQLite wrapper
@@ -47,6 +58,11 @@ amy/
     afford.py            "Can I afford this?" logic
     budget_suggest.py    LLM-backed budget cap suggestions (income+spend+location)
     subscription_detect.py  Recurring charge detector (rule pre-filter → LLM confirm)
+    investment_detect.py Recurring SIP/broker debit detector (same rule→LLM
+                         pattern; cost_basis = sum of contributions seen,
+                         current_value defaults to it — no live price feed)
+    income_detect.py     Recurring income-credit detector (same rule→LLM
+                         pattern; excludes interest/refund/cashback outright)
     custodial.py         Custodial account logic (SBI-style, never pollutes income)
     custodial_sheets.py  Google Sheets disbursement export
     sync/
@@ -190,7 +206,17 @@ amy/
                          agents/reactive.py:_learning_agent. Full detail:
                          "Learning Feed" section below.
   memory/writer.py       MemoryWriter: idempotent vault journaling (daily + atomic notes)
-  knowledge_graph/store.py  GraphStore: typed nodes+edges, edge UPSERT with timestamps
+  knowledge_graph/store.py  GraphStore: typed nodes+edges (note/email/
+                         calendar/task/goal/memory), edge UPSERT with
+                         timestamps. Distinct from amy/knowledge/'s own
+                         relationships.py::RelationshipEngine below — that
+                         one is notes-only (wiki-links + keyword overlap),
+                         this one is cross-source.
+  knowledge/             Vault RAG (embeddings/retrieval) — chunking.py,
+                         embeddings.py, retrieval.py, search.py, metadata.py,
+                         relationships.py (notes-only relationship graph, see
+                         above), confidence.py. Not covered elsewhere in this
+                         file; read the module docstrings for detail.
   connectors/
     mcp.py                MCPConnector: generic MCP client (list_tools/call_tool),
                           Layer 1 of the connector architecture — no per-source code
@@ -311,10 +337,12 @@ PATCH/DELETE      /api/finance/subscriptions/{sid}
 
 # Investments
 POST/GET          /api/finance/investments
+POST              /api/finance/investments/suggestions       # detect SIP/broker debits from transactions
 PATCH/DELETE      /api/finance/investments/{iid}
 
 # Income
 POST/GET          /api/finance/income
+POST              /api/finance/income/suggestions            # detect recurring salary/retainer credits
 DELETE            /api/finance/income/{sid}
 
 # Utilities
@@ -510,6 +538,56 @@ official `api.githubcopilot.com/mcp` and `mcp.plane.so` servers).
 ```
 GET               /api/connectors/status
 ```
+
+## Operational Layer — migration status
+
+The pre-SaaS "Operational Layer" (OL) was an earlier attempt at unifying
+external-system state (entity registry, connector lifecycle/health, sync,
+event replay) behind one façade. Most of it has since been superseded by
+the connector/sensor/reactive-agent architecture documented above. Status
+per piece, so this doesn't have to be re-derived by tracing imports again:
+
+- **Removed** (`amy/operational/layer.py`/`state.py`/`connectors.py`/
+  `sync.py`/`replay.py`/`agent.py`/`models.py`/`scheduler.py`, the
+  `/api/ops/*` routes in `saas/routers/memory.py`, `app.py`'s
+  `run_ops_maintenance` call, and their 5 dedicated test files): the
+  `OperationalLayer` façade had a real, passing test suite but was never
+  wired to any frontend call site — confirmed via grep of `index.html`
+  before deletion. `amy/agents/family.py` (an orphaned duplicate of
+  `folders.py`'s `FamilyAgent`, never imported anywhere) was removed for
+  the same reason. The `op_entities`/`op_connector_state` table
+  definitions remain in `collab/db.py` (idempotent `CREATE TABLE IF NOT
+  EXISTS`, harmless if unused) — not worth a migration to drop.
+- **Kept — still load-bearing**: `amy/operational/sensors.py` (`Sensor`/
+  `SensorRegistry` base classes — GmailSensor, `connectors/sensors.py`'s
+  GitHubSensor/PlaneSensor, `career_scout.py`'s JobScoutSensor, and
+  `learning_feed/sensor.py`'s LearningFeedSensor all subclass `Sensor`
+  from here) and `amy/sensors/github_sensor.py` + `github_service.py` +
+  `github_models.py` (the ORIGINAL GitHub sensor — NOT dead: `amy/sensors/
+  mcp_sensor.py::_poll_github` still calls it, driven by `app.py`'s live
+  `_mcp_poll_loop` (`AMY_MCP_POLL_MINUTES`, default 30) for any promoted
+  GitHub MCP connector, firing a real `mcp_activity` notification. Its
+  `github.NEW_*` events have zero reactive-agent subscribers — see quirk
+  20's event-bus-factory note — which is a real gap (nothing reacts to
+  them beyond that one notification) but not the same thing as dead code;
+  don't delete it on that basis alone.
+- **Also kept, unrelated naming collision**: `amy/agents/folders.py`'s
+  persona sub-agents (HomeAgent/ProfileAgent/ProjectsAgent/FamilyAgent/
+  FinancesAgent/CareerAgent/ResourcesAgent/JobSearchAgent/KnowledgeAgent/
+  CapturesAgent) are NOT OL stubs awaiting real logic — they're the live
+  implementation behind `POST /api/ask` (`amy/engine.py::Engine.master`,
+  a `MasterAgent` from `amy/agents/master.py`) whenever `AMY_DYNAMIC_AGENTS`
+  is unset/false (the default — confirmed neither `.env` nor
+  `.env.personal` sets it), which is separate from `pkos.master.MasterAgent`
+  (a different class) that backs `POST /api/collab/ask` via `CollabMaster`.
+  Two different `CareerAgent` classes exist in this codebase for the same
+  reason: `amy/agents/folders.py::CareerAgent` (persona-only, `/api/ask`)
+  and `amy/agents/career.py::CareerAgent` (the "Legacy conflict, resolved"
+  one below, wired into `CollabMaster`/`/api/collab/ask`) — don't conflate
+  them when tracing a career-related chat answer.
+- **Not yet audited**: `amy/agents/knowledge.py` — grepped as unreferenced
+  by any import during this pass, but wasn't part of the OL removal scope;
+  confirm before deleting.
 
 ## Career Autopilot
 

@@ -30,6 +30,13 @@ class ProgressBody(BaseModel):
     duration_sec: float | None = None
 
 
+class CaptureBody(BaseModel):
+    title: str
+    note: str = ""
+    focus_id: str | None = None
+    url: str = ""
+
+
 _COMPLETE_AT = 0.9   # ≥90% watched counts as completed
 
 
@@ -264,3 +271,69 @@ def save_item(item_id: str, user: User = Depends(current_user)):
         note = None   # saving the flag already succeeded; the note is best-effort
 
     return {"saved": True, "id": item_id, "note": note}
+
+
+@router.post("/api/learning-feed/capture")
+def capture_item(body: CaptureBody, user: User = Depends(current_user)):
+    """Manual learning capture — 'I learned X today', independent of the
+    auto-fetched MCP feed. Lands as a pre-completed learning_feed_items row
+    (source='manual') so it's indistinguishable downstream from an
+    aggregator item: shows in the feed/dashboard, feeds the activity-log
+    trend engine, and — if focus_id is goal-linked — emits the same
+    learning.item_completed event the watch-progress path emits, so the
+    learning agent's goal-task feedback loop applies here too."""
+    title = body.title.strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="title must not be empty")
+    from ...learning_feed.sensor import add_manual_item
+    cdb = _open_collab(user)
+    try:
+        if body.focus_id:
+            row = cdb.conn.execute(
+                "SELECT 1 FROM learning_focuses WHERE id=? AND uid=?",
+                (body.focus_id, user.id)).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="focus not found")
+        item_id = add_manual_item(cdb.conn, user.id, title, note=body.note,
+                                  focus_id=body.focus_id, url=body.url)
+        item = dict(cdb.conn.execute(
+            "SELECT * FROM learning_feed_items WHERE id=?", (item_id,)).fetchone())
+        try:
+            from ...collab.memory import MemoryManager
+            MemoryManager(cdb).log_activity(
+                "learning", title, domain=item.get("focus_tag"))
+        except Exception:
+            pass   # activity log is best-effort; the capture already succeeded
+
+        try:
+            from ...events.store import LEARNING_ITEM_COMPLETED
+            from ...events.factory import get_events
+            from .. import paths
+            es = get_events(user.id, cdb, index_dir=paths.index_dir(user.id),
+                            user_email=user.email)
+            es.emit(LEARNING_ITEM_COMPLETED, {
+                "title": title, "url": body.url, "source": "manual",
+                "focus": item.get("focus_tag"), "focus_id": body.focus_id,
+            }, source="learning_feed")
+        except Exception:
+            pass   # fire-and-forget, same stance as the watch-progress path
+    finally:
+        cdb.close()
+
+    note = None
+    try:
+        from ...memory.writer import MemoryWriter
+        vault = tenancy.resolve_vault_dir(user.id)
+        if vault.exists():
+            body_md = (f"{title}\n\n"
+                       + (f"- Focus: {item.get('focus_tag')}\n" if item.get("focus_tag") else "")
+                       + (f"- Link: {body.url}\n" if body.url else "")
+                       + (f"\n{body.note}\n" if body.note else ""))
+            p = MemoryWriter(vault).write_atomic(
+                "learned", title[:50], body_md,
+                eid=f"learncapture-{item_id}", tags=["learning", "manual"])
+            note = str(p) if p else "already-written"
+    except Exception:
+        note = None   # capture already succeeded; the note is best-effort
+
+    return {"id": item_id, "title": title, "note": note}

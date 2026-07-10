@@ -2,8 +2,14 @@
 
 Node types: note, email, calendar, task, goal, memory.
 Relationship types: depends_on, related_to, supports, blocks, belongs_to.
-Plain sqlite3; per-user file. Separate from the note-only relationship graph in
-the knowledge layer (that one is left untouched).
+Plain sqlite3; per-user file.
+
+Distinct from amy/knowledge/ (embeddings/retrieval for vault RAG search —
+chunking.py/embeddings.py/retrieval.py/search.py) and specifically from
+that package's own relationships.py::RelationshipEngine, which auto-infers
+`references`/`related_to` edges between VAULT NOTES ONLY (wiki-links +
+keyword overlap) into metadata.db `relationships` table — a narrower,
+notes-only graph, untouched by and unrelated to this cross-source one.
 """
 from __future__ import annotations
 

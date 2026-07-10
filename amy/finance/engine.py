@@ -174,6 +174,11 @@ class FinanceEngine:
                 source_note    TEXT DEFAULT '',
                 updated_at     TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS suggestion_cache (
+                kind         TEXT PRIMARY KEY,
+                payload      TEXT NOT NULL,
+                computed_at  TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_txn_date  ON transactions(date);
             CREATE INDEX IF NOT EXISTS idx_txn_cat   ON transactions(category);
             CREATE INDEX IF NOT EXISTS idx_sub_renew ON subscriptions(renewal_date);
@@ -444,6 +449,28 @@ class FinanceEngine:
         c = self.conn.execute("DELETE FROM income_sources WHERE id=?", (sid,))
         self.conn.commit()
         return c.rowcount > 0
+
+    # =========================================================================
+    # Suggestion cache (budget/subscription/investment/income) — computed
+    # once on import, read instantly on tab open. See finance/suggestion_
+    # cache.py for the recompute-and-store entry point.
+    # =========================================================================
+
+    def get_cached_suggestions(self, kind: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT payload, computed_at FROM suggestion_cache WHERE kind=?",
+            (kind,)).fetchone()
+        if row is None:
+            return None
+        return {"computed_at": row["computed_at"], **json.loads(row["payload"])}
+
+    def set_cached_suggestions(self, kind: str, payload: dict) -> None:
+        self.conn.execute(
+            "INSERT INTO suggestion_cache(kind,payload,computed_at) VALUES(?,?,?)"
+            " ON CONFLICT(kind) DO UPDATE SET payload=excluded.payload,"
+            " computed_at=excluded.computed_at",
+            (kind, json.dumps(payload), _now_iso()))
+        self.conn.commit()
 
     # =========================================================================
     # Accounts

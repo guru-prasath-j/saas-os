@@ -1,4 +1,4 @@
-"""Memory lake routes: journal sync, daily notes, recall, consolidate, heatmap, ops."""
+"""Memory lake routes: journal sync, daily notes, recall, consolidate, heatmap."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from ..db import User
 from .. import paths, tenancy
-from ..deps import current_user, _engine_for, _collab_db_path, _journal_user, _connector_dir
+from ..deps import current_user, _engine_for, _collab_db_path, _journal_user
 
 router = APIRouter()
 
@@ -133,88 +133,10 @@ def memory_heatmap(days: int = 90, user: User = Depends(current_user)):
         db.close()
 
 
-# --- operational layer -------------------------------------------------------
-
-@router.get("/api/ops/snapshot")
-def ops_snapshot(user: User = Depends(current_user)):
-    from ...collab import CollabDB
-    from ...operational import OperationalLayer
-    from ...events import EventStore
-    db = CollabDB(_collab_db_path(user))
-    try:
-        return OperationalLayer(db, EventStore(db),
-                                connector_dir=_connector_dir(user)).snapshot()
-    finally:
-        db.close()
-
-
-@router.get("/api/ops/connectors")
-def ops_connectors(user: User = Depends(current_user)):
-    from ...collab import CollabDB
-    from ...operational import OperationalLayer
-    from ...events import EventStore
-    db = CollabDB(_collab_db_path(user))
-    try:
-        return {"connectors": OperationalLayer(
-            db, EventStore(db), connector_dir=_connector_dir(user)).connectors.status()}
-    finally:
-        db.close()
-
-
-@router.post("/api/ops/connectors/health")
-def ops_connectors_health(user: User = Depends(current_user)):
-    from ...collab import CollabDB
-    from ...operational import OperationalLayer
-    from ...events import EventStore
-    db = CollabDB(_collab_db_path(user))
-    try:
-        return {"health": OperationalLayer(
-            db, EventStore(db),
-            connector_dir=_connector_dir(user)).connectors.check_all(mode="private")}
-    finally:
-        db.close()
-
-
-@router.get("/api/ops/entities")
-def ops_entities(kind: str | None = None, source: str | None = None,
-                 limit: int = 100, user: User = Depends(current_user)):
-    from ...collab import CollabDB
-    from ...operational import OperationalLayer
-    from ...events import EventStore
-    db = CollabDB(_collab_db_path(user))
-    try:
-        ol = OperationalLayer(db, EventStore(db), connector_dir=_connector_dir(user))
-        ents = ol.state.list_entities(kind=kind, source=source, limit=limit)
-        return {"entities": [e.to_dict() for e in ents]}
-    finally:
-        db.close()
-
-
-@router.post("/api/ops/sync/{kind}")
-def ops_sync(kind: str, user: User = Depends(current_user)):
-    from ...collab import CollabDB
-    from ...operational import OperationalLayer
-    from ...events import EventStore
-    db = CollabDB(_collab_db_path(user))
-    try:
-        return OperationalLayer(
-            db, EventStore(db),
-            connector_dir=_connector_dir(user)).sync.sync_connector(kind, mode="private")
-    finally:
-        db.close()
-
-
-@router.get("/api/ops/replay")
-def ops_replay(since: str | None = None, types: str | None = None,
-               limit: int = 200, user: User = Depends(current_user)):
-    from ...collab import CollabDB
-    from ...operational import OperationalLayer
-    from ...events import EventStore
-    db = CollabDB(_collab_db_path(user))
-    try:
-        tlist = [t.strip() for t in types.split(",")] if types else None
-        ol = OperationalLayer(db, EventStore(db), connector_dir=_connector_dir(user))
-        return {"events": ol.replay_service.events(
-            since_ts=since, types=tlist, limit=limit)}
-    finally:
-        db.close()
+# Operational Layer (/api/ops/*) removed — the OperationalLayer façade
+# (amy/operational/layer.py + state/connectors/sync/replay/agent/models)
+# was a tested but never-wired-to-a-UI backend (no frontend call site ever
+# existed); deleted along with its test suite. amy/operational/sensors.py
+# stays — it's the shared Sensor base class GmailSensor/GitHubSensor/
+# PlaneSensor/JobScoutSensor/LearningFeedSensor all still extend. See
+# CLAUDE.md's Operational Layer migration checklist for the full history.

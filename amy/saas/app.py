@@ -104,12 +104,6 @@ def _run_all_digests():
             generate_and_store(cdb, finance_db_path=finance_db_path,
                                user_email=user_map.get(uid), llm=_llm)
             try:
-                from ..operational.scheduler import run_ops_maintenance
-                run_ops_maintenance(cdb,
-                                    connector_dir=paths.index_dir(uid) / "connectors")
-            except Exception:
-                pass
-            try:
                 if os.path.exists(finance_db_path):
                     from ..finance.engine import FinanceEngine
                     from ..finance.custodial import check_custodial_nudges

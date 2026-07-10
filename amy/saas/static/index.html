@@ -629,6 +629,20 @@
           <span class="meta" id="lfMsg"></span>
         </div>
         <div class="card">
+          <h3>Log what you learned</h3>
+          <p class="muted">Capture something you learned outside the feed — a book, a conversation, a course. Counts toward focus/goal progress and trends just like a feed item.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="lcTitle" placeholder="What did you learn? (e.g. React Server Components)" style="flex:1;min-width:220px"/>
+            <select id="lcFocus" style="flex:0 0 180px"><option value="">No focus</option></select>
+          </div>
+          <textarea id="lcNote" placeholder="Notes (optional)" style="width:100%;margin-top:8px;min-height:50px"></textarea>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <input id="lcUrl" placeholder="Link (optional)" style="flex:1;min-width:200px"/>
+            <button class="sm" onclick="captureLearning()">Log it</button>
+          </div>
+          <span class="meta" id="lcMsg"></span>
+        </div>
+        <div class="card">
           <h3>Feed</h3>
           <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px" id="lfFilters">
             <button class="ghost sm" onclick="loadLearningFeed()">All</button>
@@ -1028,7 +1042,7 @@
           <div class="card" id="subSuggestCard">
             <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
               <b style="flex:1">Suggested from your transactions</b>
-              <button class="ghost sm" onclick="loadSubSuggestions()">Rescan</button>
+              <button class="ghost sm" onclick="loadSubSuggestions(true)">Rescan</button>
             </div>
             <p class="faint" style="font-size:12.5px;margin:0 0 10px">Detected from recurring charges — review each, then add or dismiss.</p>
             <div id="subSuggestList" class="muted">Scanning…</div>
@@ -1056,6 +1070,14 @@
 
         <!-- INVESTMENTS -->
         <div id="finPane-investments" class="hidden">
+          <div class="card" id="invSuggestCard">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Suggested from your transactions</b>
+              <button class="ghost sm" onclick="loadInvSuggestions(true)">Rescan</button>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Detected from recurring SIP/broker debits — review each, then add or dismiss.</p>
+            <div id="invSuggestList" class="muted">Scanning…</div>
+          </div>
           <div class="card">
             <h3 style="margin-top:0">Add investment</h3>
             <div class="row" style="flex-wrap:wrap;gap:8px">
@@ -1087,6 +1109,14 @@
 
         <!-- INCOME -->
         <div id="finPane-income" class="hidden">
+          <div class="card" id="incSuggestCard">
+            <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
+              <b style="flex:1">Suggested income sources</b>
+              <button class="ghost sm" onclick="loadIncSuggestions(true)">Rescan</button>
+            </div>
+            <p class="faint" style="font-size:12.5px;margin:0 0 10px">Detected from recurring credits (salary, retainer, rent) — review each, then add or dismiss.</p>
+            <div id="incSuggestList" class="muted">Scanning…</div>
+          </div>
           <div class="card">
             <h3 style="margin-top:0">Add income source</h3>
             <p class="muted" style="font-size:13px;margin-bottom:10px">Add your salary, freelance income, rent, or any recurring income. Amy uses this for affordability checks and cashflow forecasts.</p>
@@ -1218,7 +1248,7 @@
         <div class="card" id="budgetSuggestCard">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">
             <b style="flex:1">Suggested budgets</b>
-            <button class="ghost sm" onclick="loadBudgetSuggestions()">Rescan</button>
+            <button class="ghost sm" onclick="loadBudgetSuggestions(true)">Rescan</button>
           </div>
           <p class="faint" style="font-size:12.5px;margin:0 0 10px">Based on your income and this month's spend, localized to your profile location.</p>
           <div id="budgetSuggestList" class="muted">Loading…</div>
@@ -2200,11 +2230,33 @@ async function loadFocuses(){
       +'<button class="ghost sm" onclick="toggleFocusActive(\''+f.id+'\','+(f.active?'false':'true')+')">'+(f.active?'pause':'resume')+'</button>'
       +'<button class="ghost sm" onclick="deleteFocusUI(\''+f.id+'\')">delete</button></span></div>';
   }).join('') : '<p class="muted">No focuses yet — add one below.</p>';
+  const focusSel=document.getElementById('lcFocus');
+  if(focusSel) focusSel.innerHTML='<option value="">No focus</option>'+_lfFocuses.map(f=>'<option value="'+f.id+'">'+_lfEsc(f.topic)+'</option>').join('');
   try{
     const g=await jget('/api/goals');
     const sel=document.getElementById('lfNewGoal');
     sel.innerHTML='<option value="">No goal</option>'+(g.goals||[]).map(x=>'<option value="'+x.id+'">'+_lfEsc(x.title)+'</option>').join('');
   }catch(e){}
+}
+async function captureLearning(){
+  const title=document.getElementById('lcTitle').value.trim();
+  const focusId=document.getElementById('lcFocus').value;
+  const note=document.getElementById('lcNote').value.trim();
+  const url=document.getElementById('lcUrl').value.trim();
+  const m=document.getElementById('lcMsg');
+  if(!title){ m.textContent='Enter what you learned first.'; return; }
+  m.textContent='Logging…';
+  try{
+    await _lfCheckOk(await api('/api/learning-feed/capture',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({title, note, focus_id:focusId||null, url})}));
+    document.getElementById('lcTitle').value='';
+    document.getElementById('lcNote').value='';
+    document.getElementById('lcUrl').value='';
+    m.textContent='Logged.';
+    loadLearningFeed();
+    setTimeout(()=>{ m.textContent=''; }, 4000);
+  }catch(e){ m.textContent='Could not log it: '+e.message; }
 }
 async function createFocus(){
   const topic=document.getElementById('lfNewTopic').value.trim();
@@ -2266,7 +2318,8 @@ async function loadLearningFeed(filter){
   el.innerHTML=d.items.map(it=>{
     _lfItems[it.id]=it;
     const rel=(it.relevance!=null)?'<span class="chip" title="AI relevance">'+Math.round(it.relevance)+'/10</span>':'';
-    const why=it.why?'<div class="meta" style="margin-top:2px">'+_lfEsc(it.why)+'</div>':'';
+    const why=it.why?'<div class="meta" style="margin-top:2px">'+_lfEsc(it.why)+'</div>'
+      :(it.summary?'<div class="meta" style="margin-top:2px">'+_lfEsc(it.summary)+'</div>':'');
     const star=it.saved?'<span title="saved">★</span>':'<button class="ghost sm" onclick="saveFeedItem(\''+_lfEsc(it.id)+'\',this)" title="Save to vault">☆</button>';
     const vid=_lfVideoId(it.url);
     let thumb='',prog='';
@@ -2285,10 +2338,11 @@ async function loadLearningFeed(filter){
       if(host) thumb='<img src="https://www.google.com/s2/favicons?domain='+_lfEsc(host)+'&sz=32" '
         +'style="width:18px;height:18px;border-radius:4px;margin-top:4px;flex:0 0 18px" loading="lazy" onerror="this.style.display=\'none\'"/>';
     }
+    const titleHtml=it.url ? '<a href="'+_lfEsc(it.url)+'" target="_blank" rel="noopener">'+_lfEsc(it.title)+'</a>' : _lfEsc(it.title);
     return '<div id="lf-row-'+_lfEsc(it.id)+'" style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border)">'
       +thumb
       +'<div style="flex:1;min-width:0">'
-      +'<a href="'+_lfEsc(it.url)+'" target="_blank" rel="noopener">'+_lfEsc(it.title)+'</a>'
+      +titleHtml
       +' <span class="chip">'+_lfEsc(it.source)+'</span> '+rel
       +why+prog+'</div>'+star+'</div>';
   }).join('');
@@ -4773,8 +4827,8 @@ function switchFinView(view, btn){
   if(view==='overview') loadFinOverview();
   if(view==='transactions') loadFinTransactions();
   if(view==='subscriptions'){ loadFinSubs(); loadSubSuggestions(); }
-  if(view==='investments') loadFinInvestments();
-  if(view==='income'){ loadFinIncome(); loadIncomeTxns(); }
+  if(view==='investments'){ loadFinInvestments(); loadInvSuggestions(); }
+  if(view==='income'){ loadFinIncome(); loadIncomeTxns(); loadIncSuggestions(); }
   if(view==='import'){ loadFinAccounts(); scanDuplicates(); }
 }
 
@@ -5031,11 +5085,16 @@ async function deleteBudget(cat){
 
 /* ── Suggested budgets (income + spend + location, LLM-localized) ──────── */
 let _budgetSuggestions=[];
-async function loadBudgetSuggestions(){
+async function loadBudgetSuggestions(fresh){
   const el=document.getElementById('budgetSuggestList');
-  el.innerHTML='<p class="muted">Analyzing income and spend…</p>';
+  el.innerHTML='<p class="muted">'+(fresh?'Analyzing income and spend…':'Loading…')+'</p>';
   try{
-    const d=await jpost('/api/finance/budgets/suggestions',{});
+    const d=fresh ? await jpost('/api/finance/budgets/suggestions',{})
+                  : await jget('/api/finance/budgets/suggestions');
+    if(!fresh && !d.computed_at){
+      el.innerHTML='<p class="muted">No scan yet — import a statement or click Rescan.</p>';
+      _budgetSuggestions=[]; return;
+    }
     if(d.reason){ el.innerHTML='<p class="muted">'+d.reason+'</p>'; _budgetSuggestions=[]; return; }
     _budgetSuggestions=d.suggestions||[];
     _budgetIncomeNote=d.note||'';
@@ -5504,11 +5563,16 @@ async function deleteSub(id){
 
 /* ── Suggested subscriptions (LLM + rule detection over transactions) ──── */
 let _subSuggestions=[];
-async function loadSubSuggestions(){
+async function loadSubSuggestions(fresh){
   const el=document.getElementById('subSuggestList');
-  el.innerHTML='<p class="muted">Scanning transactions…</p>';
+  el.innerHTML='<p class="muted">'+(fresh?'Scanning transactions…':'Loading…')+'</p>';
   try{
-    const d=await jpost('/api/finance/subscriptions/suggestions',{});
+    const d=fresh ? await jpost('/api/finance/subscriptions/suggestions',{})
+                  : await jget('/api/finance/subscriptions/suggestions');
+    if(!fresh && !d.computed_at){
+      el.innerHTML='<p class="muted">No scan yet — import a statement or click Rescan.</p>';
+      _subSuggestions=[]; return;
+    }
     _subSuggestions=d.suggestions||[];
     renderSubSuggestions();
   }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
@@ -5566,6 +5630,61 @@ async function loadSubInsights(){
     document.getElementById('subInsights').innerHTML=
       '<b>Subscription insights</b>'+(tips.length?'<ul style="margin-top:8px">'+tips.map(t=>`<li style="margin-bottom:6px">${t}</li>`).join('')+'</ul>':'<p class="muted">No insights yet — add more subscriptions.</p>');
   }catch(e){document.getElementById('subInsights').innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+/* ── Suggested investments (LLM + rule detection over transactions) ───── */
+let _invSuggestions=[];
+const _invTypeLabels={mutual_fund:'Mutual Fund',stock:'Stock',fd:'FD',gold:'Gold',ppf:'PPF',nps:'NPS',crypto:'Crypto',other:'Other'};
+async function loadInvSuggestions(fresh){
+  const el=document.getElementById('invSuggestList');
+  el.innerHTML='<p class="muted">'+(fresh?'Scanning transactions…':'Loading…')+'</p>';
+  try{
+    const d=fresh ? await jpost('/api/finance/investments/suggestions',{})
+                  : await jget('/api/finance/investments/suggestions');
+    if(!fresh && !d.computed_at){
+      el.innerHTML='<p class="muted">No scan yet — import a statement or click Rescan.</p>';
+      _invSuggestions=[]; return;
+    }
+    _invSuggestions=d.suggestions||[];
+    renderInvSuggestions();
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+function renderInvSuggestions(){
+  const el=document.getElementById('invSuggestList');
+  if(!_invSuggestions.length){ el.innerHTML='<p class="muted">No new recurring investments detected.</p>'; return; }
+  el.innerHTML=_invSuggestions.map((s,i)=>`
+    <div class="toggle" id="invSuggest-${i}" style="flex-wrap:wrap;gap:8px">
+      <div class="row" style="flex:1;min-width:220px;gap:8px">
+        <select id="ig-type-${i}" style="flex:0 0 120px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+          ${Object.entries(_invTypeLabels).map(([v,l])=>`<option value="${v}" ${s.investment_type===v?'selected':''}>${l}</option>`).join('')}
+        </select>
+        <input id="ig-name-${i}" value="${s.name.replace(/"/g,'&quot;')}" style="flex:1;min-width:100px"/>
+        <input id="ig-cost-${i}" type="number" min="0" step="0.01" value="${s.cost_basis}" title="Cost basis (sum of contributions seen)" style="flex:0 0 130px"/>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="faint" style="font-size:11px">seen ${s.occurrences}x · ~${_fmt(s.amount)}/mo · last ${s.last_date}</span>
+        <button class="sm" onclick="acceptInvSuggestion(${i})">✓ Add</button>
+        <button class="ghost sm" onclick="dismissInvSuggestion(${i})" style="color:var(--faint)">✕</button>
+      </div>
+    </div>`).join('');
+}
+async function acceptInvSuggestion(i){
+  const s=_invSuggestions[i];
+  const type=document.getElementById('ig-type-'+i).value;
+  const name=document.getElementById('ig-name-'+i).value.trim();
+  const cost=parseFloat(document.getElementById('ig-cost-'+i).value)||0;
+  if(!name) return;
+  await jpost('/api/finance/investments',{type,name,current_value:cost,cost_basis:cost});
+  dismissInvSuggestion(i);
+  loadFinInvestments();
+}
+function dismissInvSuggestion(i){
+  _invSuggestions[i]=null;
+  const row=document.getElementById('invSuggest-'+i);
+  if(row) row.remove();
+  if(_invSuggestions.every(s=>!s)){
+    document.getElementById('invSuggestList').innerHTML='<p class="muted">No new recurring investments detected.</p>';
+  }
 }
 
 async function loadFinInvestments(){
@@ -6226,6 +6345,69 @@ async function deleteAccount(aid,name){
     loadFinAccounts();
     loadFinTransactions();
   }catch(e){alert(e.message);}
+}
+
+/* ── Suggested income sources (LLM + rule detection over transactions) ── */
+let _incSuggestions=[];
+async function loadIncSuggestions(fresh){
+  const el=document.getElementById('incSuggestList');
+  el.innerHTML='<p class="muted">'+(fresh?'Scanning transactions…':'Loading…')+'</p>';
+  try{
+    const d=fresh ? await jpost('/api/finance/income/suggestions',{})
+                  : await jget('/api/finance/income/suggestions');
+    if(!fresh && !d.computed_at){
+      el.innerHTML='<p class="muted">No scan yet — import a statement or click Rescan.</p>';
+      _incSuggestions=[]; return;
+    }
+    _incSuggestions=d.suggestions||[];
+    renderIncSuggestions();
+  }catch(e){ el.innerHTML='<p class="muted">'+e.message+'</p>'; }
+}
+function renderIncSuggestions(){
+  const el=document.getElementById('incSuggestList');
+  if(!_incSuggestions.length){ el.innerHTML='<p class="muted">No new recurring income detected.</p>'; return; }
+  el.innerHTML=_incSuggestions.map((s,i)=>`
+    <div class="toggle" id="incSuggest-${i}" style="flex-wrap:wrap;gap:8px">
+      <div class="row" style="flex:1;min-width:220px;gap:8px">
+        <input id="isg-name-${i}" value="${s.name.replace(/"/g,'&quot;')}" style="flex:1;min-width:100px"/>
+        <select id="isg-type-${i}" style="flex:0 0 110px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+          <option value="salary" ${s.income_type==='salary'?'selected':''}>Salary</option>
+          <option value="freelance" ${s.income_type==='freelance'?'selected':''}>Freelance</option>
+          <option value="rental" ${s.income_type==='rental'?'selected':''}>Rental</option>
+          <option value="business" ${s.income_type==='business'?'selected':''}>Business</option>
+          <option value="other" ${s.income_type==='other'?'selected':''}>Other</option>
+        </select>
+        <input id="isg-amount-${i}" type="number" min="0" step="1" value="${s.amount}" style="flex:0 0 130px"/>
+        <select id="isg-rec-${i}" style="flex:0 0 100px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:11px 8px;font-size:13px">
+          <option value="weekly" ${s.recurrence==='weekly'?'selected':''}>Weekly</option>
+          <option value="monthly" ${s.recurrence==='monthly'?'selected':''}>Monthly</option>
+          <option value="annual" ${s.recurrence==='annual'?'selected':''}>Annual</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <span class="faint" style="font-size:11px">seen ${s.occurrences}x · last ${s.last_date}</span>
+        <button class="sm" onclick="acceptIncSuggestion(${i})">✓ Add</button>
+        <button class="ghost sm" onclick="dismissIncSuggestion(${i})" style="color:var(--faint)">✕</button>
+      </div>
+    </div>`).join('');
+}
+async function acceptIncSuggestion(i){
+  const name=document.getElementById('isg-name-'+i).value.trim();
+  const type=document.getElementById('isg-type-'+i).value;
+  const amount=parseFloat(document.getElementById('isg-amount-'+i).value)||0;
+  const recurrence=document.getElementById('isg-rec-'+i).value;
+  if(!name) return;
+  await jpost('/api/finance/income',{name,type,amount,recurrence});
+  dismissIncSuggestion(i);
+  loadFinIncome(); loadFinOverview();
+}
+function dismissIncSuggestion(i){
+  _incSuggestions[i]=null;
+  const row=document.getElementById('incSuggest-'+i);
+  if(row) row.remove();
+  if(_incSuggestions.every(s=>!s)){
+    document.getElementById('incSuggestList').innerHTML='<p class="muted">No new recurring income detected.</p>';
+  }
 }
 
 async function loadFinIncome(){

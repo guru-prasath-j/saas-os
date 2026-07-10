@@ -101,6 +101,35 @@ def delete_focus(collab_conn, uid: str, focus_id: str) -> bool:
     return cur.rowcount > 0
 
 
+def add_manual_item(collab_conn, uid: str, title: str, note: str = "",
+                    focus_id: str | None = None, url: str = "") -> str:
+    """Manual learning capture ("I learned X today") — same
+    learning_feed_items row shape the auto-fetched pipeline uses (source=
+    'manual'), so it shows up in the Learn tab feed, the dashboard card,
+    and the activity-log trend engine identically to an aggregator hit.
+    Landed pre-completed (saved=1, progress=1.0, completed_at=now): unlike
+    an aggregator item the user hasn't seen yet, a manual entry describes
+    something already done."""
+    iid = uuid.uuid4().hex[:16]
+    now = _dt.datetime.now(_dt.timezone.utc).isoformat()
+    focus_tag = None
+    if focus_id:
+        row = collab_conn.execute(
+            "SELECT topic FROM learning_focuses WHERE id=? AND uid=?",
+            (focus_id, uid)).fetchone()
+        focus_tag = row["topic"] if row else None
+    collab_conn.execute(
+        "INSERT INTO learning_feed_items"
+        " (id,uid,source,title,url,summary,score,relevance,why,focus_tag,focus_id,"
+        "  saved,fetched_at,published_at,progress,completed_at)"
+        " VALUES (?,?,?,?,?,?,?,?,?,?,?,1,?,?,1.0,?)",
+        (iid, uid, "manual", title.strip()[:300], url.strip()[:500] or None,
+         note.strip()[:2000] or None, None, None, None, focus_tag, focus_id,
+         now, now, now))
+    collab_conn.commit()
+    return iid
+
+
 def promoted_learning_rows(user_id: str) -> list:
     """McpConnector rows (amy_saas.db) promoted to sensor AND matching a
     known learning-feed source name. Column attrs are loaded before the

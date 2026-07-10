@@ -44,10 +44,34 @@ class GoalEngine:
         self.db.execute("INSERT INTO tasks (id, goal_id, title, done, created_at) VALUES (?,?,?,0,?)",
                         (tid, goal_id, title, _now()))
         self.db.commit()
+        self._recompute(goal_id)
         return tid
 
     def complete_task(self, task_id, done=True):
+        row = self.db.execute("SELECT goal_id FROM tasks WHERE id=?", (task_id,)).fetchone()
         self.db.execute("UPDATE tasks SET done=? WHERE id=?", (1 if done else 0, task_id))
+        self.db.commit()
+        if row and row["goal_id"]:
+            self._recompute(row["goal_id"])
+
+    def _recompute(self, goal_id) -> None:
+        """Persist the combined milestones+tasks ratio to goals.progress —
+        mirrors PlannerAgent._recompute (milestones-only), which this class
+        otherwise doesn't touch. Without this, a task added/completed via
+        GoalEngine (career-plan weekly tasks, the learning-feedback loop)
+        never moves the progress number every UI surface actually reads,
+        even though self.progress() already computes it correctly on
+        demand. No-ops for the blank/legacy goal_id some non-goal task
+        proposals use (e.g. errand place-tagged reminders)."""
+        if not goal_id:
+            return
+        g = self.db.execute("SELECT status FROM goals WHERE id=?", (goal_id,)).fetchone()
+        if not g:
+            return
+        prog = self.progress(goal_id)
+        status = "done" if prog >= 100 else ("active" if g["status"] != "done" else g["status"])
+        self.db.execute("UPDATE goals SET progress=?, status=? WHERE id=?",
+                        (prog, status, goal_id))
         self.db.commit()
 
     def list_tasks(self, goal_id) -> list[dict]:

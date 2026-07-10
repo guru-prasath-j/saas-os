@@ -2,7 +2,7 @@
 accounts, and CSV import."""
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from ..db import User
@@ -42,6 +42,18 @@ def _emit_fin(user: "User", event_type: str, payload: dict) -> None:
             cdb.close()
     except Exception:
         pass
+
+
+def _schedule_suggestion_recompute(background: BackgroundTasks, user: "User",
+                                   finance_db_path: str) -> None:
+    """After an import actually changes transaction data, recompute the
+    Budget/Subscriptions/Investments/Income "suggested" panels ONCE in the
+    background and cache them (amy/finance/suggestion_cache.py) — so opening
+    those tabs reads the cache instantly instead of re-running an LLM scan
+    on every click. Fire-and-forget like _emit_fin; a failed recompute just
+    leaves yesterday's cache in place, never breaks the import response."""
+    from ...finance.suggestion_cache import recompute_for_user
+    background.add_task(recompute_for_user, user.id, finance_db_path)
 
 
 # ---------------------------------------------------------------------------
@@ -329,12 +341,26 @@ def list_budgets(user: User = Depends(current_user)):
         fe.close()
 
 
+@router.get("/api/finance/budgets/suggestions")
+def cached_budget_suggestions(user: User = Depends(current_user)):
+    """Instant read of the last computed budget suggestions (see
+    amy/finance/suggestion_cache.py — recomputed once per import in the
+    background, not on every tab open). {"computed_at": null} if an import
+    hasn't triggered a recompute yet — use the POST endpoint for a fresh
+    on-demand scan (the "Rescan" button)."""
+    fe = _finance_db(user)
+    try:
+        return fe.get_cached_suggestions("budget") or {"computed_at": None, "suggestions": []}
+    finally:
+        fe.close()
+
+
 @router.post("/api/finance/budgets/suggestions")
 def suggest_budgets(user: User = Depends(current_user)):
     """
     Propose monthly budget caps per category from income + this month's spend
-    + the user's profile location (cost-of-living context). Re-runs fresh on
-    every call — no persistence; accept or edit each suggestion in the UI.
+    + the user's profile location (cost-of-living context). Live on-demand
+    scan (the "Rescan" button) — also refreshes the cache the GET above reads.
     """
     from ...finance.budget_suggest import suggest_budgets as _suggest
     from ...llm import LLMRouter
@@ -342,7 +368,9 @@ def suggest_budgets(user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
-        return _suggest(fe, user.location, llm)
+        result = _suggest(fe, user.location, llm)
+        fe.set_cached_suggestions("budget", result)
+        return result
     finally:
         fe.close()
 
@@ -400,13 +428,23 @@ def subscription_insights(user: User = Depends(current_user)):
         fe.close()
 
 
+@router.get("/api/finance/subscriptions/suggestions")
+def cached_subscription_suggestions(user: User = Depends(current_user)):
+    """Instant read of the last computed subscription suggestions — see
+    amy/finance/suggestion_cache.py. Use POST for a fresh on-demand scan."""
+    fe = _finance_db(user)
+    try:
+        return fe.get_cached_suggestions("subscription") or {"computed_at": None, "suggestions": []}
+    finally:
+        fe.close()
+
+
 @router.post("/api/finance/subscriptions/suggestions")
 def suggest_subscriptions(user: User = Depends(current_user)):
     """
     Scan transaction history for likely recurring charges not yet tracked as
-    subscriptions. Re-runs fresh on every call (no persistence) so the review
-    list always reflects current transaction data — accept or dismiss each
-    suggestion from the UI.
+    subscriptions. Live on-demand scan (the "Rescan" button) — also
+    refreshes the cache the GET above reads.
     """
     from ...finance.subscription_detect import detect_subscriptions
     from ...llm import LLMRouter
@@ -414,7 +452,9 @@ def suggest_subscriptions(user: User = Depends(current_user)):
     fe = _finance_db(user)
     try:
         llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
-        return {"suggestions": detect_subscriptions(fe, llm)}
+        result = {"suggestions": detect_subscriptions(fe, llm)}
+        fe.set_cached_suggestions("subscription", result)
+        return result
     finally:
         fe.close()
 
@@ -475,6 +515,37 @@ def list_investments(user: User = Depends(current_user)):
         fe.close()
 
 
+@router.get("/api/finance/investments/suggestions")
+def cached_investment_suggestions(user: User = Depends(current_user)):
+    """Instant read of the last computed investment suggestions — see
+    amy/finance/suggestion_cache.py. Use POST for a fresh on-demand scan."""
+    fe = _finance_db(user)
+    try:
+        return fe.get_cached_suggestions("investment") or {"computed_at": None, "suggestions": []}
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/investments/suggestions")
+def suggest_investments(user: User = Depends(current_user)):
+    """
+    Scan transaction history for likely recurring investment debits (SIPs,
+    broker transfers) not yet tracked. Live on-demand scan (the "Rescan"
+    button) — also refreshes the cache the GET above reads.
+    """
+    from ...finance.investment_detect import detect_investments
+    from ...llm import LLMRouter
+    from ..deps import _user_key
+    fe = _finance_db(user)
+    try:
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        result = {"suggestions": detect_investments(fe, llm)}
+        fe.set_cached_suggestions("investment", result)
+        return result
+    finally:
+        fe.close()
+
+
 @router.patch("/api/finance/investments/{iid}")
 def update_investment(iid: str, body: InvestmentPatch,
                       user: User = Depends(current_user)):
@@ -526,6 +597,37 @@ def list_income(user: User = Depends(current_user)):
             "income_sources": fe.list_income_sources(),
             "monthly_total": round(fe.monthly_income(), 2),
         }
+    finally:
+        fe.close()
+
+
+@router.get("/api/finance/income/suggestions")
+def cached_income_suggestions(user: User = Depends(current_user)):
+    """Instant read of the last computed income suggestions — see
+    amy/finance/suggestion_cache.py. Use POST for a fresh on-demand scan."""
+    fe = _finance_db(user)
+    try:
+        return fe.get_cached_suggestions("income") or {"computed_at": None, "suggestions": []}
+    finally:
+        fe.close()
+
+
+@router.post("/api/finance/income/suggestions")
+def suggest_income(user: User = Depends(current_user)):
+    """
+    Scan transaction history for likely recurring income (salary, retainer,
+    rent received) not yet tracked as an income source. Live on-demand scan
+    (the "Rescan" button) — also refreshes the cache the GET above reads.
+    """
+    from ...finance.income_detect import detect_income
+    from ...llm import LLMRouter
+    from ..deps import _user_key
+    fe = _finance_db(user)
+    try:
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        result = {"suggestions": detect_income(fe, llm)}
+        fe.set_cached_suggestions("income", result)
+        return result
     finally:
         fe.close()
 
@@ -768,6 +870,7 @@ async def preview_pdf_upload(
 @router.post("/api/finance/accounts/{aid}/upload/csv")
 async def upload_csv(
     aid: str,
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     user: User = Depends(current_user),
 ):
@@ -804,6 +907,8 @@ async def upload_csv(
             "imported": d.get("imported", 0),
             "skipped": d.get("skipped", 0),
         })
+        if d.get("imported", 0) > 0:
+            _schedule_suggestion_recompute(background, user, str(fe.path))
         return d
     finally:
         fe.close()
@@ -863,6 +968,7 @@ def cashflow_forecast(user: User = Depends(current_user)):
 @router.post("/api/finance/accounts/{aid}/upload/pdf")
 async def upload_pdf(
     aid: str,
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     password: str | None = None,
     user: User = Depends(current_user),
@@ -901,6 +1007,8 @@ async def upload_pdf(
             "imported": d.get("imported", 0),
             "skipped": d.get("skipped", 0),
         })
+        if d.get("imported", 0) > 0:
+            _schedule_suggestion_recompute(background, user, str(fe.path))
         return d
     finally:
         fe.close()
@@ -928,6 +1036,7 @@ def _career_inbound_hook(user: User, cdb):
 @router.post("/api/finance/accounts/{aid}/sync/gmail")
 def sync_gmail(
     aid: str,
+    background: BackgroundTasks,
     since: str | None = None,
     until: str | None = None,
     max_messages: int = 200,
@@ -987,6 +1096,7 @@ def sync_gmail(
                 "skipped": d.get("skipped", 0),
                 "accounts_synced": 1,
             })
+            _schedule_suggestion_recompute(background, user, str(fe.path))
         return d
     finally:
         fe.close()
@@ -995,6 +1105,7 @@ def sync_gmail(
 
 @router.post("/api/finance/sync/gmail")
 def sync_gmail_all(
+    background: BackgroundTasks,
     since: str | None = None,
     until: str | None = None,
     max_messages: int = 500,
@@ -1104,6 +1215,7 @@ def sync_gmail_all(
                 "skipped": total_skipped,
                 "accounts_synced": len(targets),
             })
+            _schedule_suggestion_recompute(background, user, str(fe.path))
         return result
     finally:
         fe.close()
