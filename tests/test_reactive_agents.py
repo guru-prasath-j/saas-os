@@ -23,7 +23,12 @@ def env(tmp_path, monkeypatch):
     ctx = build_ctx("u-react", "t@example.com", cdb, tmp_path, llm_router=None)
     es = EventStore(cdb)
     registered = register_reactive_agents(es, ctx)
-    assert set(registered) == {"budget", "subscription", "compliance", "screening",
+    # LIFE AUTOPILOT adds ~10 more default-on agents on top of this baseline;
+    # a `==` check here breaks on every subsequent phase that registers a new
+    # default-on agent (recurring maintenance note from CONNECTOR COMPLETION
+    # Part 2 and CAREER AUTOPILOT Part 2/3) — assert the known baseline is a
+    # subset instead of pinning the exact set.
+    assert set(registered) >= {"budget", "subscription", "compliance", "screening",
                                "errand", "learning", "pr_task", "meeting_prep",
                                "career_goal", "portfolio", "application_lifecycle"}
     yield ctx, es, tmp_path

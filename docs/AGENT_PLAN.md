@@ -1043,3 +1043,45 @@ creates none. Per-task approval can be added later without a schema
 change if needed.
 (c) No decision needed on Job Search MCP shape or SMTP (findings 1, 3 —
 both self-adapting).
+
+---
+
+## Phase: LIFE AUTOPILOT
+
+Full binding spec: `docs/LIFE_AUTOPILOT.md`. Extends Amy PersonalOS from
+finance/career autopilot into day-to-day life — health targets, behavioral
+pattern detection (9 inference agents), habit auto-tracking, a wellbeing
+index, and place-triggered opportunity nudges. Built on existing
+primitives only: `amy/geo/`, `amy/patterns.py`, `amy/commitments/`,
+`amy/captures.py`, `amy/automation/drift.py`, the tool registry + AGENT_GATE,
+event bus (factory, quirk 20), MemoryWriter/GraphStore. Hard rules:
+advisory-never-diagnostic, estimates-not-medical-advice, propose-don't-
+impose, own-baselines day-type-matched, never-a-nag, privacy floor
+(coordinates/health values never reach an LLM), honest nulls, grace-not-
+punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
+
+### Progress
+
+| Part | Description | Status | Commit |
+|---|---|---|---|
+| 0 | `test_reactive_agents.py` registered-agent-set assertion → set `>=` check | PENDING | |
+| L1 | Health bootstrap + targets (`amy/life/targets.py`, vault-bootstrap clone) | PENDING | |
+| L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | PENDING | |
+| L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | PENDING | |
+| L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | PENDING | |
+| L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | PENDING | |
+| L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | PENDING | |
+| L8 | Extended signals (meal captures, commitments crossover, health_data stub) | PENDING | |
+| L6 | Life review + integration (monthly vault note, briefing Life section) | PENDING | |
+| L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | PENDING | |
+
+### Pre-flight (this session)
+
+Before L1+L2 implementation: re-read `amy/geo/`, `amy/patterns.py`,
+`amy/automation/drift.py`, `amy/commitments/`, `amy/captures.py`,
+`amy/connectors/mcp_call.py`, habits/goals tables + routers, the timeline
+rendering path, `closers.py::morning_briefing`, the `place_learning` job,
+and the CAREER AUTOPILOT Part 1 vault-bootstrap pattern (L1's template).
+Query actual `geo_places` rows for which kinds exist today. Present a
+file-mapped plan for L1+L2 plus the open decisions listed in
+`docs/LIFE_AUTOPILOT.md` before writing code.
