@@ -1068,7 +1068,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L1 | Health bootstrap + targets (`amy/life/targets.py`, `amy/life/bootstrap.py`) | DONE | 5a88924 |
 | L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | DONE | 86f9c7f |
 | L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | DONE | 5ec3292 |
-| L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | DONE | (pending commit) |
+| L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | DONE | f014e07 |
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | PENDING | |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | PENDING | |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | PENDING | |
