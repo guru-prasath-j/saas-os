@@ -1073,7 +1073,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | DONE | 1fe8787 |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | DONE | 2755059 |
 | L6 | Life review + integration (monthly vault note, briefing Life section) | DONE | ba8ce8e |
-| L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | DONE | (pending commit) |
+| L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | DONE | a97bdea |
 
 ### Pre-flight (this session)
 
@@ -1085,6 +1085,50 @@ and the CAREER AUTOPILOT Part 1 vault-bootstrap pattern (L1's template).
 Query actual `geo_places` rows for which kinds exist today. Present a
 file-mapped plan for L1+L2 plus the open decisions listed in
 `docs/LIFE_AUTOPILOT.md` before writing code.
+
+## LIFE AUTOPILOT — summary
+
+All nine parts DONE (commits: Part 0 `ab1976a`, L1 `5a88924`, L2
+`86f9c7f`, L4 `5ec3292`, L3 `f014e07`, L9 `b08c605`, L5 `1fe8787`, L8
+`2755059`, L6 `ba8ce8e`, L7 `a97bdea`; doc-only follow-up commits recorded
+each part's hash separately). New top-level module: `amy/life/`
+(`targets.py`, `bootstrap.py`, `aggregator.py`, `backfill.py`,
+`baselines.py`, `habits.py`, `inference.py`, `opportunity_rules.py`,
+`opportunity.py`, `wellbeing.py`, `review.py`, `meal_captures.py`,
+`health_data.py`, `commitments_life.py`); extended
+`amy/automation/{store,executors,jobs,closers}.py`, `amy/agents/
+reactive.py`, `amy/events/store.py`, `amy/intelligence/timeline.py`,
+`amy/saas/routers/life.py` (new), `index.html`. New tables:
+`health_profile`, `life_metrics`, `habit_links`, `wellbeing_weekly` (all
+`collab.db`). New jobs: `health_bootstrap_check`, `life_metrics_daily`,
+`life_inference_scan`, `life_wellbeing_weekly`, `life_review_monthly`.
+New kill switches: `AMY_LIFE_AUTOPILOT` (master) +
+`AMY_AGENT_LIFE_{HEALTH,HABITS,COMMUTE,MEALS,SLEEP,ACTIVITY,READING,
+MEETING_LOAD,ADMIN,SEASONAL,SOCIAL,OPPORTUNITY,CAPTURE_MEALS}` (L5/L6/L8's
+commitments-crossover and monthly review deliberately have none — not in
+the spec's enumerated list, gated by the master switch only).
+
+Every hard rule held across all nine parts: no diagnostic language
+anywhere (forbidden-phrase-asserted in L1/L5's tests), every target/
+habit/goal/adaptation proposal is tier-2 with mandatory evidence (`
+propose()`'s shared framework, reused by L3/L5/L8), day-type-matched
+8-week baselines with grace excluded (`baselines.day_type_baseline()`,
+one shared implementation), never a nag (dedup + resuggest-window +
+drift-pruning, two independent mechanisms for L3/L5/L8 vs L9's dismiss-
+counter), coordinates/health values never reached an LLM prompt or event
+payload (asserted directly in tests), honest NULLs throughout (the L2
+`reading_minutes` bug found and fixed proves this was actually enforced,
+not just claimed), grace paused streaks/baselines/nudges without ever
+auto-archiving anything.
+
+Real gaps found and fixed along the way (not part of the original
+per-part plan, discovered by writing real tests against real signals):
+`JobCtx.open_habits()` recomputing the wrong index_dir (L4); the L2
+`reading_minutes` hardcoded-zero bug (found while building L4); `life.
+pattern_detected` defined but never emitted (found while building L6);
+L9's `pharmacy` rule being a structural permanent no-op until L8 actually
+built the thing it depends on (by design, called out explicitly in both
+parts' docs, then verified closed end-to-end once L8 landed).
 
 **Findings that corrected the brief's assumptions** (verified by direct
 grep + a live query against the real account, uid `f19e3ab6…`,
