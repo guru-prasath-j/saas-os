@@ -244,3 +244,5 @@ def test_job_scout_passes_country_for_home_jurisdiction(ctx, monkeypatch):
 
     JobScoutSensor(ctx.events(), ctx).poll()
     assert captured.get("country_indeed") == "India"
+    # boards: env-configurable, defaults to the general boards + Naukri
+    assert captured.get("site_names") == "indeed,linkedin,naukri"

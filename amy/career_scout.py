@@ -68,6 +68,16 @@ def _country_for_ctx(ctx) -> str | None:
     return _JURISDICTION_COUNTRY.get(home)
 
 
+def _scout_sites() -> str:
+    """Boards to scout, comma-separated (AMY_JOB_SCOUT_SITES). Default covers
+    the big general boards plus Naukri (dominant in India — jurisdiction
+    packs don't carry board preferences, so this stays one env knob). The
+    jobspy server scrapes each site independently and a blocked one only
+    shrinks the result, never fails the search."""
+    from . import config
+    return config._env("AMY_JOB_SCOUT_SITES", "indeed,linkedin,naukri").strip()
+
+
 def _score_postings(ctx, postings: list[dict], profile: dict) -> dict[int, dict]:
     """ONE batched LLM call scoring every posting in this cycle. Returns
     {index: {"score": float, "factors": dict}}; {} on any LLM/parse
@@ -150,7 +160,8 @@ class JobScoutSensor(Sensor):
         search_args = {"search_term": target_role,
                        "location": profile.get("target_location") or "",
                        "is_remote": bool(profile.get("remote_ok")),
-                       "results_wanted": 20}
+                       "results_wanted": 20,
+                       "site_names": _scout_sites()}
         country = _country_for_ctx(self.ctx)
         if country:
             search_args["country_indeed"] = country
@@ -171,6 +182,7 @@ class JobScoutSensor(Sensor):
                       "salary": job.get("salary") or job.get("min_amount") or "",
                       "is_remote": bool(job.get("is_remote")),
                       "description": job.get("description") or "",
+                      "source": job.get("site") or "jobspy",   # which board found it
                       "keywords": []}
             pid, is_new = self.ctx.store.add_posting_if_new(self.ctx.user_id, posting)
             if is_new:

@@ -42,19 +42,31 @@ def search_jobs(
     Returns one dict per job posting (title, company, location, job_url,
     date_posted, job_type, is_remote, salary fields, description, ...).
     """
+    import sys
+
     sites = [s.strip() for s in site_names.split(",") if s.strip()]
-    df = scrape_jobs(
-        site_name=sites,
-        search_term=search_term,
-        location=location or None,
-        results_wanted=results_wanted,
-        hours_old=hours_old,
-        is_remote=is_remote,
-        country_indeed=country_indeed,
-    )
-    # NaN isn't valid JSON — scrape_jobs leaves missing fields (salary, etc.) as NaN.
-    df = df.where(df.notnull(), None)
-    return df.to_dict(orient="records")
+    records: list[dict] = []
+    # One site per scrape_jobs call, each in its own try/except: LinkedIn
+    # rate-limits aggressively and any single blocked/unsupported board must
+    # degrade to fewer results, never to a failed search.
+    for site in sites:
+        try:
+            df = scrape_jobs(
+                site_name=[site],
+                search_term=search_term,
+                location=location or None,
+                results_wanted=results_wanted,
+                hours_old=hours_old,
+                is_remote=is_remote,
+                country_indeed=country_indeed,
+            )
+            # NaN isn't valid JSON — scrape_jobs leaves missing fields as NaN.
+            df = df.where(df.notnull(), None)
+            records.extend(df.to_dict(orient="records"))
+        except Exception as exc:
+            print(f"jobspy: site {site!r} failed, continuing: {exc}",
+                  file=sys.stderr)
+    return records
 
 
 if __name__ == "__main__":
