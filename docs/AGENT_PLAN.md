@@ -1072,7 +1072,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | DONE | b08c605 |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | DONE | 1fe8787 |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | DONE | 2755059 |
-| L6 | Life review + integration (monthly vault note, briefing Life section) | DONE | (pending commit) |
+| L6 | Life review + integration (monthly vault note, briefing Life section) | DONE | ba8ce8e |
 | L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | PENDING | |
 
 ### Pre-flight (this session)
