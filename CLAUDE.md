@@ -638,6 +638,65 @@ PATCH             /api/career/applications/{id}          # human-reported outcom
 POST              /api/career/postings/{id}/apply        # 409 + ?force=true on duplicate-company
 ```
 
+## Life Autopilot
+
+Full binding spec: `docs/LIFE_AUTOPILOT.md`; progress + design findings:
+`docs/AGENT_PLAN.md`'s "Phase: LIFE AUTOPILOT". Health targets, behavioral
+pattern detection, habit auto-tracking, a wellbeing index, and place-
+triggered opportunity nudges — built on `amy/geo/`, `amy/patterns.py`,
+`amy/commitments/`, `amy/captures.py`, the tool registry + AGENT_GATE,
+event bus, MemoryWriter/GraphStore. Hard rules (enforced in every part):
+advisory never diagnostic (no generated text asserts a mental/physical
+state), estimates not medical advice (formulas always shown), propose
+don't impose (every new habit/goal/target is tier 2 with evidence), own
+baselines day-type-matched, never a nag, coordinates/health values never
+reach an LLM prompt or event payload, honest NULLs, grace not punishment.
+
+- `amy/life/targets.py` — pure math, no I/O: Mifflin-St Jeor BMR × activity
+  multiplier TDEE, age-band sleep, weight-scaled protein/water; every
+  function returns `{value, formula, inputs}`.
+- `amy/life/bootstrap.py` (L1) — health profile bootstrap. No pre-existing
+  "career vault-bootstrap" pattern exists to clone (verified —
+  `career_profile` is `PUT`-only, never vault-parsed); built instead from
+  `custodial_ai.py::match_beneficiary`'s fuzzy token-matching
+  (`find_health_folder`) and its `sensitive=True` LLM-rescue pattern
+  (`parse_health_notes`). Missing folder/essentials → durably-deduped
+  notification (prefs-table guard, `AMY_LIFE_RESUGGEST_DAYS`) listing
+  exactly what's needed, target features dormant. Complete profile → four
+  tier-2 `health_target_propose` approvals (calorie/sleep/protein/water),
+  each with its formula shown. `append_weight_log` + `check_weight_shift`:
+  a >5% weight shift gets its own tier-2 re-proposal with the delta —
+  dedup keys are suffixed per re-proposal (a fixed key would permanently
+  block re-proposal once the original was approved, since
+  `create_approval`'s dedup blocks pending/executed/auto_executed rows).
+  `check_vault_reparse`: poll-driven tier-1 re-parse with a diff when the
+  health folder's newest `.md` mtime moves (prefs-table marker,
+  `health_bootstrap_check` job) — the job-scan idiom (`meeting_prep_scan`),
+  not a live `vault.note_edited` subscription, since `app.py`'s
+  `VaultWatcher` still runs a bare `EventStore` (`vault.note_edited` is
+  not in `AGENT_RELEVANT_EVENTS`).
+- `health_profile` table (`collab.db`): `dob_or_age`, `sex`, `height_cm`,
+  `weight_kg`, `activity_level`, `weight_log` (JSON), `constraints`
+  (Fernet-encrypted, same convention as `career_profile.resume_text_enc`),
+  `provenance` (per-field JSON: `vault`|`manual`), `targets` (JSON,
+  populated only on approval — propose don't impose).
+- `health_targets` registry tool (read, honest `available:False` with no
+  profile). `health_bootstrap` no-op reactive agent (job-driven, same
+  idiom as `meeting_prep`/`portfolio`) + daily `health_bootstrap_check`
+  job. Kill switch `AMY_AGENT_LIFE_HEALTH`; master switch
+  `AMY_LIFE_AUTOPILOT` (read via `config._env`, no dedicated config.py
+  constant — same pattern as `AMY_LEARNING_FEED_ENABLED`).
+- **Known constraints discovered during L1/L2 planning** (see
+  `docs/AGENT_PLAN.md` for the full finding list): habits live in a
+  SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
+  `habit_links` bridges by id across the two files, no FK. `geo_places.kind`
+  is free-text, no enum. `geo_cells` has no time-of-day granularity
+  (`(cell, day, hits)` only) — home-cell inference cannot restrict to
+  night hours as originally envisioned; it falls back to the single
+  most-frequented cell overall. `transactions.date` has no time-of-day —
+  `late_night_orders` is a merchant-identity proxy (known late-night-
+  delivery merchants), not an hour-verified signal.
+
 ## Automation Layer
 
 App loop ticks every 60s (`AMY_AUTOMATION_TICK_SECONDS`), runs due jobs per user,
@@ -677,7 +736,10 @@ see "Career Autopilot" below) · `interview_debrief_scan` (hourly, prompts
 ONCE for a debrief after a career-linked calendar event ends — durable
 prefs-table guard, advisory) · `career_retention` (monthly 3rd, archives
 90-day-old unapplied postings + compacts their events; applications are
-NEVER deleted).
+NEVER deleted) · `health_bootstrap_check` (06:05, LIFE AUTOPILOT L1 —
+finds/parses the health vault folder, proposes targets, polls for vault
+re-parse; re-checks `AMY_LIFE_AUTOPILOT` + `AMY_AGENT_LIFE_HEALTH` at
+runtime).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
@@ -757,7 +819,7 @@ pins it down with a call counter + approval-row count, not just dedup.
 
 Kill switches: `AMY_AGENT_BUDGET` / `_SUBSCRIPTION` / `_COMPLIANCE` /
 `_SCREENING` / `_OBLIGATION` / `_ERRAND` / `_LEARNING` / `_PR_TASK` /
-`_MEETING_PREP`.
+`_MEETING_PREP` / `_LIFE_HEALTH` (LIFE AUTOPILOT L1, below).
 
 ## LLM Routing
 

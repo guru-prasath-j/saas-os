@@ -1064,8 +1064,8 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 
 | Part | Description | Status | Commit |
 |---|---|---|---|
-| 0 | `test_reactive_agents.py` registered-agent-set assertion → set `>=` check | PENDING | |
-| L1 | Health bootstrap + targets (`amy/life/targets.py`, vault-bootstrap clone) | PENDING | |
+| 0 | `test_reactive_agents.py` registered-agent-set assertion → set `>=` check | DONE | ab1976a |
+| L1 | Health bootstrap + targets (`amy/life/targets.py`, `amy/life/bootstrap.py`) | DONE | 5a88924 |
 | L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | PENDING | |
 | L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | PENDING | |
 | L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | PENDING | |
@@ -1085,3 +1085,87 @@ and the CAREER AUTOPILOT Part 1 vault-bootstrap pattern (L1's template).
 Query actual `geo_places` rows for which kinds exist today. Present a
 file-mapped plan for L1+L2 plus the open decisions listed in
 `docs/LIFE_AUTOPILOT.md` before writing code.
+
+**Findings that corrected the brief's assumptions** (verified by direct
+grep + a live query against the real account, uid `f19e3ab6…`,
+`usergithub02@gmail.com`, home_jurisdiction=india, 276 transactions):
+
+1. **No career vault-bootstrap pattern exists to clone.** `career_profile`
+   is populated only via `PUT /api/career/profile` — no fuzzy-folder-match-
+   then-LLM-parse path anywhere in `career_apply.py`/`career_scout.py`/
+   `career_inbound.py`/`saas/routers/career.py`/`amy/knowledge/`. L1's
+   bootstrap (`amy/life/bootstrap.py`) is built fresh from the two closest
+   idioms instead: `amy/finance/custodial_ai.py::match_beneficiary`'s fuzzy
+   token-matching and its `sensitive=True` LLM-rescue pattern
+   (`llm_parse_transfer`).
+2. **Habits live in a separate per-user `habits.db`** (`HabitEngine`,
+   `amy/habits/engine.py`), not `collab.db` — thin schema (`habits`,
+   `habit_logs`), no streak column (computed on read), no linkage concept,
+   100% manual today. `habit_links` (L4, `collab.db`) will bridge by id
+   across the two files (no FK — SQLite can't do cross-file FKs anyway);
+   `JobCtx.open_habits()` will be added when L4 needs it.
+3. **The account has zero geo history** (0 `geo_places`/`geo_visits`/
+   `geo_cells`), zero habits, zero commitments, zero goals — only 276
+   transactions. `geo_places.kind` is free-text with no enum; the only
+   kinds referenced anywhere in code are `grocery`/`restaurant`/`shopping`/
+   `fuel`/`pharmacy` (`_CATEGORY_KIND`/`_KIND_BUDGET_ALIASES` in
+   `geo/learn.py`/`reactive.py`) — nothing special-cases `home`/`office`/
+   `gym`. L2's home-cell inference therefore needs a dual strategy (tagged
+   `kind='home'` place, else inferred from `geo_cells`) rather than
+   requiring tag-your-places first.
+4. **`geo_cells` has no time-of-day granularity** — schema is
+   `(cell, day, hits)`, day-level only (confirmed reading
+   `amy/geo/store.py`). The originally-planned "most-frequent night-time
+   (00:00-05:00) cell" home inference is not buildable from this table
+   without a schema change to a shared, actively-used module. L2's
+   fallback home-cell inference instead uses the single most-frequented
+   cell overall (highest total `hits`/distinct-day count) over the
+   trailing baseline window — an honest, documented simplification, not
+   the originally-stated night-bucket approach.
+5. **`transactions.date` has no time-of-day** (`'YYYY-MM-DD'` only, no
+   timestamp column) — `late_night_orders` cannot be hour-verified from
+   finance data alone. L2 approximates it via known late-night-delivery
+   merchant/category matching (documented as a merchant-identity proxy,
+   not an hour-verified signal) rather than fabricating a time. Geo visits
+   (`geo_visits.entered_at/left_at`) and captures/`activities` rows DO
+   carry full timestamps, so office/commute/sleep-window signals use real
+   times where the underlying table supports it.
+
+### Part L1 — Health bootstrap + targets (DONE, commit `5a88924`)
+
+Built per the file-mapped plan above finding 1. `health_profile` table
+(`collab.db`, `AutomationStore`) with `constraints` Fernet-encrypted (same
+convention as `career_profile.resume_text_enc`) and a per-field
+`provenance` JSON map. `amy/life/targets.py`: pure Mifflin-St Jeor BMR ×
+activity-multiplier TDEE, age-band sleep, weight-scaled protein/water —
+every function returns `{value, formula, inputs}`. `amy/life/bootstrap.py`:
+`find_health_folder()` fuzzy-matches a vault top-level folder against
+health/fitness/wellness/personal/profile; `parse_health_notes()` is ONE
+`sensitive=True` LLM pass; missing folder or incomplete essentials →
+durably-deduped notification (prefs-table guard, re-fires at most every
+`AMY_LIFE_RESUGGEST_DAYS`) listing exactly what's needed, target features
+stay dormant; complete profile → four tier-2 `health_target_propose`
+approvals (calorie/sleep/protein/water), each with its formula shown.
+`append_weight_log` + `check_weight_shift`: a >5% shift gets its own
+tier-2 re-proposal with the delta — dedup keys are suffixed per re-
+proposal (a fixed key would permanently block re-proposal once the
+original was approved, since `create_approval`'s dedup blocks
+pending/executed/auto_executed rows). Vault edits under the health folder
+get a poll-driven tier-1 re-parse with a diff (`check_vault_reparse`,
+`prefs`-table mtime marker) — the job-scan idiom (`meeting_prep_scan`),
+not a live `vault.note_edited` subscription, since `app.py`'s
+`VaultWatcher` runs a bare `EventStore` today and rewiring it was out of
+scope for L1.
+
+`health_targets` registry tool (read, honest `available:False` with no
+profile). `health_bootstrap` no-op reactive agent (job-driven, same idiom
+as `meeting_prep`/`portfolio`) + daily `health_bootstrap_check` job. Kill
+switch `AMY_AGENT_LIFE_HEALTH`, master switch `AMY_LIFE_AUTOPILOT`.
+
+Tests: `tests/test_life_health.py` (11 passing) — dormancy on missing
+folder / missing essentials with the exact-list notification; correct
+BMR/TDEE math; `sensitive=True` routing asserted on every LLM call;
+forbidden-phrase assertion (advisory-never-diagnostic) on every generated
+string; tier-1 vault-reparse diff; >5%/<5% weight-shift behavior;
+idempotent re-bootstrap (no duplicate proposals). Full suite: 657 passed,
+22 pre-existing failures (unchanged from the documented baseline).
