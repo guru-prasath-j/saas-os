@@ -785,6 +785,25 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   `custodial_bank` reuses `amy/finance/custodial.py::run_validation()`
   directly; `office_gap` uses the real `meet_upcoming_meetings`/
   `plane_list_tasks` tools (unlike L2's still-stubbed calendar columns).
+- `amy/life/wellbeing.py` (L5) — `check_week(ctx, week_start=None)`
+  defaults to the most recently FULLY completed week (never in-progress).
+  Per-component deltas reuse `baselines.day_type_baseline()` computed PER
+  day-type within the week then combined by a day-count-weighted average
+  of the DELTAS (not raw values) — stays day-type-matched (hard rule 4)
+  even though a week blends weekday/weekend days. Majority-grace week
+  (<4 non-grace days) → `line_emitted=False` unconditionally (hard rule
+  8), regardless of what the components would otherwise show. An adverse
+  week (office +60min/day, sleep -30min/day, or zero gym visits vs a
+  nonzero baseline) → exactly ONE observation+option line, reusing L3's
+  `propose()` framework verbatim for "declining remembered" (same
+  dedup/resuggest-window/drift-silence semantics — deliberate reuse, the
+  anti-nag needs are identical). No dedicated kill switch (not in the
+  spec's enumerated `AMY_AGENT_LIFE_*` list) — gated by
+  `AMY_LIFE_AUTOPILOT` only. `life_wellbeing_weekly` job runs
+  `daily_at: "07:15"` but no-ops except on Monday (no native weekly
+  schedule type in `compute_next_run` — cheap to poll-and-skip rather
+  than add one for a single caller). Terminal-advisory: nothing
+  downstream keys on `wellbeing_weekly` within this part.
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -843,7 +862,9 @@ previous day's `life_metrics` row, then runs L4's day-close habit-link
 evaluation + adaptation checks, idempotent; re-checks `AMY_LIFE_AUTOPILOT`
 at runtime) · `life_inference_scan` (10:00, LIFE AUTOPILOT L3 — runs all
 nine inference agents' weekly-rollup checks; each independently
-re-checks its own kill switch).
+re-checks its own kill switch) · `life_wellbeing_weekly` (07:15,
+LIFE AUTOPILOT L5 — computes last week's wellbeing_weekly row; no-ops
+except on Monday).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules

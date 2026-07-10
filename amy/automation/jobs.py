@@ -218,6 +218,26 @@ def _life_inference_scan(ctx: JobCtx) -> dict:
     return run_all(ctx)
 
 
+def _life_wellbeing_weekly(ctx: JobCtx) -> dict:
+    """LIFE AUTOPILOT L5: computes last week's wellbeing_weekly row every
+    Monday. No dedicated per-agent kill switch exists for this part (not
+    in the spec's enumerated AMY_AGENT_LIFE_* list) — gated by
+    AMY_LIFE_AUTOPILOT only. Scheduled daily_at (this codebase's
+    compute_next_run has no native weekly schedule type) but no-ops on
+    every day except Monday — cheap, and check_week() is idempotent per
+    week regardless."""
+    import datetime as _dt
+
+    if not _life_autopilot_enabled():
+        return {"skipped": "disabled"}
+    if _dt.date.today().weekday() != 0:
+        return {"skipped": "not_monday"}
+    from ..life.wellbeing import check_week
+    row = check_week(ctx)
+    return {"week": row.get("week") if row else None,
+           "line_emitted": row.get("line_emitted") if row else False}
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -269,6 +289,7 @@ HANDLERS: dict[str, callable] = {
     "health_bootstrap_check": _health_bootstrap_check,
     "life_metrics_daily": _life_metrics_daily,
     "life_inference_scan": _life_inference_scan,
+    "life_wellbeing_weekly": _life_wellbeing_weekly,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -314,6 +335,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("health_bootstrap_check", {"daily_at": "06:05"}),
         ("life_metrics_daily",     {"daily_at": "00:30"}),
         ("life_inference_scan",    {"daily_at": "10:00"}),
+        ("life_wellbeing_weekly",  {"daily_at": "07:15"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

@@ -110,3 +110,24 @@ def delete_habit_link(link_id: str, user: User = Depends(current_user)):
         return {"ok": True}
     finally:
         cdb.close()
+
+
+@router.get("/api/life/wellbeing")
+def list_wellbeing(weeks: int = 12, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        return {"weeks": ctx.store.list_wellbeing_weeks(user.id, limit=weeks)}
+    finally:
+        cdb.close()
+
+
+@router.get("/api/life/wellbeing/{week}")
+def get_wellbeing_week(week: str, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        row = ctx.store.get_wellbeing_week(user.id, week)
+        if not row:
+            raise HTTPException(status_code=404, detail="no wellbeing data for that week")
+        return row
+    finally:
+        cdb.close()

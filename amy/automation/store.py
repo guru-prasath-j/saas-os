@@ -265,6 +265,16 @@ class AutomationStore:
                 created_at     TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS wellbeing_weekly (
+                uid          TEXT NOT NULL,
+                week         TEXT NOT NULL,
+                components   TEXT DEFAULT '{}',
+                index_delta  REAL,
+                line_emitted INTEGER DEFAULT 0,
+                computed_at  TEXT,
+                PRIMARY KEY (uid, week)
+            );
+
             CREATE TABLE IF NOT EXISTS health_profile (
                 uid              TEXT PRIMARY KEY,
                 dob_or_age       TEXT DEFAULT '',
@@ -816,6 +826,41 @@ class AutomationStore:
         c = self.conn.execute("DELETE FROM habit_links WHERE id=?", (link_id,))
         self.conn.commit()
         return c.rowcount > 0
+
+    # --- wellbeing weekly (LIFE AUTOPILOT L5) ----------------------------------
+
+    def get_wellbeing_week(self, uid: str, week: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM wellbeing_weekly WHERE uid=? AND week=?", (uid, week)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["components"] = json.loads(d["components"] or "{}")
+        d["line_emitted"] = bool(d["line_emitted"])
+        return d
+
+    def list_wellbeing_weeks(self, uid: str, limit: int = 12) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM wellbeing_weekly WHERE uid=? ORDER BY week DESC LIMIT ?",
+            (uid, limit)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["components"] = json.loads(d["components"] or "{}")
+            d["line_emitted"] = bool(d["line_emitted"])
+            out.append(d)
+        return out
+
+    def upsert_wellbeing_week(self, uid: str, week: str, components: dict,
+                              index_delta: float | None, line_emitted: bool) -> None:
+        self.conn.execute(
+            "INSERT INTO wellbeing_weekly(uid,week,components,index_delta,line_emitted,computed_at)"
+            " VALUES(?,?,?,?,?,?)"
+            " ON CONFLICT(uid,week) DO UPDATE SET components=excluded.components,"
+            " index_delta=excluded.index_delta, line_emitted=excluded.line_emitted,"
+            " computed_at=excluded.computed_at",
+            (uid, week, json.dumps(components), index_delta, 1 if line_emitted else 0, _now_iso()))
+        self.conn.commit()
 
     # --- health profile (LIFE AUTOPILOT L1) -----------------------------------
 

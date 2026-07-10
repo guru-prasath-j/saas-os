@@ -315,6 +315,8 @@ Full spec: `docs/LIFE_AUTOPILOT.md`.
 | DELETE | `/api/life/habit-links/{link_id}` | Remove a link (habit stays fully manual again). |
 | GET | `/api/life/habits/link-suggestions` | `?title=` — keyword-matched signal suggestion for the Add-habit flow, or `null`. Suggestion only, never forced. |
 | POST | `/api/life/opportunities/{notification_id}/dismiss` | Marks the notification read + increments that rule category's dismiss counter (2 → permanently silenced). |
+| GET | `/api/life/wellbeing` | `?weeks=` (default 12) — recent `wellbeing_weekly` rows. |
+| GET | `/api/life/wellbeing/{week}` | One week's full component table (the "click → the week's table" detail view). |
 
 Registry tools:
 

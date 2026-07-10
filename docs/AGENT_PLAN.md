@@ -1070,7 +1070,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | DONE | 5ec3292 |
 | L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | DONE | f014e07 |
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | DONE | b08c605 |
-| L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | PENDING | |
+| L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | DONE | (pending commit) |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | PENDING | |
 | L6 | Life review + integration (monthly vault note, briefing Life section) | PENDING | |
 | L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | PENDING | |
@@ -1573,3 +1573,64 @@ failures plus `test_live_watcher.py::test_live_watcher_flow`, which
 passes in isolation (confirmed) and matches the "known-flaky filesystem-
 watcher timing test" documented recurring across CONNECTOR COMPLETION
 Part 3 and multiple CAREER AUTOPILOT parts — not this work's doing.
+
+### Part L5 — Wellbeing index (DONE)
+
+`wellbeing_weekly` table (`collab.db`) + idempotent `upsert_wellbeing_week`
+(UPSERT on `(uid,week)`). `amy/life/wellbeing.py::check_week(ctx,
+week_start=None)` defaults to `last_completed_week()` — the Monday of the
+most recently FULLY completed week, never the in-progress current week
+(a partial week isn't a fair baseline comparison).
+
+Per-component deltas (`office_minutes`, `sleep_estimate_min`,
+`gym_visits`) reuse L3's `day_type_baseline()` exactly, but computed PER
+DAY-TYPE within the week and then combined by a day-count-weighted
+average of the DELTAS (not the raw values) — each day was compared
+against its own day-type's baseline before any blending happens, so the
+single resulting number stays honestly "day-type-matched" (hard rule 4)
+even though a week mixes weekday and weekend days.
+
+Majority-grace week (fewer than 4 non-grace days) → `components` may
+still be empty/thin but `line_emitted` is unconditionally `False` — hard
+rule 8's "majority-grace week produces NO wellbeing line," verified by a
+test where the underlying numbers WOULD have been adverse if judged.
+Otherwise, an adverse week (office +60min/day, sleep -30min/day, or zero
+gym visits where the baseline was nonzero) produces exactly ONE line
+(`AMY_LIFE_WELLBEING_MAX_LINES=1` is naturally satisfied — this computes
+once per week, not per day), phrased as observation + option exactly per
+the spec's example. "Declining remembered" reuses L3's `propose()`
+framework verbatim (same `source="life_wellbeing"`, same dedup/resuggest-
+window/drift-silence semantics) — the anti-nag requirements are
+identical in spirit to L3's, so this is a deliberate reuse, not a
+parallel mechanism. No inferred emotional/medical state is computed or
+stored anywhere — components are plain metric numbers, satisfying hard
+rule 1 by construction (there is no code path that could produce a
+diagnostic claim, since nothing here represents a state, only deltas).
+
+No dedicated per-agent kill switch exists for L5 — it isn't in the spec's
+enumerated `AMY_AGENT_LIFE_*` config list, so it's gated by
+`AMY_LIFE_AUTOPILOT` only, matching the spec precisely rather than
+inventing a switch. Scheduled `daily_at: "07:15"` (this codebase's
+`compute_next_run` has no native weekly schedule type) but no-ops on
+every day except Monday inside the handler — cheap, and `check_week()` is
+idempotent per week regardless, so this is a documented minimal-footprint
+choice over adding a new schedule type to shared scheduling
+infrastructure for one caller.
+
+`GET /api/life/wellbeing?weeks=` (list) + `GET /api/life/wellbeing/{week}`
+(the "click → the week's table" component detail the spec calls for).
+Terminal-advisory: nothing downstream keys on `wellbeing_weekly` within
+this part (L6's monthly Life Review will read it for its narrative, but
+no agent branches on it — the spec's own framing).
+
+Tests: `tests/test_life_wellbeing.py` (6 passing) — adverse week produces
+exactly one line + a forbidden-phrase assertion on the actual generated
+text + idempotent recompute (no duplicate proposal/row); majority-grace
+week produces no line even with underlying-adverse numbers; a normal
+(non-adverse) week stores components but no line; components are
+inspectable via the store/API with the full `{value, baseline_mean,
+delta, direction, n}` shape; combined sleep+gym adverse phrasing;
+`last_completed_week()` date-math sanity check.
+
+Full suite: 719 passed, 23 failed — same as L9's baseline (22
+pre-existing + the documented flaky filesystem-watcher test).
