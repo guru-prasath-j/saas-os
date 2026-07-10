@@ -317,6 +317,8 @@ Full spec: `docs/LIFE_AUTOPILOT.md`.
 | POST | `/api/life/opportunities/{notification_id}/dismiss` | Marks the notification read + increments that rule category's dismiss counter (2 → permanently silenced). |
 | GET | `/api/life/wellbeing` | `?weeks=` (default 12) — recent `wellbeing_weekly` rows. |
 | GET | `/api/life/wellbeing/{week}` | One week's full component table (the "click → the week's table" detail view). |
+| GET | `/api/life/habits-overview` | Per-habit `streak_grace` + `linked`/`signal_type`/`mode` — what the Habits tab renders from (L7). |
+| GET | `/api/life/health/targets` | HTTP wrapper around the `health_targets` tool (L7). |
 
 Registry tools:
 

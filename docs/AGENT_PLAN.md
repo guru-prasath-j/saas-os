@@ -1073,7 +1073,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | DONE | 1fe8787 |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | DONE | 2755059 |
 | L6 | Life review + integration (monthly vault note, briefing Life section) | DONE | ba8ce8e |
-| L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | PENDING | |
+| L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | DONE | (pending commit) |
 
 ### Pre-flight (this session)
 
@@ -1780,3 +1780,83 @@ pattern-insight line even with two patterns detected.
 
 Full suite: 742 passed, 22 failed (the pre-existing baseline — the
 flaky filesystem-watcher test happened to pass this run).
+
+### Part L7 — UI (DONE)
+
+Two new backend routes support the UI (`amy/saas/routers/life.py`):
+`GET /api/life/habits-overview` (per-habit `streak_grace` via L4's
+`streak_with_grace()` + `linked`/`signal_type`/`mode` from `habit_links`
+— one call instead of the frontend fanning out per habit) and
+`GET /api/life/health/targets` (thin HTTP wrapper around the existing
+`health_targets` registry tool, `actor="human"` — the tool itself was
+never reachable over HTTP before this).
+
+`amy/saas/static/index.html`, existing `data-tab`/`api()`/`jget`/`jpost`
+conventions throughout, no new patterns invented:
+
+- **Habits tab**: `loadHabits()` now calls `/api/life/habits-overview`
+  first (falling back to the plain `/api/habits` shape if that call
+  fails, so a habits-overview outage never breaks the base tracker) and
+  renders a `"tracked automatically via {signal_type}"` chip per linked
+  habit plus the grace-adjusted streak (labeled distinctly from the
+  plain streak only when they actually differ). New **Health targets**
+  card (`loadHealthTargets()`) — honest `"no health profile on file"`
+  when unavailable, else the four targets + the formula/disclaimer text,
+  verbatim from L1's `all_targets()`. New **Wellbeing** card
+  (`loadWellbeing()`) — stays hidden with no wellbeing data or no line
+  this week (never manufactures an empty section), click-to-expand
+  component table (`GET /api/life/wellbeing/{week}`) satisfying "click →
+  the week's table." New **Suggested for you** card — pending
+  `propose_habit` approvals with evidence (the approval's `reasoning`/
+  `body`) and Approve/Reject wired to the same
+  `/api/automation/approvals/{id}/{approve|reject}` endpoint the
+  existing Agent tab already uses (no new approval-decision code path).
+- **Goals tab**: parallel **Suggested goals** card, same
+  `loadLifeSuggested(kind)` function parameterized by `kind` (`'habit'`
+  → Habits tab element ids, `'goal'` → Goals tab element ids) rather than
+  two near-duplicate functions.
+- **Timeline**: `TL_COLORS` gained a `daily_metrics` entry — the strip
+  itself needed no new code (L2/L6 already established that
+  `TimelineEngine._items()` reads every `events` row generically).
+
+All inline JS syntax-checked via `node -e "new Function(...)"` over the
+extracted `<script>` block (same verification CONNECTOR COMPLETION Part 3
+established).
+
+**Manually verified live end-to-end** (not just mocked tests) via
+Playwright against a running `uvicorn` instance, per this repo's
+mandatory UI-testing rule — restarted the dev server first (routes need
+a restart, no hot reload), signed up a fresh test account (simpler than
+guessing the seeded account's password), and drove the real app:
+- Health targets card correctly showed "no health profile on file" for a
+  fresh account.
+- A habit linked via `POST /api/life/habits/{id}/link` rendered its
+  "tracked automatically via reading_minutes" badge and streak in the
+  live habit tracker.
+- Seeded four food-delivery transactions + ran `life_inference_scan` live
+  (`POST /api/automation/jobs/life_inference_scan/run`) — the admin agent
+  really fired (ITR filing + GST return deadline goals) and
+  commitments-crossover really fired (annual checkup commitment); the
+  Habits tab's Suggested-for-you card correctly showed nothing (no
+  `propose_habit` proposals fired this run — only goals/commitments did,
+  proving the action_type filter works, not a bug); the Goals tab's
+  Suggested goals card showed both real proposals with their actual
+  evidence text.
+- Clicked Approve on a live suggestion through the browser and confirmed
+  via a direct API check that it actually executed: pending-approval
+  count dropped from 3 to 2, and `GET /api/goals` showed the real new
+  goal ("Prepare for Income-tax return (ITR) filing deadline", domain
+  `life`, `target_date` `2026-07-31`) — the full click → approve →
+  execute → goal-created pipeline confirmed working through the real UI,
+  not just at the API layer.
+- No browser console errors during any of the above (checked via a
+  Playwright `console`/`pageerror` listener).
+
+Tests: `tests/test_life_routes_ui.py` (4 passing, `TestClient`, mirrors
+`test_connectors_status.py`'s fixture) — `habits-overview` shape empty
+and with a linked habit (`linked`/`signal_type`/`mode` fields correct
+before and after linking); `health/targets` honest `available:False`
+with no profile; `wellbeing` empty list.
+
+Full suite: 745 passed, 23 failed (22 pre-existing + the documented
+flaky filesystem-watcher test).

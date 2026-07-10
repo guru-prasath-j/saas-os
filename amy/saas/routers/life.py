@@ -113,6 +113,46 @@ def delete_habit_link(link_id: str, user: User = Depends(current_user)):
         cdb.close()
 
 
+@router.get("/api/life/habits-overview")
+def habits_overview(user: User = Depends(current_user)):
+    """L7: per-habit grace-aware streak + auto-track link info, combining
+    HabitEngine's plain list with L4's streak_with_grace() and habit_links
+    — one call so the Habits tab doesn't have to fan out per habit."""
+    from ...life.habits import streak_with_grace
+
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        habits = ctx.open_habits()
+        try:
+            rows = habits.list_habits()
+            links = {l["habit_id"]: l for l in ctx.store.list_habit_links(user.id)}
+            out = []
+            for h in rows:
+                link = links.get(h["id"])
+                out.append({
+                    **h,
+                    "streak_grace": streak_with_grace(ctx, h["id"], habits),
+                    "linked": bool(link),
+                    "signal_type": link["signal_type"] if link else None,
+                    "mode": link["mode"] if link else None,
+                })
+            return {"habits": out}
+        finally:
+            habits.close()
+    finally:
+        cdb.close()
+
+
+@router.get("/api/life/health/targets")
+def health_targets_route(user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ... import tools
+        return tools.invoke(ctx, "health_targets", {}, actor="human")
+    finally:
+        cdb.close()
+
+
 @router.get("/api/life/wellbeing")
 def list_wellbeing(weeks: int = 12, user: User = Depends(current_user)):
     cdb, ctx = _ctx(user, with_llm=False)

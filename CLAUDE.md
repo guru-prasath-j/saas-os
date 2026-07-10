@@ -851,6 +851,25 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   `life_review_monthly` job (`monthly_day: 1, at: "06:30"`), no dedicated
   kill switch (not in the spec's enumerated list) — `AMY_LIFE_AUTOPILOT`
   only, same precedent as L5/L8.
+- **L7 (UI)** — `GET /api/life/habits-overview` (per-habit `streak_grace`
+  + `linked`/`signal_type`/`mode`, one call instead of per-habit fan-out)
+  and `GET /api/life/health/targets` (thin HTTP wrapper around the
+  `health_targets` registry tool — never reachable over HTTP before).
+  `index.html`'s Habits tab: `loadHabits()` prefers `habits-overview`
+  (falls back to plain `/api/habits` on failure) and renders a "tracked
+  automatically via {signal}" chip + grace-adjusted streak; new Health
+  targets card, Wellbeing card (hidden with no data — never a manufactured
+  empty section), and Suggested-for-you card (pending `propose_habit`
+  approvals, Approve/Reject via the SAME `/api/automation/approvals/{id}/
+  {approve|reject}` endpoint the Agent tab already uses). Goals tab gets
+  a parallel Suggested-goals card — one `loadLifeSuggested(kind)`
+  function parameterized by `kind`, not two near-duplicates. Manually
+  verified live via Playwright against a running server (not just mocked
+  tests): a linked habit's badge rendered correctly, a live
+  `life_inference_scan` run produced real admin-agent + commitments-
+  crossover proposals, and clicking Approve in the browser was confirmed
+  (via a direct API check) to actually execute — pending count dropped,
+  a real goal appeared in `GET /api/goals`.
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's

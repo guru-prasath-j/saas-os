@@ -594,6 +594,10 @@
 
       <!-- TAB: GOALS -->
       <div class="tab hidden" id="tab-goals">
+        <div class="card" id="lifeSuggestedGoalsCard" style="display:none">
+          <h3>Suggested goals <span class="muted">— evidence-backed, tier-2 (needs your OK)</span></h3>
+          <div id="lifeSuggestedGoalsBody"></div>
+        </div>
         <div class="card">
           <h3>Goals</h3>
           <p class="muted">Set goals, add milestones, track progress. Finishing all milestones marks a goal done.</p>
@@ -871,10 +875,23 @@
 
       <!-- TAB: HABITS -->
       <div class="tab hidden" id="tab-habits">
+        <div class="card" id="wellbeingCard" style="display:none">
+          <h3>Wellbeing <span class="muted">— weekly, vs your own baseline</span></h3>
+          <div id="wellbeingBody" class="muted">Loading…</div>
+          <div id="wellbeingDetail" class="hidden" style="margin-top:10px"></div>
+        </div>
+        <div class="card" id="healthTargetsCard">
+          <h3>Health targets <span class="muted">— estimates, not medical advice</span></h3>
+          <div id="healthTargetsBody" class="muted">Loading…</div>
+        </div>
+        <div class="card" id="lifeSuggestedCard" style="display:none">
+          <h3>Suggested for you <span class="muted">— evidence-backed, tier-2 (needs your OK)</span></h3>
+          <div id="lifeSuggestedBody"></div>
+        </div>
         <div class="card">
           <h3>Habit tracker</h3>
           <div style="display:flex;gap:8px;margin-bottom:10px">
-            <input id="habitTitle" placeholder="New habit (e.g. Read 20 min)" style="flex:1"/>
+            <input id="habitTitle" placeholder="New habit (e.g. Read 20 min)" style="flex:1" oninput="habitTitleSuggest()"/>
             <select id="habitFreq" style="flex:0 0 90px;background:rgba(0,0,0,.28);border:1px solid var(--border-2);color:var(--text);border-radius:11px;padding:10px;font-size:13px">
               <option>daily</option><option>weekly</option>
             </select>
@@ -1916,7 +1933,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   document.getElementById('tab-'+tab).classList.remove('hidden');
   if(tab==='dashboard') loadDashboard();
   if(tab==='agent') loadAgentTab();
-  if(tab==='goals') loadGoals();
+  if(tab==='goals'){ loadGoals(); loadLifeSuggested('goal'); }
   if(tab==='finance') loadFinance();
   if(tab==='custodial') loadCustodialAccountPicker();
   if(tab==='budget'){ loadFinBudgets(); loadBudgetSuggestions(); }
@@ -1932,7 +1949,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='metaai') loadMetaAI();
   if(tab==='intelligence') {}
   if(tab==='tags') loadTags();
-  if(tab==='habits') loadHabits();
+  if(tab==='habits'){ loadHabits(); loadLifeSuggested('habit'); loadHealthTargets(); loadWellbeing(); }
   if(tab==='srs') loadSRS();
   if(tab==='entities') loadEntities();
   if(tab==='account') loadAccount();
@@ -3478,7 +3495,7 @@ async function savePrivacy(){
 }
 
 // ---- timeline ----
-const TL_COLORS = {activity:'#22d3ee',event:'#8b5cf6',decision:'#fbbf24',note:'#34d399',email:'#f472b6',calendar:'#60a5fa',tasks:'#f87171'};
+const TL_COLORS = {activity:'#22d3ee',event:'#8b5cf6',decision:'#fbbf24',note:'#34d399',email:'#f472b6',calendar:'#60a5fa',tasks:'#f87171',daily_metrics:'#f59e0b'};
 async function loadTimeline(period='week'){
   ['tlDay','tlWeek','tlMonth'].forEach(id=>document.getElementById(id).classList.remove('active'));
   const btn={day:'tlDay',week:'tlWeek',month:'tlMonth'}[period];
@@ -3846,24 +3863,50 @@ async function searchByTag(tag){
 }
 
 // ---- habits ----
+// LIFE AUTOPILOT L7: grace-aware streak + "tracked automatically via
+// {signal}" badge come from /api/life/habits-overview (falls back to the
+// plain /api/habits shape if that call fails — e.g. an older backend —
+// so the base tracker never breaks because a Life-specific call did).
 async function loadHabits(){
   try{
-    const d=await jget('/api/habits');
-    const habits=d.habits||[];
+    let habits=[];
+    try{
+      const d=await jget('/api/life/habits-overview');
+      habits=d.habits||[];
+    }catch(e){
+      const d=await jget('/api/habits');
+      habits=d.habits||[];
+    }
     if(!habits.length){document.getElementById('habitList').innerHTML='<div class="card"><p class="muted">No habits yet — add one above to start tracking.</p></div>';return;}
-    document.getElementById('habitList').innerHTML=habits.map(h=>`
+    document.getElementById('habitList').innerHTML=habits.map(h=>{
+      const streak=(h.streak_grace!=null)?h.streak_grace:h.streak;
+      const badge=h.linked?`<span class="chip" title="${h.mode==='auto_complete'?'checks in automatically':'auto-suggested, one tap to confirm'}">tracked automatically via ${h.signal_type}</span>`:'';
+      return `
       <div class="card" style="border-left:3px solid ${h.color}">
         <div style="display:flex;align-items:center;gap:10px">
           <button class="sm ${h.checked_today?'':'ghost'}" onclick="habitCheckIn('${h.id}',${!h.checked_today})" style="flex:0 0 auto">
             ${h.checked_today?'✓ done':'check in'}
           </button>
-          <div style="flex:1"><b>${h.title}</b> <span class="faint">${h.frequency}</span>
-            <div class="muted" style="font-size:12px">🔥 ${h.streak} day streak</div>
+          <div style="flex:1"><b>${h.title}</b> <span class="faint">${h.frequency}</span> ${badge}
+            <div class="muted" style="font-size:12px">🔥 ${streak} day streak${(h.streak_grace!=null&&h.streak_grace!==h.streak)?' <span class="faint">(grace-adjusted)</span>':''}</div>
           </div>
           <button class="ghost sm" onclick="deleteHabit('${h.id}')" style="color:var(--faint)">✕</button>
         </div>
-      </div>`).join('');
+      </div>`;}).join('');
   }catch(e){document.getElementById('habitList').innerHTML='<div class="card"><p class="muted">'+e.message+'</p></div>';}
+}
+let _habitSuggestTimer=null;
+async function habitTitleSuggest(){
+  clearTimeout(_habitSuggestTimer);
+  const t=document.getElementById('habitTitle').value.trim();
+  const m=document.getElementById('habitMsg');
+  if(!t){m.textContent='';return;}
+  _habitSuggestTimer=setTimeout(async()=>{
+    try{
+      const d=await jget('/api/life/habits/link-suggestions?title='+encodeURIComponent(t));
+      m.textContent=d.suggestion?('suggested auto-track: '+d.suggestion.signal_type+' — you can link it after adding'):'';
+    }catch(e){/* suggestion is optional */}
+  },400);
 }
 async function addHabit(){
   const t=document.getElementById('habitTitle').value.trim(); if(!t)return;
@@ -3872,6 +3915,86 @@ async function addHabit(){
     await jpost('/api/habits',{title:t,frequency:document.getElementById('habitFreq').value});
     document.getElementById('habitTitle').value=''; m.textContent='added ✓'; loadHabits();
   }catch(e){m.textContent=e.message;}
+}
+// ---- health targets (LIFE AUTOPILOT L1/L7) ----
+async function loadHealthTargets(){
+  const el=document.getElementById('healthTargetsBody');
+  try{
+    const d=await jget('/api/life/health/targets');
+    if(!d.available){
+      el.innerHTML='<p class="muted">'+(d.reason||'Add a health/personal note to your vault, or fill this in manually, to see targets.')+
+        (d.missing?('<br><span class="faint">Missing: '+d.missing.join(', ')+'</span>'):'')+'</p>';
+      return;
+    }
+    const c=d.computed;
+    el.innerHTML=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px">
+      <div class="toggle"><span>Calories</span><b>${c.tdee.value} kcal/day</b></div>
+      <div class="toggle"><span>Sleep</span><b>${c.sleep.value.min_hours}-${c.sleep.value.max_hours}h/night</b></div>
+      <div class="toggle"><span>Protein</span><b>${c.protein.value}g/day</b></div>
+      <div class="toggle"><span>Water</span><b>${c.water.value}ml/day</b></div>
+      </div>
+      <p class="faint" style="font-size:11px;margin-top:8px">${c.disclaimer}</p>
+      <p class="faint" style="font-size:11px">Formula: ${c.bmr.formula} → TDEE = ${c.tdee.formula}.</p>`;
+  }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+// ---- wellbeing (LIFE AUTOPILOT L5/L7) ----
+async function loadWellbeing(){
+  const card=document.getElementById('wellbeingCard'), el=document.getElementById('wellbeingBody');
+  try{
+    const d=await jget('/api/life/wellbeing?weeks=1');
+    const weeks=d.weeks||[];
+    if(!weeks.length){card.style.display='none';return;}
+    card.style.display='';
+    const w=weeks[0];
+    if(!w.line_emitted){
+      el.innerHTML='<p class="muted">No adverse pattern this week — nothing to flag.</p>';
+      return;
+    }
+    el.innerHTML=`<p>Week of ${w.week}: <button class="ghost sm" onclick="toggleWellbeingDetail('${w.week}')">view components</button></p>`;
+  }catch(e){card.style.display='none';}
+}
+let _wellbeingOpen=null;
+async function toggleWellbeingDetail(week){
+  const el=document.getElementById('wellbeingDetail');
+  if(_wellbeingOpen===week){el.classList.add('hidden'); _wellbeingOpen=null; return;}
+  _wellbeingOpen=week; el.classList.remove('hidden');
+  el.innerHTML='<span class="faint">Loading…</span>';
+  try{
+    const w=await jget('/api/life/wellbeing/'+week);
+    const rows=Object.entries(w.components||{}).map(([k,c])=>
+      `<div class="toggle"><span>${k}</span><span>${c.value} (baseline ${c.baseline_mean}, ${c.direction})</span></div>`).join('');
+    el.innerHTML=rows||'<p class="muted">No components recorded.</p>';
+  }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+// ---- suggested habits/goals (LIFE AUTOPILOT L3/L7) ----
+// kind: 'habit' -> lifeSuggestedCard/Body (Habits tab), 'goal' -> lifeSuggestedGoalsCard/Body (Goals tab)
+async function loadLifeSuggested(kind){
+  kind=kind||'habit';
+  const ids=kind==='goal'?['lifeSuggestedGoalsCard','lifeSuggestedGoalsBody']:['lifeSuggestedCard','lifeSuggestedBody'];
+  const card=document.getElementById(ids[0]), el=document.getElementById(ids[1]);
+  if(!card||!el) return;
+  const wantType=kind==='goal'?'propose_goal':'propose_habit';
+  try{
+    const d=await jget('/api/automation/approvals?status=pending');
+    const list=(d.approvals||[]).filter(a=>a.action_type===wantType);
+    if(!list.length){card.style.display='none';return;}
+    card.style.display='';
+    el.innerHTML=list.map(a=>`
+      <div class="toggle">
+        <div style="min-width:0;flex:1">
+          <b>${a.title}</b> <span class="chip">${kind}</span>
+          <div class="muted" style="font-size:12px;margin-top:3px"><b>Evidence:</b> ${a.reasoning||a.body||''}</div>
+        </div>
+        <div style="display:flex;gap:6px;flex-direction:column">
+          <button class="sm" onclick="lifeDecide('${a.id}','approve','${kind}')">Approve</button>
+          <button class="ghost sm" onclick="lifeDecide('${a.id}','reject','${kind}')">Reject</button>
+        </div>
+      </div>`).join('');
+  }catch(e){card.style.display='none';}
+}
+async function lifeDecide(id,verb,kind){
+  try{ await api(`/api/automation/approvals/${id}/${verb}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); }catch(e){}
+  loadLifeSuggested(kind); loadHabits(); loadGoals();
 }
 async function habitCheckIn(id,done){
   await jpost('/api/habits/'+id+'/checkin',{done});
