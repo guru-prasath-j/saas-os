@@ -804,6 +804,32 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   schedule type in `compute_next_run` — cheap to poll-and-skip rather
   than add one for a single caller). Terminal-advisory: nothing
   downstream keys on `wellbeing_weekly` within this part.
+- `amy/life/meal_captures.py` (L8) — a SECOND `sensitive=True`
+  classification pass over a capture's already-extracted caption/OCR/tags
+  TEXT (never the image — `captures.py`'s vision call at ingest stays
+  cloud-based, unchanged, out of scope). Populates `life_metrics.
+  meal_captures`/`meal_calorie_est` (NULL when the classifier can't
+  estimate), gated by `AMY_AGENT_LIFE_CAPTURE_MEALS` (a real per-capture
+  LLM cost, the one L1-L9 kill switch that trades off cost vs coverage).
+  `capture_meal` habit_links (a no-op since L4) now actually checks
+  `meal_captures >= min_captures`.
+- `amy/life/commitments_life.py` (L8) — `pharmacy_refill_check()`
+  proposes a `custom`-kind "Refill: {merchant}" commitment from a
+  pharmacy-merchant cadence — the exact signal L9's `pharmacy` rule was
+  waiting for (verified end-to-end: propose → approve → the L9 rule now
+  fires, where it was previously a documented permanent no-op).
+  `annual_checkup_check()` proposes one health-checkup commitment per
+  calendar year. Both reuse L3's `propose()` framework; new
+  `add_commitment` executor is the only new commitment-writing code —
+  `CommitmentEngine`'s deadline ladder is untouched.
+- `amy/life/health_data.py` (L8) — wearable stub: tries a generic
+  `"health_data"` MCP source via `call_mcp_tool`'s tolerant naming (same
+  idiom as `career_apply.py`'s company-intel stub), honest
+  `available:False` with nothing registered (the universal case — this
+  repo has no built-in wearable connector). When available:
+  `aggregator._apply_device_sleep()` prefers device sleep data and sets
+  the new `life_metrics.sleep_provenance` column (`'inferred'`|`'device'`);
+  `steps`/`workouts` are two new `habit_links` signal types.
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -946,7 +972,8 @@ Kill switches: `AMY_AGENT_BUDGET` / `_SUBSCRIPTION` / `_COMPLIANCE` /
 `_SCREENING` / `_OBLIGATION` / `_ERRAND` / `_LEARNING` / `_PR_TASK` /
 `_MEETING_PREP` / `_LIFE_HEALTH` / `_LIFE_HABITS` /
 `_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,ADMIN,SEASONAL,
-SOCIAL}` / `_LIFE_OPPORTUNITY` (LIFE AUTOPILOT L1/L3/L4/L9, below).
+SOCIAL}` / `_LIFE_OPPORTUNITY` / `_LIFE_CAPTURE_MEALS` (LIFE AUTOPILOT
+L1/L3/L4/L8/L9, below).
 
 ## LLM Routing
 

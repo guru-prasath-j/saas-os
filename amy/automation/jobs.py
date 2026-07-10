@@ -211,11 +211,22 @@ def _life_inference_scan(ctx: JobCtx) -> dict:
     inference agents have a natural push event, same structural choice as
     meeting_prep_scan. Re-checks AMY_LIFE_AUTOPILOT at runtime; each of
     the nine checks independently re-checks its own AMY_AGENT_LIFE_<NAME>
-    switch inside run_all()."""
+    switch inside run_all(). LIFE AUTOPILOT L8's commitments-crossover
+    checks (pharmacy refill, annual checkup) ride the same scan — no
+    dedicated kill switch exists for them either (not in the spec's
+    enumerated AMY_AGENT_LIFE_* list), just AMY_LIFE_AUTOPILOT."""
     if not _life_autopilot_enabled():
         return {"skipped": "disabled"}
     from ..life.inference import run_all
-    return run_all(ctx)
+    out = run_all(ctx)
+    try:
+        from ..life.commitments_life import annual_checkup_check, pharmacy_refill_check
+        out["commitments_crossover"] = {
+            "pharmacy_refill": len(pharmacy_refill_check(ctx)),
+            "annual_checkup": len(annual_checkup_check(ctx))}
+    except Exception as exc:
+        out["commitments_crossover"] = {"error": str(exc)[:200]}
+    return out
 
 
 def _life_wellbeing_weekly(ctx: JobCtx) -> dict:

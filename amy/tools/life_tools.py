@@ -49,6 +49,22 @@ def _t_health_targets(ctx, args):
            "accepted": profile.get("targets") or {}}
 
 
+@register_tool("health_data",
+               "Wearable/device health data for a date (sleep, steps, "
+               "workouts) via a registered health_data-shaped MCP "
+               "connector (Health Connect / Google Fit-style). "
+               "available=False honestly with no such connector "
+               "registered — never fabricated.",
+               _obj({"date": {"type": "string"}}, ["date"]),
+               RISK_READ)
+def _t_health_data(ctx, args):
+    from ..life.health_data import fetch_device_activity, fetch_device_day
+    sleep = fetch_device_day(ctx, args["date"])
+    activity = fetch_device_activity(ctx, args["date"])
+    return {"available": sleep.get("available") or activity.get("available"),
+           "sleep": sleep, "activity": activity}
+
+
 @register_tool("propose_habit",
                "Propose a new habit, optionally linked to an auto-tracking "
                "signal (e.g. geo_place_visit for a gym habit). Always tier "

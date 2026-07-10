@@ -324,6 +324,10 @@ def compute_day(ctx, date: str) -> dict:
 
     sleep_start, sleep_end, sleep_min = _infer_sleep_window(
         geo, act["_activity_times"], cap["_capture_times"], geo["home_arrival_at"])
+    sleep_start, sleep_end, sleep_min, sleep_provenance = _apply_device_sleep(
+        ctx, date, sleep_start, sleep_end, sleep_min)
+
+    meal = _meal_signals(ctx, date)
 
     signal_counts = {
         "geo_visits": geo["_visit_count"], "transactions": fin["_txn_count"],
@@ -342,6 +346,7 @@ def compute_day(ctx, date: str) -> dict:
         "sleep_window_start": sleep_start,
         "sleep_window_end": sleep_end,
         "sleep_estimate_min": sleep_min,
+        "sleep_provenance": sleep_provenance,
         "meals_out": fin["meals_out"],
         "late_night_orders": fin["late_night_orders"],
         "cafe_spend": fin["cafe_spend"],
@@ -350,12 +355,44 @@ def compute_day(ctx, date: str) -> dict:
         "focus_blocks": cal["focus_blocks"],
         "reading_minutes": act["reading_minutes"],
         "late_night_activity_min": None,   # L3 (meeting-load/sleep agents) territory
-        "meal_captures": 0,                # L8 adds real meal classification
-        "meal_calorie_est": None,
+        "meal_captures": meal["meal_captures"],
+        "meal_calorie_est": meal["meal_calorie_est"],
         "day_type": day_type,
         "grace": grace,
         "signal_counts": signal_counts,
     }
+
+
+def _meal_signals(ctx, date: str) -> dict:
+    """LIFE AUTOPILOT L8, gated by AMY_AGENT_LIFE_CAPTURE_MEALS (default
+    on) since it's a real per-capture LLM cost, not free like the other
+    signal sources."""
+    from .. import config
+    if not config.agent_enabled("life_capture_meals"):
+        return {"meal_captures": 0, "meal_calorie_est": None}
+    try:
+        from .meal_captures import _get_llm, day_meal_signals
+        return day_meal_signals(ctx, date, _get_llm(ctx))
+    except Exception:
+        return {"meal_captures": 0, "meal_calorie_est": None}
+
+
+def _apply_device_sleep(ctx, date: str, sleep_start, sleep_end, sleep_min):
+    """LIFE AUTOPILOT L8: prefers a registered health_data-shaped MCP's
+    real sleep data over the activity-gap inference, when one exists.
+    Honestly falls back to the inferred values (provenance='inferred')
+    with no connector registered — the common path today."""
+    try:
+        from .health_data import fetch_device_day
+        device = fetch_device_day(ctx, date)
+    except Exception:
+        device = {"available": False}
+    if not device.get("available"):
+        return sleep_start, sleep_end, sleep_min, "inferred"
+    return (device.get("sleep_window_start") or sleep_start,
+           device.get("sleep_window_end") or sleep_end,
+           device.get("sleep_estimate_min") or sleep_min,
+           "device")
 
 
 def _geo_store(ctx):

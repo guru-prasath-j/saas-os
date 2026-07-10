@@ -29,7 +29,8 @@ class HabitLinkBody(BaseModel):
 
 
 _SIGNAL_TYPES = {"geo_place_visit", "txn_absence", "txn_presence", "reading_minutes",
-                 "left_office_before", "sleep_window_met", "capture_meal"}
+                 "left_office_before", "sleep_window_met", "capture_meal",
+                 "steps", "workouts"}
 _MODES = {"auto_complete", "auto_suggest_check"}
 
 

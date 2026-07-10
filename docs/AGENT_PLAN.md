@@ -1071,7 +1071,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | DONE | f014e07 |
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | DONE | b08c605 |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | DONE | 1fe8787 |
-| L8 | Extended signals (meal captures, commitments crossover, health_data stub) | PENDING | |
+| L8 | Extended signals (meal captures, commitments crossover, health_data stub) | DONE | (pending commit) |
 | L6 | Life review + integration (monthly vault note, briefing Life section) | PENDING | |
 | L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | PENDING | |
 
@@ -1633,4 +1633,77 @@ delta, direction, n}` shape; combined sleep+gym adverse phrasing;
 `last_completed_week()` date-math sanity check.
 
 Full suite: 719 passed, 23 failed — same as L9's baseline (22
+pre-existing + the documented flaky filesystem-watcher test).
+
+### Part L8 — Extended signals (DONE)
+
+Three sub-features, each grounded against real code rather than assumed:
+
+**Meal captures** (`amy/life/meal_captures.py`) — a SECOND,
+`sensitive=True` classification pass over a capture's ALREADY-extracted
+caption/OCR/tags text (never the image; `captures.py`'s vision call at
+ingest is unavoidably cloud-based today and out of scope to change).
+`classify_capture()` returns `{is_meal, calorie_estimate}` or `None` —
+`calorie_estimate` stays `None` whenever the classifier itself couldn't
+estimate (honest nulls, never a fabricated number). `day_meal_signals()`
+aggregates a day's captures into `meal_captures` (count) +
+`meal_calorie_est` (sum, `None` if nothing was estimatable that day) —
+wired into `aggregator.compute_day()` behind `AMY_AGENT_LIFE_CAPTURE_MEALS`
+(default on, documented as a real per-capture LLM cost, not free like
+the other signal sources — the one place in this phase where a kill
+switch genuinely trades off cost vs. coverage). `capture_meal` in L4's
+`evaluate_day_close()` — a no-op since L4 landed — now actually checks
+`meal_captures >= min_captures`.
+
+**Commitments crossover** (`amy/life/commitments_life.py`) —
+`pharmacy_refill_check()`: a regular pharmacy-merchant transaction
+cadence (`patterns.merchant_cadences`, merchant matched against a
+pharmacy-brand token list) proposes a tier-2 `custom`-kind commitment
+titled `"Refill: {merchant}"` — this is EXACTLY what L9's `pharmacy` rule
+was waiting for (it looks for an open commitment titled "refill"; before
+this part, nothing ever created one, so that rule was a documented
+permanent no-op — verified end-to-end in
+`test_l8_refill_commitment_feeds_l9_pharmacy_rule`: propose → approve →
+the L9 rule now fires). `annual_checkup_check()`: proposes ONE annual
+health-checkup commitment per calendar year if none exists yet for the
+current year. Both reuse L3's `propose()` framework verbatim
+(`source="life_commitments_crossover"`) for dedup/resuggest-window/
+drift-silence — same "anti-nag needs are identical" reuse call as L5.
+New `add_commitment` executor (`CommitmentEngine.add()`, existing tier-2
+path/deadline ladder completely unchanged — no new commitment logic
+invented, only a new PROPOSER of commitments). Rides the existing
+`life_inference_scan` job (no dedicated kill switch — not in the spec's
+enumerated `AMY_AGENT_LIFE_*` list, same as L5's precedent).
+
+**health_data wearable stub** (`amy/life/health_data.py`) —
+`fetch_device_day()`/`fetch_device_activity()` try a generic
+`"health_data"` MCP source through `call_mcp_tool`'s tolerant candidate-
+naming (identical idiom to `career_apply.py`'s company-intel stub for a
+missing `web_search` connector). Honestly `available:False` with nothing
+populated when no such connector is registered — the universal case
+today, since this codebase has no built-in wearable connector (confirmed
+before writing this, same pre-flight discipline as the company-intel
+stub's original web-search grep). When available, `aggregator.py`'s
+`_apply_device_sleep()` prefers the device values over the activity-gap
+inference and sets a new `life_metrics.sleep_provenance` column to
+`'device'` (default `'inferred'`) — this code path is real but can only
+be exercised via a mocked `call_mcp_tool` today (tested that way, matching
+how every other MCP integration in this codebase is tested). `steps`/
+`workouts` are two new `habit_links` signal types, evaluated in L4's
+`evaluate_day_close()` against `fetch_device_activity()` — honestly never
+match with no connector registered.
+
+Tests: `tests/test_life_extended.py` (14 passing) — the spec's explicit
+L8 list: meal classification increments with an estimate label, stays
+NULL on low confidence, and correctly skips a non-meal capture (plus a
+multi-capture aggregation test and a `sensitive=True` routing assertion);
+`health_data` honestly `available:False` with no connector, `True` with
+one mocked; the aggregator prefers device sleep + sets `sleep_provenance`
+when available; `steps`/`workouts` link types complete at day-close;
+pharmacy cadence proposes a refill commitment (and doesn't duplicate one
+already open); annual checkup proposes once per year (resuggest-window
+blocks a same-year repeat) and skips when already scheduled; the L8→L9
+integration test (propose → approve → L9's pharmacy rule now fires).
+
+Full suite: 733 passed, 23 failed — same as L9's/L5's baseline (22
 pre-existing + the documented flaky filesystem-watcher test).

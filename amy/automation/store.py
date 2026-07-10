@@ -350,6 +350,15 @@ class AutomationStore:
             self.conn.commit()
         except Exception:
             pass   # column already exists
+        # LIFE AUTOPILOT L8: per-row sleep provenance — 'inferred' (activity-
+        # gap method, L2's default) or 'device' (a health_data-shaped MCP
+        # connector is registered and returned real sleep data for that day).
+        try:
+            self.conn.execute(
+                "ALTER TABLE life_metrics ADD COLUMN sleep_provenance TEXT DEFAULT 'inferred'")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
         # LIFE AUTOPILOT L1: accepted targets (calorie/sleep/protein/water),
         # {kind: {value, unit, formula, accepted_at}} — populated only once
         # a proposal is approved, never on propose (propose don't impose).
@@ -731,9 +740,9 @@ class AutomationStore:
     _LIFE_METRICS_COLS = (
         "office_minutes", "commute_out_minutes", "commute_return_minutes",
         "left_office_at", "gym_visits", "home_arrival_at", "sleep_window_start",
-        "sleep_window_end", "sleep_estimate_min", "meals_out", "late_night_orders",
-        "cafe_spend", "meeting_count", "meeting_minutes", "focus_blocks",
-        "reading_minutes", "late_night_activity_min", "meal_captures",
+        "sleep_window_end", "sleep_estimate_min", "sleep_provenance", "meals_out",
+        "late_night_orders", "cafe_spend", "meeting_count", "meeting_minutes",
+        "focus_blocks", "reading_minutes", "late_night_activity_min", "meal_captures",
         "meal_calorie_est", "day_type", "grace", "signal_counts")
 
     def get_life_metrics(self, uid: str, date: str) -> dict | None:

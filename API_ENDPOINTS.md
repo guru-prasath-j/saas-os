@@ -327,17 +327,20 @@ Registry tools:
 | `adjust_habit_target` | write | Adjusts a habit's grace-per-week override; always tier 2 with an old→new diff when agent-invoked |
 | `propose_habit` | write | Proposes a new habit, optionally with a `link` (creates the `habit_links` row atomically on approval) |
 | `propose_goal` | write | Proposes a new goal |
+| `health_data` | read | Wearable sleep/steps/workouts for a date via a registered `health_data`-shaped MCP; `available:False` honestly with none registered |
 
 Jobs: `health_bootstrap_check` (06:05 — finds/parses the health vault
 folder, proposes targets, polls for vault re-parse), `life_metrics_daily`
 (00:30 — computes the previous day's `life_metrics` row, then runs
 day-close habit-link evaluation + adaptation checks, idempotent),
-`life_inference_scan` (10:00 — runs all nine L3 inference agents).
+`life_inference_scan` (10:00 — runs all nine L3 inference agents +
+L8's pharmacy-refill/annual-checkup commitments-crossover checks),
+`life_wellbeing_weekly` (07:15, Mondays only).
 
 Kill switches: `AMY_AGENT_LIFE_HEALTH`, `AMY_AGENT_LIFE_HABITS`,
 `AMY_AGENT_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,ADMIN,
-SEASONAL,SOCIAL}`, `AMY_AGENT_LIFE_OPPORTUNITY`. Master switch:
-`AMY_LIFE_AUTOPILOT`.
+SEASONAL,SOCIAL}`, `AMY_AGENT_LIFE_OPPORTUNITY`,
+`AMY_AGENT_LIFE_CAPTURE_MEALS`. Master switch: `AMY_LIFE_AUTOPILOT`.
 
 Backfill: `python -m amy.life.backfill <email> <start-date> <end-date>`.
 

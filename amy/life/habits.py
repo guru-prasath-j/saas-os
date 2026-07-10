@@ -401,7 +401,18 @@ def evaluate_day_close(ctx, date: str) -> int:
         elif st == "sleep_window_met":
             matched = metrics.get("sleep_estimate_min") is not None
         elif st == "capture_meal":
-            matched = False   # L8 territory — meal_captures not populated yet
+            mc = metrics.get("meal_captures")
+            matched = mc is not None and mc >= int(params.get("min_captures", 1))
+        elif st == "steps":
+            from .health_data import fetch_device_activity
+            device = fetch_device_activity(ctx, date)
+            matched = (device.get("available") and device.get("steps") is not None
+                      and device["steps"] >= int(params.get("min_steps", 5000)))
+        elif st == "workouts":
+            from .health_data import fetch_device_activity
+            device = fetch_device_activity(ctx, date)
+            matched = (device.get("available") and device.get("workouts") is not None
+                      and device["workouts"] >= int(params.get("min_workouts", 1)))
         if matched and _complete(ctx, events, link, date):
             completed += 1
     return completed

@@ -689,6 +689,24 @@ def _exec_application_status_update(ctx: JobCtx, payload: dict) -> dict:
     return {"updated": ok, "application_id": application_id, "status": status}
 
 
+@register("add_commitment")
+def _exec_add_commitment(ctx: JobCtx, payload: dict) -> dict:
+    """LIFE AUTOPILOT L8 (commitments crossover): agent-proposed
+    commitments (pharmacy refill cadence, annual health checkup) land
+    here on approval — the existing commitments tier-2 path, ladder
+    (DUE_SOON/DUE_UPCOMING) unchanged, CommitmentEngine.add() untouched."""
+    fe = ctx.open_finance()
+    try:
+        from ..commitments import CommitmentEngine
+        cid = CommitmentEngine(fe).add(
+            payload["kind"], payload["title"], payload["due_date"],
+            merchant=payload.get("merchant", ""), notes=payload.get("notes", ""),
+            source=payload.get("source", "agent"))
+        return {"commitment_id": cid}
+    finally:
+        fe.close()
+
+
 @register("propose_habit")
 def _exec_propose_habit(ctx: JobCtx, payload: dict) -> dict:
     """LIFE AUTOPILOT L3: creates a new habit on approval, optionally with
