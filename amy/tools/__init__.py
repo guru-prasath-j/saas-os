@@ -13,3 +13,4 @@ from . import builtin  # noqa: F401  — registers all built-in tools on import
 from . import mcp_bridge  # noqa: F401  — registers the MCP source bridge tools
 from . import connector_tools  # noqa: F401  — GitHub/Plane/Meet tools (CONNECTOR COMPLETION)
 from . import career_tools  # noqa: F401  — job search/portfolio/application tools (CAREER AUTOPILOT)
+from . import life_tools  # noqa: F401  — health targets tool (LIFE AUTOPILOT)

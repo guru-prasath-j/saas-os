@@ -226,6 +226,19 @@ class AutomationStore:
                 PRIMARY KEY (uid, company)
             );
 
+            CREATE TABLE IF NOT EXISTS health_profile (
+                uid              TEXT PRIMARY KEY,
+                dob_or_age       TEXT DEFAULT '',
+                sex              TEXT DEFAULT '',
+                height_cm        REAL,
+                weight_kg        REAL,
+                activity_level   TEXT DEFAULT '',
+                weight_log       TEXT DEFAULT '[]',
+                constraints_enc  TEXT,
+                provenance       TEXT DEFAULT '{}',
+                updated_at       TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_runs_job   ON automation_runs(job_name, started_at);
             CREATE INDEX IF NOT EXISTS idx_feed_uid   ON learning_feed_items(uid, fetched_at);
             CREATE INDEX IF NOT EXISTS idx_appr_state ON approvals(status, created_at);
@@ -284,6 +297,15 @@ class AutomationStore:
         try:
             self.conn.execute(
                 "ALTER TABLE job_postings ADD COLUMN alt_sources TEXT DEFAULT '[]'")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
+        # LIFE AUTOPILOT L1: accepted targets (calorie/sleep/protein/water),
+        # {kind: {value, unit, formula, accepted_at}} — populated only once
+        # a proposal is approved, never on propose (propose don't impose).
+        try:
+            self.conn.execute(
+                "ALTER TABLE health_profile ADD COLUMN targets TEXT DEFAULT '{}'")
             self.conn.commit()
         except Exception:
             pass   # column already exists
@@ -652,6 +674,105 @@ class AutomationStore:
         sets.append("updated_at=?"); args.append(_now_iso())
         args.append(uid)
         self.conn.execute(f"UPDATE career_profile SET {', '.join(sets)} WHERE uid=?", args)
+        self.conn.commit()
+
+    # --- health profile (LIFE AUTOPILOT L1) -----------------------------------
+
+    def get_health_profile(self, uid: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM health_profile WHERE uid=?", (uid,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["weight_log"] = json.loads(d["weight_log"] or "[]")
+        d["provenance"] = json.loads(d["provenance"] or "{}")
+        d["targets"] = json.loads(d.get("targets") or "{}")
+        enc = d.pop("constraints_enc", None)
+        if enc:
+            try:
+                from ..saas.security import decrypt_secret
+                d["constraints"] = decrypt_secret(enc)
+            except Exception:
+                d["constraints"] = ""
+        else:
+            d["constraints"] = ""
+        from ..life.targets import resolve_age
+        d["age"] = resolve_age(d.get("dob_or_age") or "")
+        return d
+
+    def upsert_health_profile(self, uid: str, dob_or_age: str | None = None,
+                              sex: str | None = None, height_cm: float | None = None,
+                              weight_kg: float | None = None,
+                              activity_level: str | None = None,
+                              constraints: str | None = None,
+                              provenance: dict | None = None) -> None:
+        """provenance: partial dict of {field: 'vault'|'manual'} merged into
+        the stored provenance map (never wholesale-replaced) so a later
+        manual edit of one field doesn't erase another field's vault
+        provenance."""
+        existing = self.conn.execute(
+            "SELECT uid, provenance FROM health_profile WHERE uid=?", (uid,)).fetchone()
+        if existing is None:
+            self.conn.execute(
+                "INSERT INTO health_profile(uid,dob_or_age,sex,height_cm,weight_kg,"
+                " activity_level,weight_log,constraints_enc,provenance,updated_at)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (uid, "", "", None, None, "", "[]", None, "{}", _now_iso()))
+            prov_current = {}
+        else:
+            prov_current = json.loads(existing["provenance"] or "{}")
+        sets, args = [], []
+        if dob_or_age is not None:
+            sets.append("dob_or_age=?"); args.append(dob_or_age)
+        if sex is not None:
+            sets.append("sex=?"); args.append(sex)
+        if height_cm is not None:
+            sets.append("height_cm=?"); args.append(height_cm)
+        if weight_kg is not None:
+            sets.append("weight_kg=?"); args.append(weight_kg)
+        if activity_level is not None:
+            sets.append("activity_level=?"); args.append(activity_level)
+        if constraints is not None:
+            from ..saas.security import encrypt_secret
+            sets.append("constraints_enc=?")
+            args.append(encrypt_secret(constraints) if constraints else None)
+        if provenance:
+            prov_current.update(provenance)
+            sets.append("provenance=?"); args.append(json.dumps(prov_current))
+        sets.append("updated_at=?"); args.append(_now_iso())
+        args.append(uid)
+        self.conn.execute(f"UPDATE health_profile SET {', '.join(sets)} WHERE uid=?", args)
+        self.conn.commit()
+
+    def append_weight_log(self, uid: str, weight_kg: float,
+                          date: str | None = None, source: str = "manual") -> dict:
+        """Appends to weight_log and updates the current weight_kg. Returns
+        {previous_weight_kg, weight_kg, pct_change} so the caller can decide
+        whether a >5% shift warrants a target re-proposal (never silent)."""
+        profile = self.get_health_profile(uid) or {}
+        previous = profile.get("weight_kg")
+        log = list(profile.get("weight_log") or [])
+        log.append({"date": date or _now_iso()[:10], "weight_kg": weight_kg, "source": source})
+        self.upsert_health_profile(uid, weight_kg=weight_kg)
+        self.conn.execute(
+            "UPDATE health_profile SET weight_log=? WHERE uid=?",
+            (json.dumps(log), uid))
+        self.conn.commit()
+        pct_change = ((weight_kg - previous) / previous * 100.0) if previous else None
+        return {"previous_weight_kg": previous, "weight_kg": weight_kg,
+               "pct_change": round(pct_change, 2) if pct_change is not None else None}
+
+    def set_health_target(self, uid: str, kind: str, value) -> None:
+        """Merges one accepted target (kind -> value) into health_profile's
+        targets JSON — called only by the health_target_propose executor on
+        approval, never on propose."""
+        row = self.conn.execute(
+            "SELECT targets FROM health_profile WHERE uid=?", (uid,)).fetchone()
+        current = json.loads(row["targets"] or "{}") if row else {}
+        current[kind] = {"value": value, "accepted_at": _now_iso()}
+        self.conn.execute(
+            "UPDATE health_profile SET targets=? WHERE uid=?",
+            (json.dumps(current), uid))
         self.conn.commit()
 
     # --- job postings (CAREER AUTOPILOT Part 1) -------------------------------

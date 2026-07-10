@@ -147,6 +147,27 @@ def _career_retention(ctx: JobCtx) -> dict:
     return {"archived": archived, "events_compacted": compacted}
 
 
+def _life_autopilot_enabled() -> bool:
+    from .. import config
+    return config._env("AMY_LIFE_AUTOPILOT", "true").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _health_bootstrap_check(ctx: JobCtx) -> dict:
+    """LIFE AUTOPILOT L1: drives the health_bootstrap agent daily — finding
+    a vault folder and noticing it changed are both poll-driven (no push
+    event), same structural choice as meeting_prep_scan/portfolio_review.
+    Re-checks AMY_LIFE_AUTOPILOT + AMY_AGENT_LIFE_HEALTH at runtime (the
+    learning_feed_refresh idiom) since the job row persists after either
+    flag is turned off."""
+    from .. import config
+    if not _life_autopilot_enabled() or not config.agent_enabled("life_health"):
+        return {"skipped": "disabled"}
+    from ..life.bootstrap import bootstrap_health_profile, check_vault_reparse
+    result = bootstrap_health_profile(ctx)
+    reparse = check_vault_reparse(ctx)
+    return {"bootstrap": result, "reparse_triggered": reparse is not None}
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -195,6 +216,7 @@ HANDLERS: dict[str, callable] = {
     "application_followup_check": _application_followup_check,
     "interview_debrief_scan": _interview_debrief_scan,
     "career_retention": _career_retention,
+    "health_bootstrap_check": _health_bootstrap_check,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -237,6 +259,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("application_followup_check", {"every_hours": 48}),
         ("interview_debrief_scan", {"every_hours": 1}),
         ("career_retention",       {"monthly_day": 3, "at": "06:15"}),
+        ("health_bootstrap_check", {"daily_at": "06:05"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

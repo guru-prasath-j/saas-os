@@ -675,6 +675,43 @@ def _exec_application_status_update(ctx: JobCtx, payload: dict) -> dict:
     return {"updated": ok, "application_id": application_id, "status": status}
 
 
+@register("health_target_propose")
+def _exec_health_target_propose(ctx: JobCtx, payload: dict) -> dict:
+    """LIFE AUTOPILOT L1. payload['kind'] discriminates what an approval
+    actually does — targets (calorie_budget/sleep_target/protein_target/
+    water_target) get merged into health_profile.targets; vault_reparse
+    applies the re-parsed fields (tier 1, diff already shown in the
+    approval body); weight_shift_recompute recomputes every target from the
+    now-current weight_kg and overwrites them. Nothing here is applied
+    until approved — propose don't impose."""
+    kind = payload.get("kind") or ""
+    if kind in ("calorie_budget", "sleep_target", "protein_target", "water_target"):
+        ctx.store.set_health_target(ctx.user_id, kind, payload.get("target"))
+        return {"applied": kind, "target": payload.get("target")}
+    if kind == "vault_reparse":
+        fields = payload.get("fields") or {}
+        ctx.store.upsert_health_profile(
+            ctx.user_id,
+            dob_or_age=fields.get("dob_or_age"), sex=fields.get("sex"),
+            height_cm=fields.get("height_cm"), weight_kg=fields.get("weight_kg"),
+            activity_level=fields.get("activity_level"),
+            constraints=fields.get("constraints"),
+            provenance={k: "vault" for k in fields})
+        return {"applied": "vault_reparse", "fields": list(fields)}
+    if kind == "weight_shift_recompute":
+        import datetime as _dt
+
+        from ..life.bootstrap import propose_health_targets
+        profile = ctx.store.get_health_profile(ctx.user_id)
+        if not profile:
+            return {"applied": False, "error": "no health profile"}
+        month = _dt.date.today().strftime("%Y-%m")
+        proposed = propose_health_targets(ctx, profile, dedup_suffix=f"shift{month}")
+        return {"applied": "weight_shift_recompute",
+               "reproposed": [p.get("status") for p in proposed]}
+    return {"applied": False, "error": f"unknown kind {kind!r}"}
+
+
 @register("resume_update")
 def _exec_resume_update(ctx: JobCtx, payload: dict) -> dict:
     """CAREER AUTOPILOT Part 5E (master resume evolution): applies an

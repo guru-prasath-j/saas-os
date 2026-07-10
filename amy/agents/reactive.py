@@ -394,11 +394,16 @@ _LEARNING_STALE_MIN_DAYS = 3     # give a fresh focus time before nudging
 def _learning_agent(events, ctx):
     """Learning feed reactions (multi-focus, goal-linked): on a refresh,
     propose a goal for a topic that's organically trending and not yet
-    linked to one; nudge (advisory only, never a write) a goal-linked
-    focus that's accumulated items with zero saves/completions. On item
-    completion, journal an insight — the activity-log write that feeds the
-    trend engine already happens in the learning-feed router (save/
-    progress endpoints), not here."""
+    linked to one — UNLESS it looks role-shaped and there's already an
+    active career goal, in which case the focus is cross-linked to that
+    goal instead of spawning a parallel one (the career template's own
+    _skill_gaps() step already tracks the same kind of topic there).
+    Nudges (advisory only, never a write) a goal-linked focus that's
+    accumulated items with zero saves/completions, and suggests another
+    organically-trending, not-yet-tracked topic as an alternative if one
+    exists. On item completion for a goal-linked focus, adds a completed
+    task to that goal (GoalEngine.progress() counts done tasks, so this is
+    what actually moves the needle instead of only journaling an insight)."""
     def on_feed_refreshed(ev):
         try:
             p = ev.get("payload") or {}
@@ -418,6 +423,27 @@ def _learning_agent(events, ctx):
                 trend = LearningAgent(ctx.collab, None).trends().get(topic)
                 if not trend or trend["trend"] != "increasing":
                     return
+
+                # Cross-link into an existing career plan instead of a
+                # parallel "Deep-dive" goal when the topic looks role-shaped
+                # and a career goal is already active — same trend signal
+                # _career_goal_agent uses to decide whether to propose a
+                # brand-new career goal in the first place.
+                if any(r in topic.lower() for r in _CAREER_ROLE_WORDS):
+                    career_gid = _active_career_goal(ctx)
+                    if career_gid:
+                        from ..learning_feed.sensor import set_focus_goal
+                        set_focus_goal(ctx.collab.conn, ctx.user_id, focus_id, career_gid)
+                        reasoning = (f"'{topic}' is trending up and looks role-related; "
+                                     f"you already have an active career goal, so linking "
+                                     "this focus there instead of starting a separate "
+                                     "learning goal that would just duplicate it.")
+                        _emit_insight(events, ctx, "learning",
+                                      f"Linked '{topic}' to your career goal", reasoning,
+                                      {"topic": topic, "focus_id": focus_id,
+                                       "goal_id": career_gid})
+                        return
+
                 from .. import tools
                 reasoning = (f"'{topic}' is trending up in your learning feed "
                              f"({trend['recent']} recent vs {trend['prior']} prior "
@@ -451,9 +477,14 @@ def _learning_agent(events, ctx):
             reasoning = (f"'{topic}' is linked to a goal but {stats['total']} curated "
                          f"items over {age_days} days have zero saves or completions — "
                          "flagging so it doesn't quietly go stale.")
+            alt = _suggest_alternative_topic(ctx, exclude_topic=topic)
+            if alt:
+                reasoning += (f" '{alt}' is trending up in your activity and isn't "
+                               "tracked as a focus yet, if you'd rather switch.")
             _emit_insight(events, ctx, "learning",
                           f"'{topic}' goal focus has no engagement yet", reasoning,
-                          {"topic": topic, "focus_id": focus_id, "goal_id": goal_id})
+                          {"topic": topic, "focus_id": focus_id, "goal_id": goal_id,
+                           "suggested_alternative": alt})
             ns = ctx.notify_store()
             ref = f"learning_stale_{focus_id}"
             if not ns.exists_today("learning_stale_focus", ref):
@@ -470,19 +501,64 @@ def _learning_agent(events, ctx):
             p = ev.get("payload") or {}
             title = p.get("title") or "an item"
             topic = p.get("focus") or ""
+            focus_id = p.get("focus_id")
             reasoning = (f"Completed '{title}'"
                          + (f" (focus: {topic})" if topic else "") +
                          " — logged to the learning activity trail.")
             _emit_insight(events, ctx, "learning",
                           f"Completed: {title}", reasoning,
                           {"title": title, "focus": topic,
-                           "focus_id": p.get("focus_id"),
+                           "focus_id": focus_id,
                            "source_event_id": ev.get("id")})
+
+            # Goal-based learning: a completion on a goal-linked focus adds a
+            # DONE task to that goal, so GoalEngine.progress() (done tasks +
+            # milestones / total) actually advances — previously this only
+            # ever wrote an insight, so linking a focus to a goal had no
+            # effect on the goal's own progress number.
+            if not focus_id:
+                return
+            row = ctx.collab.conn.execute(
+                "SELECT goal_id FROM learning_focuses WHERE id=?",
+                (focus_id,)).fetchone()
+            goal_id = row["goal_id"] if row else None
+            if not goal_id:
+                return
+            task_title = f"Learned: {title}"[:200]
+            dup = ctx.collab.conn.execute(
+                "SELECT 1 FROM tasks WHERE goal_id=? AND title=?",
+                (goal_id, task_title)).fetchone()
+            if dup:
+                return
+            from ..autonomous import GoalEngine
+            engine = GoalEngine(ctx.collab, events=events)
+            tid = engine.add_task(goal_id, task_title)
+            engine.complete_task(tid, done=True)
         except Exception as exc:
             _report_error(events, "learning", exc)
 
     events.subscribe("learning.feed_refreshed", on_feed_refreshed)
     events.subscribe("learning.item_completed", on_item_completed)
+
+
+def _suggest_alternative_topic(ctx, exclude_topic: str) -> str | None:
+    """Best organically-increasing topic (from the activity-log trend
+    engine) that isn't already an active learning focus for this user —
+    used to give a stale-focus nudge a concrete alternative instead of
+    just flagging the problem. Advisory data only, never a write."""
+    from ..collab.learning import LearningAgent
+    trends = LearningAgent(ctx.collab, None).trends()
+    tracked = {r["topic"].strip().lower() for r in ctx.collab.conn.execute(
+        "SELECT topic FROM learning_focuses WHERE uid=? AND active=1",
+        (ctx.user_id,)).fetchall()}
+    candidates = [(t, data) for t, data in trends.items()
+                  if data["trend"] == "increasing"
+                  and t.strip().lower() not in tracked
+                  and t.strip().lower() != exclude_topic.strip().lower()]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda kv: -kv[1]["recent"])
+    return candidates[0][0]
 
 
 # ---------------------------------------------------------------------------
@@ -1272,6 +1348,18 @@ def _meeting_prep_window_minutes() -> int:
         return _MEETING_PREP_DEFAULT_WINDOW_MIN
 
 
+def _health_bootstrap_agent(events, ctx):
+    """No-op subscription, same reasoning as _meeting_prep_agent/
+    _portfolio_agent: LIFE AUTOPILOT L1's health bootstrap + vault re-parse
+    have no natural triggering EVENT (finding a vault folder and noticing
+    it changed are both poll-driven, not pushed) — exists only so
+    'health_bootstrap' is visible/consistent in register_reactive_agents'
+    list and honors its kill switch. Real logic: bootstrap_health_profile()
+    / check_vault_reparse() (amy/life/bootstrap.py), called directly by the
+    health_bootstrap_check job."""
+    return
+
+
 def _meeting_prep_agent(events, ctx):
     """No-op subscription: unlike every other agent here, meeting_prep has
     no natural triggering EVENT — "a meeting is starting soon" only exists
@@ -1434,4 +1522,6 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("portfolio", _portfolio_agent)
     if config.agent_enabled("application_tracker"):
         _once("application_lifecycle", _application_lifecycle_agent)
+    if config.agent_enabled("life_health"):
+        _once("health_bootstrap", _health_bootstrap_agent)
     return sorted(seen)
