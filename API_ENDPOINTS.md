@@ -310,18 +310,26 @@ Full spec: `docs/LIFE_AUTOPILOT.md`.
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/api/life/metrics` | `?from=&to=` (defaults to the trailing 30 days) — `life_metrics` rows: office/commute/gym/sleep/meals/day_type/grace per day. Read-only. |
+| POST | `/api/life/habits/{habit_id}/link` | Create a `habit_links` row — body `{signal_type, signal_params, mode}`. |
+| GET | `/api/life/habits/{habit_id}/links` | List links for a habit. |
+| DELETE | `/api/life/habit-links/{link_id}` | Remove a link (habit stays fully manual again). |
+| GET | `/api/life/habits/link-suggestions` | `?title=` — keyword-matched signal suggestion for the Add-habit flow, or `null`. Suggestion only, never forced. |
 
 Registry tools:
 
 | Tool | Risk | Notes |
 |------|------|-------|
 | `health_targets` | read | Computed BMR/TDEE/sleep-band/protein/water from `health_profile`; `available:False` (never fabricated) with an incomplete profile |
+| `complete_habit_check` | write | Human/chat-assistant use; the habit_links auto-completion mechanism bypasses this tool entirely (calls the executor directly for tier 0/1) |
+| `adjust_habit_target` | write | Adjusts a habit's grace-per-week override; always tier 2 with an old→new diff when agent-invoked |
 
 Jobs: `health_bootstrap_check` (06:05 — finds/parses the health vault
 folder, proposes targets, polls for vault re-parse), `life_metrics_daily`
-(00:30 — computes the previous day's `life_metrics` row, idempotent).
+(00:30 — computes the previous day's `life_metrics` row, then runs
+day-close habit-link evaluation + adaptation checks, idempotent).
 
-Kill switch: `AMY_AGENT_LIFE_HEALTH`. Master switch: `AMY_LIFE_AUTOPILOT`.
+Kill switches: `AMY_AGENT_LIFE_HEALTH`, `AMY_AGENT_LIFE_HABITS`. Master
+switch: `AMY_LIFE_AUTOPILOT`.
 
 Backfill: `python -m amy.life.backfill <email> <start-date> <end-date>`.
 

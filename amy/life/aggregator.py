@@ -221,8 +221,28 @@ def _activity_signals(ctx, date: str) -> dict:
     rows = ctx.collab.conn.execute(
         "SELECT ts, kind FROM activities WHERE substr(ts,1,10)=?", (date,)).fetchall()
     activities = [dict(r) for r in rows]
-    reading = sum(1 for a in activities if a["kind"] == "learning")
-    return {"reading_minutes": 0.0, "_reading_events": reading,
+    reading_events = sum(1 for a in activities if a["kind"] == "learning")
+
+    # Real minutes only where they actually exist (video watch-time on
+    # learning_feed_items completed that day) — an article/HN/etc.
+    # completion has no duration data, so it contributes to reading_events
+    # but not reading_minutes. Previously this returned a hardcoded 0.0,
+    # which misrepresented "unmeasured" as "confirmed zero" — fixed to an
+    # honest NULL (hard rule 7) now that L4's habit-link evaluator depends
+    # on this column meaning something real.
+    reading_minutes = None
+    try:
+        rows2 = ctx.collab.conn.execute(
+            "SELECT position_sec FROM learning_feed_items"
+            " WHERE uid=? AND substr(completed_at,1,10)=? AND duration_sec IS NOT NULL",
+            (ctx.user_id, date)).fetchall()
+        total_sec = sum((r["position_sec"] or 0) for r in rows2)
+        if rows2 and total_sec:
+            reading_minutes = round(total_sec / 60.0, 1)
+    except Exception:
+        pass
+
+    return {"reading_minutes": reading_minutes, "_reading_events": reading_events,
            "_activity_count": len(activities),
            "_activity_times": [a["ts"] for a in activities]}
 

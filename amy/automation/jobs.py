@@ -188,7 +188,22 @@ def _life_metrics_daily(ctx: JobCtx) -> dict:
             source="life_metrics")
     except Exception:
         pass
-    return {"date": yesterday, "day_type": row["day_type"]}
+
+    habit_completions = 0
+    adaptations = 0
+    if config.agent_enabled("life_habits"):
+        from ..life.habits import check_all_adaptations, evaluate_day_close
+        try:
+            habit_completions = evaluate_day_close(ctx, yesterday)
+        except Exception:
+            pass
+        try:
+            adaptations = len(check_all_adaptations(ctx))
+        except Exception:
+            pass
+
+    return {"date": yesterday, "day_type": row["day_type"],
+           "habit_completions": habit_completions, "adaptations_proposed": adaptations}
 
 
 def _connector_sensor_scan(ctx: JobCtx) -> dict:

@@ -1360,6 +1360,34 @@ def _health_bootstrap_agent(events, ctx):
     return
 
 
+def _habit_signals_agent(events, ctx):
+    """LIFE AUTOPILOT L4: real-time habit_links evaluation. Subscribes to
+    context.place_entered (geo_place_visit links) and context.place_left
+    (left_office_before links — 'left office by 6' checks the moment the
+    place is left, not at day-close). Absence-type links (txn_absence/
+    txn_presence/reading_minutes/sleep_window_met) have no real-time event
+    to hang off and are day-close only — see evaluate_day_close(), driven
+    by the life_metrics_daily job right after that day's row is computed.
+    Never touches coordinates — only place_id/name/kind from the payload,
+    same rail as _errand_agent/_budget_agent's spend_caution handler."""
+    from ..life import habits as life_habits
+
+    def on_place_entered(ev):
+        try:
+            life_habits.on_place_entered(ctx, events, ev.get("payload") or {})
+        except Exception as exc:
+            _report_error(events, "habit_signals", exc)
+
+    def on_place_left(ev):
+        try:
+            life_habits.on_place_left(ctx, events, ev.get("payload") or {})
+        except Exception as exc:
+            _report_error(events, "habit_signals", exc)
+
+    events.subscribe("context.place_entered", on_place_entered)
+    events.subscribe("context.place_left", on_place_left)
+
+
 def _meeting_prep_agent(events, ctx):
     """No-op subscription: unlike every other agent here, meeting_prep has
     no natural triggering EVENT — "a meeting is starting soon" only exists
@@ -1524,4 +1552,6 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("application_lifecycle", _application_lifecycle_agent)
     if config.agent_enabled("life_health"):
         _once("health_bootstrap", _health_bootstrap_agent)
+    if config.agent_enabled("life_habits"):
+        _once("habit_signals", _habit_signals_agent)
     return sorted(seen)

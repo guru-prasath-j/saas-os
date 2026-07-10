@@ -709,6 +709,35 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   subscriber exists). `GET /api/life/metrics?from=&to=` (read-only).
   `TimelineEngine` gained a `daily_metrics` source (best-effort, degrades
   silently if `life_metrics` doesn't exist yet on an older `collab.db`).
+- `amy/life/habits.py` (L4) — `habit_links` (`collab.db`, bridges to
+  `habits.db` by id) map a habit to a signal + mode (`auto_complete` tier
+  0 | `auto_suggest_check` tier 1). Auto-completion (`_complete()`) always
+  calls `submit_action()` directly, never `tools.invoke(actor="agent")` —
+  that's how it gets tier 0/1 instead of AGENT_GATE's forced tier 2
+  (quirk 15); the registered `complete_habit_check`/`adjust_habit_target`
+  tools exist separately for human/chat use, where gating IS correct.
+  Real-time: `on_place_entered`/`on_place_left` wired as the
+  `habit_signals` reactive agent (kill switch `AMY_AGENT_LIFE_HABITS`) on
+  `context.place_entered`/`context.place_left` (`CONTEXT_PLACE_LEFT` now
+  in `AGENT_RELEVANT_EVENTS`). Day-close only:
+  `txn_absence`/`txn_presence`/`reading_minutes`/`sleep_window_met` via
+  `evaluate_day_close()`, called from `life_metrics_daily` right after
+  that day's row computes (absence can't be judged mid-day).
+  `streak_with_grace()` is a NEW grace-aware calculation (not a patch to
+  `HabitEngine._streak()`, which has zero grace concept and still backs
+  the plain UI elsewhere) — skips `life_metrics.grace` days entirely,
+  tolerates up to a per-habit `effective_grace_per_week` (stored in
+  `prefs`, key `habit_grace_{habit_id}` — deliberately not
+  `HabitEngine.frequency`, a free-text label with no enforced semantics
+  anywhere) non-grace misses per ISO week. Adaptation (only
+  `frequency='daily'` habits): >=3 failing weeks → one easing proposal;
+  >=6 effortless weeks → at most ONE level-up proposal ever (fixed dedup
+  key); 2 rejected `adjust_habit_target` approvals silence further
+  adaptation for that habit (counted from `approvals`, no new table).
+  `suggest_link_for_title()` — pure keyword matching for the Add-habit
+  flow, never forced. Routes: `POST/GET /api/life/habits/{id}/link[s]`,
+  `DELETE /api/life/habit-links/{id}`,
+  `GET /api/life/habits/link-suggestions`.
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -844,7 +873,8 @@ pins it down with a call counter + approval-row count, not just dedup.
 
 Kill switches: `AMY_AGENT_BUDGET` / `_SUBSCRIPTION` / `_COMPLIANCE` /
 `_SCREENING` / `_OBLIGATION` / `_ERRAND` / `_LEARNING` / `_PR_TASK` /
-`_MEETING_PREP` / `_LIFE_HEALTH` (LIFE AUTOPILOT L1, below).
+`_MEETING_PREP` / `_LIFE_HEALTH` / `_LIFE_HABITS` (LIFE AUTOPILOT L1/L4,
+below).
 
 ## LLM Routing
 

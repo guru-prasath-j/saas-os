@@ -1067,7 +1067,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | 0 | `test_reactive_agents.py` registered-agent-set assertion → set `>=` check | DONE | ab1976a |
 | L1 | Health bootstrap + targets (`amy/life/targets.py`, `amy/life/bootstrap.py`) | DONE | 5a88924 |
 | L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | DONE | 86f9c7f |
-| L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | PENDING | |
+| L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | DONE | (pending commit) |
 | L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | PENDING | |
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | PENDING | |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | PENDING | |
@@ -1243,3 +1243,103 @@ is L5's job, out of scope here); silent-day zero-signal handling;
 home-cell fallback picks the most-frequented cell; backfill honesty
 (geo-derived NULL where no geo history exists, finance-derived populated
 where transactions do); inverted date range rejected.
+
+**Bug found and fixed while building L4**: `_activity_signals`'s
+`reading_minutes` was a hardcoded `0.0` — technically satisfied "always
+returns a number" but actually misrepresented "unmeasured" as "confirmed
+zero minutes," violating hard rule 7 the moment L4 needed to depend on
+this column meaning something real. Fixed to compute real minutes from
+`learning_feed_items.position_sec` for items completed that day with
+`duration_sec` present (video watch-time only — non-video completions
+have no duration data and correctly leave it `NULL`), falling back to
+`NULL` rather than `0.0` when nothing is measurable. No L2 test asserted
+the old value, so this was a silent latent bug, not a regression.
+
+### Part L4 — Habit auto-completion (DONE)
+
+`habit_links` table (`collab.db`): `habit_id` bridges to `habits.db`
+(`HabitEngine`) by id only — no FK possible across SQLite files.
+`JobCtx.open_habits()` (added in L2's commit) had a real bug found while
+writing L4's tests: it recomputed `paths.index_dir(user_id)` fresh
+instead of deriving from the `index_dir` the ctx was actually built with
+(`finance_path`'s parent) — harmless in production (same path either way)
+but broke every test that builds a `JobCtx` against a `tmp_path` index_dir
+(the standard test fixture pattern in this codebase). Fixed to derive
+from `Path(self.finance_path).parent`, matching `open_finance()`'s own
+behavior exactly, plus `mkdir(parents=True, exist_ok=True)` since nothing
+else guarantees that directory exists in a fresh test tmp_path.
+
+`amy/life/habits.py`:
+- **Auto-completion** (`_complete()`) always calls `submit_action()`
+  directly — never `tools.invoke(actor="agent")` — so it gets the tier the
+  *link's mode* specifies (`auto_complete`=0, `auto_suggest_check`=1)
+  instead of AGENT_GATE's forced tier 2 for any agent-actor write (quirk
+  15). The `complete_habit_check`/`adjust_habit_target` registry tools
+  exist separately for human/chat-assistant invocation, where AGENT_GATE
+  gating IS correct. `submit_action`'s own dedup key
+  (`habit_complete_{habit_id}_{date}`) makes "exactly once" hold even if
+  the triggering signal fires twice the same day (e.g. two
+  `context.place_entered` pings at the same gym).
+- **Real-time**: `on_place_entered` (geo_place_visit links) and
+  `on_place_left` (`left_office_before` — "left office by 6" checks the
+  instant the office is left, per spec) are wired as a new `habit_signals`
+  reactive agent (kill switch `AMY_AGENT_LIFE_HABITS`) subscribing to
+  `context.place_entered`/`context.place_left`. `CONTEXT_PLACE_LEFT`
+  added to `AGENT_RELEVANT_EVENTS` (a real subscriber now exists).
+- **Day-close only**: `txn_absence`/`txn_presence`/`reading_minutes`/
+  `sleep_window_met` evaluate in `evaluate_day_close()`, called from the
+  `life_metrics_daily` job right after that day's `life_metrics` row is
+  computed — absence genuinely can't be judged until the day is over.
+  `geo_place_visit`/`left_office_before` are ALSO re-checked here as a
+  catch-all in case a real-time fix was missed; the dedup key makes a
+  double-fire (real-time + day-close) harmless.
+- **Grace-aware streak** (`streak_with_grace`) is a NEW calculation, not a
+  patch to `HabitEngine._streak()` (which has zero grace concept and is
+  still used for the plain UI display elsewhere) — walks backward day by
+  day, skipping `life_metrics.grace` days entirely (pause, never break,
+  never count) and tolerating up to `effective_grace_per_week` non-grace
+  misses per ISO week before breaking.
+- **Adaptation**: a per-habit grace-per-week override lives in `prefs`
+  (`habit_grace_{habit_id}`) — deliberately NOT a new table, and
+  deliberately NOT `HabitEngine.frequency` (a free-text display label with
+  literally zero enforced semantics anywhere in this codebase; the grace
+  budget is the only "target" this system can actually act on). Only
+  `frequency='daily'` habits are eligible (the only frequency value with
+  real semantics) — other frequencies get a documented no-op, not deeper
+  per-frequency target math nobody asked for. `>=3` consecutive failing
+  weeks → one easing proposal (dedup keyed to the last failing week, so a
+  fresh 3-week failure streak can re-propose after an earlier one was
+  approved); `>=6` consecutive effortless weeks → **at most one** level-up
+  proposal ever (fixed dedup key, no week suffix — re-running
+  `check_adaptation` after approval is a guaranteed no-op). Two rejected
+  `adjust_habit_target` proposals for a habit permanently silence further
+  adaptation checks for it — counted directly from the `approvals` table
+  (payload's `habit_id`, `status='rejected'`), the same "existence in
+  approvals is the record" idiom Part 5's follow-up-check dedup already
+  uses, no new table needed. Weeks with fewer than 4 non-grace days are
+  excluded from failing/effortless judgment (`judged=False`) — the L4
+  analogue of hard rule 8's "majority-grace week -> no line."
+- **Link suggestions**: `suggest_link_for_title()` is pure keyword
+  matching (gym/workout → `geo_place_visit`; leave office →
+  `left_office_before`; etc.) — a suggestion the Add-habit flow can offer,
+  never forced. Exposed via `GET /api/life/habits/link-suggestions`.
+
+`complete_habit_check`/`adjust_habit_target` executors
+(`amy/automation/executors.py`) + registry tools
+(`amy/tools/life_tools.py`). `habit_links` CRUD routes
+(`POST/GET /api/life/habits/{habit_id}/link[s]`,
+`DELETE /api/life/habit-links/{link_id}`) — built now (not deferred to
+L7) so the mechanism is reachable/testable end-to-end without waiting for
+the UI.
+
+Tests: `tests/test_life_habits.py` (12 passing) — gym visit auto-completes
+exactly once at tier 0 despite two `place_entered` fires; absence-type
+links complete ONLY at day-close, never via unrelated real-time events;
+presence-type day-close detection; `left_office_before` real-time
+completes before the deadline and correctly doesn't after; streak
+survives one miss/week; a grace day pauses the streak without breaking or
+counting it; 3 failing weeks → exactly one easing proposal with the
+correct old→new diff; 2 rejections silence adaptation for that habit (and
+don't silence a different habit); 6 effortless weeks → level-up fires
+once and never again on re-check; non-daily/weekly-frequency habits are
+skipped; link-suggestion keyword matching.

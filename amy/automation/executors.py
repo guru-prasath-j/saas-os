@@ -42,10 +42,15 @@ class JobCtx:
         """LIFE AUTOPILOT: habits live in a separate per-user habits.db
         (amy/habits/engine.py::HabitEngine), not collab.db — habit_links
         (L4) bridges the two by id, no FK (SQLite can't FK across files
-        anyway). Mirrors open_finance()'s convention exactly."""
+        anyway). Derives the path from finance_path's directory (the same
+        index_dir build_ctx was actually constructed with) rather than
+        recomputing paths.index_dir(user_id) fresh — a caller that built
+        this ctx against a non-default index_dir (e.g. a test tmp_path)
+        would otherwise get a habits.db in the wrong place."""
         from ..habits.engine import HabitEngine
-        from ..saas import paths
-        return HabitEngine(paths.index_dir(self.user_id) / "habits.db")
+        habits_path = Path(self.finance_path).parent / "habits.db"
+        habits_path.parent.mkdir(parents=True, exist_ok=True)
+        return HabitEngine(habits_path)
 
     def events(self):
         """EventStore with reactive agents wired on (agents also react to
@@ -682,6 +687,38 @@ def _exec_application_status_update(ctx: JobCtx, payload: dict) -> dict:
         except Exception:
             pass
     return {"updated": ok, "application_id": application_id, "status": status}
+
+
+@register("complete_habit_check")
+def _exec_complete_habit_check(ctx: JobCtx, payload: dict) -> dict:
+    """LIFE AUTOPILOT L4. Called both by habit_signals' auto-completion
+    (tier 0/1, bypassing the tools registry entirely) and by a human/agent
+    invoking the complete_habit_check registry tool directly (which DOES
+    go through AGENT_GATE at tier 2 when actor='agent', per quirk 15 —
+    the two paths reach the same executor but the registry-tool path is
+    always gated, only the habit_links auto-completion mechanism itself
+    grants tier 0/1)."""
+    habits = ctx.open_habits()
+    try:
+        result = habits.check_in(payload["habit_id"], date=payload.get("date"),
+                                 done=True, note=payload.get("note", ""))
+        return result
+    finally:
+        habits.close()
+
+
+@register("adjust_habit_target")
+def _exec_adjust_habit_target(ctx: JobCtx, payload: dict) -> dict:
+    """LIFE AUTOPILOT L4 (adaptation). The only 'target' this codebase's
+    HabitEngine schema actually enforces is the grace-per-week tolerance
+    (frequency is a free-text display label with no enforced semantics
+    anywhere) — easing/level-up proposals adjust that override, stored in
+    prefs (habit_grace_{habit_id}), not a new table."""
+    from ..life.habits import set_grace_per_week
+    habit_id = payload["habit_id"]
+    new_grace = int(payload["new_grace_per_week"])
+    set_grace_per_week(ctx, habit_id, new_grace)
+    return {"habit_id": habit_id, "new_grace_per_week": new_grace}
 
 
 @register("health_target_propose")

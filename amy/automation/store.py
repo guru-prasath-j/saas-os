@@ -255,6 +255,16 @@ class AutomationStore:
                 PRIMARY KEY (uid, date)
             );
 
+            CREATE TABLE IF NOT EXISTS habit_links (
+                id             TEXT PRIMARY KEY,
+                uid            TEXT NOT NULL,
+                habit_id       TEXT NOT NULL,
+                signal_type    TEXT NOT NULL,
+                signal_params  TEXT DEFAULT '{}',
+                mode           TEXT NOT NULL,
+                created_at     TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS health_profile (
                 uid              TEXT PRIMARY KEY,
                 dob_or_age       TEXT DEFAULT '',
@@ -278,6 +288,7 @@ class AutomationStore:
             CREATE INDEX IF NOT EXISTS idx_posting_uid ON job_postings(uid, status, discovered_at);
             CREATE INDEX IF NOT EXISTS idx_appl_uid    ON applications(uid, status);
             CREATE INDEX IF NOT EXISTS idx_appl_posting ON applications(posting_id);
+            CREATE INDEX IF NOT EXISTS idx_habit_links_uid ON habit_links(uid, habit_id);
             """
         )
         self.conn.commit()
@@ -760,6 +771,51 @@ class AutomationStore:
             f" ON CONFLICT(uid,date) DO UPDATE SET {update_clause}, computed_at=excluded.computed_at",
             [uid, date, *values, _now_iso()])
         self.conn.commit()
+
+    # --- habit links (LIFE AUTOPILOT L4) ---------------------------------------
+    # habit_id references HabitEngine's habits.db row by id — no FK (SQLite
+    # can't FK across files), bridged only by convention. See
+    # JobCtx.open_habits() in amy/automation/executors.py.
+
+    def add_habit_link(self, uid: str, habit_id: str, signal_type: str,
+                       signal_params: dict, mode: str) -> str:
+        lid = _uuid()
+        self.conn.execute(
+            "INSERT INTO habit_links(id,uid,habit_id,signal_type,signal_params,mode,created_at)"
+            " VALUES(?,?,?,?,?,?,?)",
+            (lid, uid, habit_id, signal_type, json.dumps(signal_params or {}),
+             mode, _now_iso()))
+        self.conn.commit()
+        return lid
+
+    def list_habit_links(self, uid: str, habit_id: str | None = None) -> list[dict]:
+        if habit_id:
+            rows = self.conn.execute(
+                "SELECT * FROM habit_links WHERE uid=? AND habit_id=?",
+                (uid, habit_id)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM habit_links WHERE uid=?", (uid,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["signal_params"] = json.loads(d["signal_params"] or "{}")
+            out.append(d)
+        return out
+
+    def get_habit_link(self, link_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM habit_links WHERE id=?", (link_id,)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["signal_params"] = json.loads(d["signal_params"] or "{}")
+        return d
+
+    def delete_habit_link(self, link_id: str) -> bool:
+        c = self.conn.execute("DELETE FROM habit_links WHERE id=?", (link_id,))
+        self.conn.commit()
+        return c.rowcount > 0
 
     # --- health profile (LIFE AUTOPILOT L1) -----------------------------------
 
