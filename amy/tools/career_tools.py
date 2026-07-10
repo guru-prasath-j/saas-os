@@ -91,10 +91,29 @@ def _t_job_details(ctx, args):
                _obj({"owner": {"type": "string"}}),
                RISK_READ)
 def _t_portfolio_repo_list(ctx, args):
-    from ..connectors.mcp_call import call_mcp_tool, extract_list
+    from ..connectors.mcp_call import (ConnectorCallError, call_mcp_tool,
+                                       extract_list, find_connector_row)
     call_args = {k: v for k, v in args.items() if k == "owner" and v}
-    result = call_mcp_tool(ctx.user_id, ctx.store, "github", _GH_LIST_REPOS,
-                           call_args, target_style="none")
+    try:
+        result = call_mcp_tool(ctx.user_id, ctx.store, "github",
+                               ("list_repositories",), call_args,
+                               target_style="none")
+    except ConnectorCallError:
+        # The OFFICIAL GitHub MCP server advertises no plain list tool —
+        # only search_repositories, which hard-requires a query (found
+        # live: the old candidate order picked it and errored on the
+        # missing parameter). Build the query from the explicit owner or
+        # the connector's default_target ("owner/repo" -> owner).
+        owner = (args.get("owner") or "").strip()
+        if not owner:
+            row = find_connector_row(ctx.user_id, "github")
+            target = (getattr(row, "default_target", "") or "").strip() if row else ""
+            owner = target.split("/", 1)[0] if target else ""
+        if not owner:
+            raise
+        result = call_mcp_tool(ctx.user_id, ctx.store, "github",
+                               ("search_repositories",),
+                               {"query": f"user:{owner}"}, target_style="none")
     repos = extract_list(result)
     return {"repos": repos, "count": len(repos)}
 
