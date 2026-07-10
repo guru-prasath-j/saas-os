@@ -1068,7 +1068,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L1 | Health bootstrap + targets (`amy/life/targets.py`, `amy/life/bootstrap.py`) | DONE | 5a88924 |
 | L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | DONE | 86f9c7f |
 | L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | DONE | 5ec3292 |
-| L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | PENDING | |
+| L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | DONE | (pending commit) |
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | PENDING | |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | PENDING | |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | PENDING | |
@@ -1343,3 +1343,124 @@ correct old→new diff; 2 rejections silence adaptation for that habit (and
 don't silence a different habit); 6 effortless weeks → level-up fires
 once and never again on re-check; non-daily/weekly-frequency habits are
 skipped; link-suggestion keyword matching.
+
+### Part L3 — Nine inference agents (DONE)
+
+`amy/life/baselines.py::day_type_baseline(ctx, metric, day_type, ...)` —
+the shared rolling-baseline helper hard rule 4 requires (day-type-matched,
+grace excluded, `AMY_LIFE_BASELINE_WEEKS`). Built now because L3's commute
+agent is the first real consumer; L5's wellbeing index will reuse it
+unchanged rather than reimplementing baseline math a second time.
+
+`propose_habit`/`propose_goal` executors (`amy/automation/executors.py`)
+are new — L1 never needed them (health targets store into
+`health_profile.targets`, not a habit row) but L3 does, since a commute/
+meals/sleep/activity/reading proposal needs to create a REAL trackable
+habit. `propose_habit`'s payload can carry an optional `link`, which
+creates the matching `habit_links` row atomically in the same approval —
+this is the literal mechanism connecting L3's pattern detection to L4's
+auto-completion (e.g. the commute agent's "leave by 6" approval creates
+both the habit and its `left_office_before` link in one step).
+
+`amy/life/inference.py` — one shared `propose()` framework function used
+by all nine agents (the spec requires identical cross-cutting behavior
+from every one: dedup, resuggest window, drift-pruning), rather than nine
+copies of the same three checks:
+- **Dedup per pattern key**: `submit_action`'s own `dedup_key` blocks a
+  repeat while pending/executed — unchanged from existing conventions.
+- **"declined respects resuggest window"**: a REJECTED proposal is NOT
+  blocked by `dedup_key` alone (`create_approval`'s dedup only checks
+  pending/executed/auto_executed) — `propose()` additionally queries the
+  approvals table for a rejection within `AMY_LIFE_RESUGGEST_DAYS` before
+  allowing a re-propose.
+- **"drift-pruning silences permanently"**: reuses
+  `amy/automation/drift.py`'s EXISTING `_signals()` computation rather
+  than a new pruning table — every agent proposes under
+  `source=f"life_{agent}"`, so an `always_reject` signal for that
+  `(action_type, source)` pair (≥3 decisions, ≥60% rejected) silences
+  every future proposal of that action_type from that agent. This is
+  coarser than per-pattern pruning (it silences the whole agent's use of
+  one action_type, not one specific pattern) — a deliberate reuse-over-
+  reinvention call, not an oversight; a future finer-grained pruning
+  table can be added later if this proves too blunt in practice.
+
+All nine share ONE no-op reactive-agent stub (`_life_agent_noop` in
+`amy/agents/reactive.py`, registered nine times under nine different
+names/kill switches — `AMY_AGENT_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,
+READING,MEETING_LOAD,ADMIN,SEASONAL,SOCIAL}`) since the body really is
+identical for all nine (no push event exists for "a weekly behavioral
+pattern changed" — same structural choice as `meeting_prep`/`portfolio`).
+Real logic runs from the daily `life_inference_scan` job (data window is
+weekly/8-week-baseline; the job cadence itself is daily like
+`career_goal_stall_check`'s multi-day-window check — harmless given
+`propose()`'s own dedup, and more responsive than a literal once-a-week
+job).
+
+Per-agent design notes (each grounded in signals confirmed to actually
+exist — see the L1/L2 pre-flight findings above for what doesn't):
+- **commute**: `office_minutes` weekday baseline (+15%) → a
+  `left_office_before`-linked "leave by X" habit (X = median
+  `left_office_at` this week); 4+ post-9pm `home_arrival_at` in 14 days →
+  a "earlier evenings" goal (no dedicated dinner/sleep-target field exists
+  to adjust, so this proposes a goal rather than reaching into L1's
+  target structure).
+- **meals**: 3+ weekly `late_night_orders` → `txn_absence`-linked cook
+  habit; a `patterns.merchant_cadences()` hit on café-token merchants →
+  home-brew habit with monthly savings computed from the cadence's
+  `typical_amount`/`gap_days`.
+- **sleep**: 5-day streak under the sleep floor (accepted L1 target if one
+  exists, else an honest generic 360min) → wind-down habit (linked
+  `sleep_window_met`) AND an "improve sleep window" goal; 5-day post-
+  midnight `sleep_window_start` streak → an UNLINKED "device-down by
+  11pm" habit (no device-usage signal exists anywhere in this codebase to
+  link it to — stays fully manual, which is valid).
+- **activity**: `patterns.cadence()` over gym-kind `geo_visits` → an
+  `auto_complete` workout habit (only proposed once — checks for an
+  existing matching link first); 10+ days since the last gym visit with a
+  cadence already established → a `_gentle_nudge` (advisory notification,
+  NOT a tier-2 proposal — re-nudging toward an already-existing habit is
+  a reminder, not a new ask, and "ONE gentle re-suggestion per window"
+  reads as advisory in the spec).
+- **reading**: `patterns.cadence()` over `activities` rows with
+  `kind='learning'` → an `auto_complete` reading habit linked to
+  `reading_minutes` (L2's now-honest column, post the reading_minutes bug
+  fix from L4).
+- **meeting-load**: `meeting_count`/`focus_blocks` are honestly `None`
+  today (L2's calendar signals are stubbed — no past-date-range calendar
+  helper exists yet) so that half is a documented no-op, not fabricated;
+  3+ office-hours weekends in the trailing 4 → a "protect a weekend" goal
+  (advisory language, still a formal tier-2 proposal per the framework).
+- **admin**: `subscriptions.name` substring-matched for "insurance" (no
+  category column exists on that table) with `renewal_date` inside 30
+  days → a renewal goal; `jurisdictions.upcoming_deadlines()`'s
+  `kind='compliance'` entries inside 30 days → a "prepare for X" goal.
+  Checkup-cadence (the third admin sub-feature the spec lists) is
+  deliberately deferred to L8, which re-mentions it explicitly under
+  "commitments crossover" — building it twice would be redundant.
+- **seasonal**: `seasonal_notes` (`{months: [...], note}`) already exists,
+  untouched, in every jurisdiction pack JSON (confirmed nothing in Python
+  reads it today — this agent is its first consumer, "pack data, not
+  code" satisfied literally) — proposes a goal when the 14-day lookahead
+  window first crosses into a listed month (the `today.month not in
+  months` check is what makes this "before the period," firing once, not
+  every day throughout the season).
+- **social**: extends `patterns.person_cadences()` (already computes
+  broken-rhythm detection for `relationship_nudges`) into an actual
+  UNLINKED "Call {person}" habit proposal — no phone-call-detection
+  signal exists to link it to, same honest-unlinked pattern as
+  device-down.
+
+Tests: `tests/test_life_inference.py` (18 passing) — framework tests
+(same-pattern dedup, post-rejection resuggest window incl. the backdated-
+past-the-window case, drift-pruning silence); one to two tests per agent
+covering its core trigger condition (commute baseline breach + late
+arrivals, meals threshold + café cadence with savings shown, sleep short-
+streak + post-midnight streak, activity cadence-proposes vs already-
+linked-gets-nudged, reading cadence, weekend-office streak, insurance
+renewal + jurisdiction deadline via mocked pack functions, seasonal
+before-period trigger via an injectable `as_of` param added for
+testability, social broken rhythm); `run_all()` honors a per-agent kill
+switch while other agents still run.
+
+Full suite: 696 passed (18 new), same 22 pre-existing failures
+(unchanged baseline).

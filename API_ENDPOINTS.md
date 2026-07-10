@@ -322,14 +322,18 @@ Registry tools:
 | `health_targets` | read | Computed BMR/TDEE/sleep-band/protein/water from `health_profile`; `available:False` (never fabricated) with an incomplete profile |
 | `complete_habit_check` | write | Human/chat-assistant use; the habit_links auto-completion mechanism bypasses this tool entirely (calls the executor directly for tier 0/1) |
 | `adjust_habit_target` | write | Adjusts a habit's grace-per-week override; always tier 2 with an old→new diff when agent-invoked |
+| `propose_habit` | write | Proposes a new habit, optionally with a `link` (creates the `habit_links` row atomically on approval) |
+| `propose_goal` | write | Proposes a new goal |
 
 Jobs: `health_bootstrap_check` (06:05 — finds/parses the health vault
 folder, proposes targets, polls for vault re-parse), `life_metrics_daily`
 (00:30 — computes the previous day's `life_metrics` row, then runs
-day-close habit-link evaluation + adaptation checks, idempotent).
+day-close habit-link evaluation + adaptation checks, idempotent),
+`life_inference_scan` (10:00 — runs all nine L3 inference agents).
 
-Kill switches: `AMY_AGENT_LIFE_HEALTH`, `AMY_AGENT_LIFE_HABITS`. Master
-switch: `AMY_LIFE_AUTOPILOT`.
+Kill switches: `AMY_AGENT_LIFE_HEALTH`, `AMY_AGENT_LIFE_HABITS`,
+`AMY_AGENT_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,ADMIN,
+SEASONAL,SOCIAL}`. Master switch: `AMY_LIFE_AUTOPILOT`.
 
 Backfill: `python -m amy.life.backfill <email> <start-date> <end-date>`.
 

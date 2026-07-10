@@ -49,6 +49,41 @@ def _t_health_targets(ctx, args):
            "accepted": profile.get("targets") or {}}
 
 
+@register_tool("propose_habit",
+               "Propose a new habit, optionally linked to an auto-tracking "
+               "signal (e.g. geo_place_visit for a gym habit). Always tier "
+               "2 with evidence when invoked by an agent.",
+               _obj({"title": {"type": "string"}, "frequency": {"type": "string"},
+                     "link": {"type": "object"}, "reasoning": {"type": "string"}},
+                    ["title", "reasoning"]),
+               RISK_WRITE)
+def _t_propose_habit(ctx, args):
+    from ..automation.executors import submit_action
+    return submit_action(
+        ctx, 2, "propose_habit", title=f"Proposed habit: {args['title']}",
+        body=args["reasoning"],
+        payload={"title": args["title"], "frequency": args.get("frequency", "daily"),
+                "link": args.get("link")},
+        source="manual", reasoning=args["reasoning"], risk="write")
+
+
+@register_tool("propose_goal",
+               "Propose a new goal. Always tier 2 with evidence when "
+               "invoked by an agent.",
+               _obj({"title": {"type": "string"}, "domain": {"type": "string"},
+                     "target_date": {"type": "string"}, "reasoning": {"type": "string"}},
+                    ["title", "reasoning"]),
+               RISK_WRITE)
+def _t_propose_goal(ctx, args):
+    from ..automation.executors import submit_action
+    return submit_action(
+        ctx, 2, "propose_goal", title=f"Proposed goal: {args['title']}",
+        body=args["reasoning"],
+        payload={"title": args["title"], "domain": args.get("domain", "life"),
+                "target_date": args.get("target_date")},
+        source="manual", reasoning=args["reasoning"], risk="write")
+
+
 @register_tool("complete_habit_check",
                "Mark a habit done for a date (default today). Human/chat "
                "use — the auto-completion mechanism (habit_links) never "

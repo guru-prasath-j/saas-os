@@ -689,6 +689,39 @@ def _exec_application_status_update(ctx: JobCtx, payload: dict) -> dict:
     return {"updated": ok, "application_id": application_id, "status": status}
 
 
+@register("propose_habit")
+def _exec_propose_habit(ctx: JobCtx, payload: dict) -> dict:
+    """LIFE AUTOPILOT L3: creates a new habit on approval, optionally with
+    a habit_links row in the same action — this is how L3's inference
+    agents wire straight into L4's auto-completion mechanism (e.g. the
+    commute agent's 'leave by 6' proposal creates both the habit AND its
+    left_office_before link atomically on approve). payload['link'] is
+    optional — an unlinked habit stays fully manual, which is valid."""
+    habits = ctx.open_habits()
+    try:
+        hid = habits.add(payload["title"], frequency=payload.get("frequency", "daily"))
+    finally:
+        habits.close()
+    link_id = None
+    link = payload.get("link")
+    if link:
+        link_id = ctx.store.add_habit_link(
+            ctx.user_id, hid, link["signal_type"],
+            link.get("signal_params") or {}, link.get("mode", "auto_suggest_check"))
+    return {"habit_id": hid, "link_id": link_id}
+
+
+@register("propose_goal")
+def _exec_propose_goal(ctx: JobCtx, payload: dict) -> dict:
+    """LIFE AUTOPILOT L3: creates a new goal on approval (domain defaults
+    to 'life' — free text, no enum, same as every other domain)."""
+    from ..autonomous.goals import GoalEngine
+    gid = GoalEngine(ctx.collab).create_goal(
+        payload["title"], domain=payload.get("domain", "life"),
+        target_date=payload.get("target_date"))
+    return {"goal_id": gid}
+
+
 @register("complete_habit_check")
 def _exec_complete_habit_check(ctx: JobCtx, payload: dict) -> dict:
     """LIFE AUTOPILOT L4. Called both by habit_signals' auto-completion

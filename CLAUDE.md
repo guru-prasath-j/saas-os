@@ -738,6 +738,30 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   flow, never forced. Routes: `POST/GET /api/life/habits/{id}/link[s]`,
   `DELETE /api/life/habit-links/{id}`,
   `GET /api/life/habits/link-suggestions`.
+- `amy/life/baselines.py` (L3) — `day_type_baseline(ctx, metric, day_type,
+  ...)`, the shared rolling-baseline helper hard rule 4 requires
+  (day-type-matched, grace excluded, `AMY_LIFE_BASELINE_WEEKS`); L5's
+  wellbeing index reuses it unchanged rather than reimplementing.
+- `amy/life/inference.py` (L3) — nine inference agents
+  (commute/meals/sleep/activity/reading/meeting_load/admin/seasonal/
+  social) sharing ONE `propose()` framework function (dedup via
+  `submit_action`'s own `dedup_key`; post-rejection resuggest window via
+  an explicit approvals-table check — `create_approval`'s dedup alone
+  doesn't cover rejected rows; drift-pruning silence reuses
+  `amy/automation/drift.py`'s existing `_signals()` grouped by
+  `(action_type, source=f"life_{agent}")` rather than a new pruning
+  table). All nine share ONE no-op reactive-agent stub
+  (`_life_agent_noop`, registered nine times under nine kill switches —
+  `AMY_AGENT_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,
+  ADMIN,SEASONAL,SOCIAL}`) driven by the daily `life_inference_scan` job.
+  `propose_habit`/`propose_goal` executors (new — L1 didn't need them)
+  let a proposal create a REAL trackable habit/goal, with `propose_habit`
+  able to atomically create its `habit_links` row too — the literal
+  mechanism connecting L3's pattern detection to L4's auto-completion.
+  Known honest gaps: `meeting_count`/`focus_blocks` stay `None` (no
+  calendar signal source built yet) so meeting-load's calendar-block
+  half is a documented no-op; `seasonal_notes` in the jurisdiction packs
+  had zero Python readers before this — this agent is the first consumer.
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -792,8 +816,11 @@ NEVER deleted) · `health_bootstrap_check` (06:05, LIFE AUTOPILOT L1 —
 finds/parses the health vault folder, proposes targets, polls for vault
 re-parse; re-checks `AMY_LIFE_AUTOPILOT` + `AMY_AGENT_LIFE_HEALTH` at
 runtime) · `life_metrics_daily` (00:30, LIFE AUTOPILOT L2 — computes the
-previous day's `life_metrics` row, idempotent upsert; re-checks
-`AMY_LIFE_AUTOPILOT` at runtime).
+previous day's `life_metrics` row, then runs L4's day-close habit-link
+evaluation + adaptation checks, idempotent; re-checks `AMY_LIFE_AUTOPILOT`
+at runtime) · `life_inference_scan` (10:00, LIFE AUTOPILOT L3 — runs all
+nine inference agents' weekly-rollup checks; each independently
+re-checks its own kill switch).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
@@ -873,8 +900,9 @@ pins it down with a call counter + approval-row count, not just dedup.
 
 Kill switches: `AMY_AGENT_BUDGET` / `_SUBSCRIPTION` / `_COMPLIANCE` /
 `_SCREENING` / `_OBLIGATION` / `_ERRAND` / `_LEARNING` / `_PR_TASK` /
-`_MEETING_PREP` / `_LIFE_HEALTH` / `_LIFE_HABITS` (LIFE AUTOPILOT L1/L4,
-below).
+`_MEETING_PREP` / `_LIFE_HEALTH` / `_LIFE_HABITS` /
+`_LIFE_{COMMUTE,MEALS,SLEEP,ACTIVITY,READING,MEETING_LOAD,ADMIN,SEASONAL,
+SOCIAL}` (LIFE AUTOPILOT L1/L3/L4, below).
 
 ## LLM Routing
 

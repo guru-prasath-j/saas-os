@@ -1388,6 +1388,26 @@ def _habit_signals_agent(events, ctx):
     events.subscribe("context.place_left", on_place_left)
 
 
+_LIFE_INFERENCE_AGENT_NAMES = (
+    "life_commute", "life_meals", "life_sleep", "life_activity", "life_reading",
+    "life_meeting_load", "life_admin", "life_seasonal", "life_social",
+)
+
+
+def _life_agent_noop(events, ctx):
+    """Shared no-op subscription for LIFE AUTOPILOT L3's nine inference
+    agents (commute/meals/sleep/activity/reading/meeting_load/admin/
+    seasonal/social) — none have a natural push event ('a weekly
+    behavioral pattern changed' only exists by polling life_metrics), so
+    all nine share this identical no-op body rather than nine near-
+    duplicate copies. Each still gets its OWN kill switch and its own
+    entry in register_reactive_agents' returned list (registered under a
+    different name per call in the loop below). Real logic:
+    amy/life/inference.py's per-agent check functions, driven weekly by
+    the life_inference_scan job."""
+    return
+
+
 def _meeting_prep_agent(events, ctx):
     """No-op subscription: unlike every other agent here, meeting_prep has
     no natural triggering EVENT — "a meeting is starting soon" only exists
@@ -1554,4 +1574,7 @@ def register_reactive_agents(events, ctx) -> list[str]:
         _once("health_bootstrap", _health_bootstrap_agent)
     if config.agent_enabled("life_habits"):
         _once("habit_signals", _habit_signals_agent)
+    for _name in _LIFE_INFERENCE_AGENT_NAMES:
+        if config.agent_enabled(_name):
+            _once(_name, _life_agent_noop)
     return sorted(seen)
