@@ -51,6 +51,13 @@ def search_jobs(
     # degrade to fewer results, never to a failed search.
     for site in sites:
         try:
+            kwargs = {}
+            if site == "google":
+                # jobspy's Google Jobs scraper searches google_search_term,
+                # not search_term — without it the board returns nothing.
+                kwargs["google_search_term"] = (
+                    f"{search_term} jobs in {location}" if location
+                    else f"{search_term} jobs")
             df = scrape_jobs(
                 site_name=[site],
                 search_term=search_term,
@@ -59,6 +66,7 @@ def search_jobs(
                 hours_old=hours_old,
                 is_remote=is_remote,
                 country_indeed=country_indeed,
+                **kwargs,
             )
             # NaN isn't valid JSON — scrape_jobs leaves missing fields as NaN.
             df = df.where(df.notnull(), None)

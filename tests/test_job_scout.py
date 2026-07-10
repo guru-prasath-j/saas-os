@@ -224,6 +224,8 @@ def test_job_scout_passes_country_for_home_jurisdiction(ctx, monkeypatch):
     Bangalore profile searched against the tool's USA default."""
     _make_active_career_goal(ctx)
     monkeypatch.setattr("amy.agents.reactive._get_llm", lambda ctx: None)
+    # isolate from the developer's own .env board list
+    monkeypatch.delenv("AMY_JOB_SCOUT_SITES", raising=False)
 
     captured = {}
 
@@ -244,5 +246,6 @@ def test_job_scout_passes_country_for_home_jurisdiction(ctx, monkeypatch):
 
     JobScoutSensor(ctx.events(), ctx).poll()
     assert captured.get("country_indeed") == "India"
-    # boards: env-configurable, defaults to the general boards + Naukri
-    assert captured.get("site_names") == "indeed,linkedin,naukri"
+    # boards: env-configurable; default = general boards + Naukri +
+    # Google Jobs (which aggregates regional boards)
+    assert captured.get("site_names") == "indeed,linkedin,naukri,glassdoor,google"

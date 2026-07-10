@@ -70,12 +70,16 @@ def _country_for_ctx(ctx) -> str | None:
 
 def _scout_sites() -> str:
     """Boards to scout, comma-separated (AMY_JOB_SCOUT_SITES). Default covers
-    the big general boards plus Naukri (dominant in India — jurisdiction
-    packs don't carry board preferences, so this stays one env knob). The
-    jobspy server scrapes each site independently and a blocked one only
-    shrinks the result, never fails the search."""
+    the globally useful boards (Google Jobs aggregates regional boards like
+    Naukri, the closest legitimate route to inventory that blocks direct
+    scraping) plus Naukri itself — dominant in India, currently 406-blocked
+    upstream but free to carry since the jobspy server scrapes each site
+    independently: a blocked board only shrinks the result, never fails the
+    search. Regional extras (bayt, bdjobs, zip_recruiter) are opt-in via
+    the env var."""
     from . import config
-    return config._env("AMY_JOB_SCOUT_SITES", "indeed,linkedin,naukri").strip()
+    return config._env("AMY_JOB_SCOUT_SITES",
+                       "indeed,linkedin,naukri,glassdoor,google").strip()
 
 
 def _score_postings(ctx, postings: list[dict], profile: dict) -> dict[int, dict]:
