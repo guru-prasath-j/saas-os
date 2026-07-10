@@ -226,6 +226,35 @@ class AutomationStore:
                 PRIMARY KEY (uid, company)
             );
 
+            CREATE TABLE IF NOT EXISTS life_metrics (
+                uid                     TEXT NOT NULL,
+                date                    TEXT NOT NULL,
+                office_minutes          REAL,
+                commute_out_minutes     REAL,
+                commute_return_minutes  REAL,
+                left_office_at          TEXT,
+                gym_visits              INTEGER DEFAULT 0,
+                home_arrival_at         TEXT,
+                sleep_window_start      TEXT,
+                sleep_window_end        TEXT,
+                sleep_estimate_min      REAL,
+                meals_out               INTEGER DEFAULT 0,
+                late_night_orders       INTEGER DEFAULT 0,
+                cafe_spend              REAL DEFAULT 0,
+                meeting_count           INTEGER,
+                meeting_minutes         REAL,
+                focus_blocks            INTEGER,
+                reading_minutes         REAL DEFAULT 0,
+                late_night_activity_min REAL,
+                meal_captures           INTEGER DEFAULT 0,
+                meal_calorie_est        REAL,
+                day_type                TEXT DEFAULT '',
+                grace                   INTEGER DEFAULT 0,
+                signal_counts           TEXT DEFAULT '{}',
+                computed_at             TEXT,
+                PRIMARY KEY (uid, date)
+            );
+
             CREATE TABLE IF NOT EXISTS health_profile (
                 uid              TEXT PRIMARY KEY,
                 dob_or_age       TEXT DEFAULT '',
@@ -674,6 +703,62 @@ class AutomationStore:
         sets.append("updated_at=?"); args.append(_now_iso())
         args.append(uid)
         self.conn.execute(f"UPDATE career_profile SET {', '.join(sets)} WHERE uid=?", args)
+        self.conn.commit()
+
+    # --- life metrics (LIFE AUTOPILOT L2) --------------------------------------
+
+    _LIFE_METRICS_COLS = (
+        "office_minutes", "commute_out_minutes", "commute_return_minutes",
+        "left_office_at", "gym_visits", "home_arrival_at", "sleep_window_start",
+        "sleep_window_end", "sleep_estimate_min", "meals_out", "late_night_orders",
+        "cafe_spend", "meeting_count", "meeting_minutes", "focus_blocks",
+        "reading_minutes", "late_night_activity_min", "meal_captures",
+        "meal_calorie_est", "day_type", "grace", "signal_counts")
+
+    def get_life_metrics(self, uid: str, date: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM life_metrics WHERE uid=? AND date=?", (uid, date)).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["grace"] = bool(d["grace"])
+        d["signal_counts"] = json.loads(d.get("signal_counts") or "{}")
+        return d
+
+    def list_life_metrics(self, uid: str, since: str, until: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM life_metrics WHERE uid=? AND date>=? AND date<=?"
+            " ORDER BY date", (uid, since, until)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["grace"] = bool(d["grace"])
+            d["signal_counts"] = json.loads(d.get("signal_counts") or "{}")
+            out.append(d)
+        return out
+
+    def upsert_life_metrics(self, uid: str, date: str, **fields) -> None:
+        """Idempotent recompute — always UPSERTs the full row rather than
+        insert-only, so re-running life_metrics_daily/backfill for an
+        already-computed day overwrites cleanly instead of erroring or
+        duplicating."""
+        cols = [c for c in self._LIFE_METRICS_COLS if c in fields]
+        values = []
+        for c in cols:
+            v = fields[c]
+            if c == "grace":
+                v = 1 if v else 0
+            elif c == "signal_counts":
+                v = json.dumps(v or {})
+            values.append(v)
+        col_list = ", ".join(cols)
+        placeholders = ", ".join("?" for _ in cols)
+        update_clause = ", ".join(f"{c}=excluded.{c}" for c in cols)
+        self.conn.execute(
+            f"INSERT INTO life_metrics(uid,date,{col_list},computed_at)"
+            f" VALUES(?,?,{placeholders},?)"
+            f" ON CONFLICT(uid,date) DO UPDATE SET {update_clause}, computed_at=excluded.computed_at",
+            [uid, date, *values, _now_iso()])
         self.conn.commit()
 
     # --- health profile (LIFE AUTOPILOT L1) -----------------------------------

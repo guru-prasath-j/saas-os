@@ -38,6 +38,15 @@ class JobCtx:
         from ..finance.engine import FinanceEngine
         return FinanceEngine(self.finance_path)
 
+    def open_habits(self):
+        """LIFE AUTOPILOT: habits live in a separate per-user habits.db
+        (amy/habits/engine.py::HabitEngine), not collab.db — habit_links
+        (L4) bridges the two by id, no FK (SQLite can't FK across files
+        anyway). Mirrors open_finance()'s convention exactly."""
+        from ..habits.engine import HabitEngine
+        from ..saas import paths
+        return HabitEngine(paths.index_dir(self.user_id) / "habits.db")
+
     def events(self):
         """EventStore with reactive agents wired on (agents also react to
         job-driven imports). Uses amy.events.factory.get_events() with THIS

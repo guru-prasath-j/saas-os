@@ -39,6 +39,23 @@ class TimelineEngine:
             items.append({"ts": r["ts"], "source": "event", "kind": r["type"], "text": _short(r["payload"])})
         for r in self.db.execute("SELECT ts,title,status FROM decisions").fetchall():
             items.append({"ts": r["ts"], "source": "decision", "kind": "decision", "text": r["title"]})
+        try:
+            for r in self.db.execute(
+                    "SELECT date,day_type,grace,office_minutes,gym_visits,meals_out"
+                    " FROM life_metrics").fetchall():
+                bits = [r["day_type"] or "day"]
+                if r["grace"]:
+                    bits.append("grace")
+                if r["office_minutes"]:
+                    bits.append(f"office {int(r['office_minutes'])}m")
+                if r["gym_visits"]:
+                    bits.append(f"gym x{r['gym_visits']}")
+                if r["meals_out"]:
+                    bits.append(f"meals out x{r['meals_out']}")
+                items.append({"ts": f"{r['date']}T12:00:00", "source": "daily_metrics",
+                              "kind": "life_metrics", "text": ", ".join(bits)})
+        except Exception:
+            pass   # life_metrics may not exist yet on an older collab.db
         if notes:
             for n in notes:
                 meta = n.meta or {}

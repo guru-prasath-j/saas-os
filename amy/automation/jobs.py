@@ -168,6 +168,29 @@ def _health_bootstrap_check(ctx: JobCtx) -> dict:
     return {"bootstrap": result, "reparse_triggered": reparse is not None}
 
 
+def _life_metrics_daily(ctx: JobCtx) -> dict:
+    """LIFE AUTOPILOT L2: computes the previous day's life_metrics row.
+    Idempotent (upsert) — safe to re-run. Re-checks AMY_LIFE_AUTOPILOT at
+    runtime (the learning_feed_refresh idiom)."""
+    if not _life_autopilot_enabled():
+        return {"skipped": "disabled"}
+    import datetime as _dt
+
+    from ..life.aggregator import compute_day
+    yesterday = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+    row = compute_day(ctx, yesterday)
+    ctx.store.upsert_life_metrics(ctx.user_id, yesterday, **row)
+    try:
+        ctx.events().emit(
+            "life.metrics_computed",
+            {"date": yesterday, "day_type": row["day_type"], "grace": row["grace"],
+             "signal_counts": row["signal_counts"]},
+            source="life_metrics")
+    except Exception:
+        pass
+    return {"date": yesterday, "day_type": row["day_type"]}
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -217,6 +240,7 @@ HANDLERS: dict[str, callable] = {
     "interview_debrief_scan": _interview_debrief_scan,
     "career_retention": _career_retention,
     "health_bootstrap_check": _health_bootstrap_check,
+    "life_metrics_daily": _life_metrics_daily,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -260,6 +284,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("interview_debrief_scan", {"every_hours": 1}),
         ("career_retention",       {"monthly_day": 3, "at": "06:15"}),
         ("health_bootstrap_check", {"daily_at": "06:05"}),
+        ("life_metrics_daily",     {"daily_at": "00:30"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

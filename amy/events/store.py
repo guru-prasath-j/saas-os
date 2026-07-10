@@ -72,6 +72,13 @@ CAREER_APPLICATION_SENT = "career.application_sent"
 CAREER_APPLICATION_STATUS_CHANGED = "career.application_status_changed"
 CAREER_PORTFOLIO_ANALYZED = "career.portfolio_analyzed"
 
+# Life events (LIFE AUTOPILOT phase) — payloads are metric keys/counts only,
+# never coordinates or raw health values (privacy floor, docs/LIFE_AUTOPILOT.md).
+LIFE_METRICS_COMPUTED = "life.metrics_computed"        # L2
+LIFE_PATTERN_DETECTED = "life.pattern_detected"        # L3
+LIFE_HABIT_AUTOCOMPLETED = "life.habit_autocompleted"  # L4
+LIFE_WELLBEING_WEEK_COMPUTED = "life.wellbeing_week_computed"  # L5
+
 # Event types a reactive agent (amy/agents/reactive.py) actually .subscribe()s
 # to today. Kept as a plain literal set HERE rather than imported from
 # amy.agents.reactive, so this module stays import-free of agents/automation

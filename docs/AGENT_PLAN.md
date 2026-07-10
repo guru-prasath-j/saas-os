@@ -1066,7 +1066,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 |---|---|---|---|
 | 0 | `test_reactive_agents.py` registered-agent-set assertion → set `>=` check | DONE | ab1976a |
 | L1 | Health bootstrap + targets (`amy/life/targets.py`, `amy/life/bootstrap.py`) | DONE | 5a88924 |
-| L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | PENDING | |
+| L2 | Signal aggregator (`life_metrics_daily` job, day-typing + grace, backfill) | DONE | (pending commit) |
 | L4 | Habit auto-completion (`habit_links`, streak grace, adaptation) | PENDING | |
 | L3 | Nine inference agents (commute/meals/sleep/activity/reading/meetings/admin/seasonal/social) | PENDING | |
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | PENDING | |
@@ -1169,3 +1169,77 @@ forbidden-phrase assertion (advisory-never-diagnostic) on every generated
 string; tier-1 vault-reparse diff; >5%/<5% weight-shift behavior;
 idempotent re-bootstrap (no duplicate proposals). Full suite: 657 passed,
 22 pre-existing failures (unchanged from the documented baseline).
+
+### Part L2 — Signal aggregator (DONE)
+
+`life_metrics` table (`collab.db`) + idempotent `upsert_life_metrics`
+(UPSERT on `(uid,date)`, not insert-only — a re-run overwrites cleanly).
+`JobCtx.open_habits()` added (mirrors `open_finance()`), even though L4 is
+the first real consumer — the accessor belongs next to the table
+convention it bridges, not deferred to L4's own commit.
+
+`amy/life/aggregator.py::compute_day(ctx, date)` — per-source signal
+extraction, each independently best-effort (the `_work_section` idiom):
+geo visits (`geo_visits.entered_at/left_at` have real timestamps once a
+place of the right `kind` is tagged and visited — office/commute/gym/
+home-arrival durations are real, not proxied), transactions (meals_out/
+late_night_orders/cafe_spend via merchant-keyword matching — see the
+transactions-have-no-time-of-day finding above), captures + `activities`
+(sleep-window inference inputs), calendar (stubbed `None` for now — no
+past-date-range calendar helper exists in this codebase yet;
+`meet_upcoming_meetings` only looks forward; building a real one is
+deferred until L3's meeting-load agent needs it enough to justify the
+addition, rather than building it speculatively now).
+
+Day typing + grace computed HERE, consumed by every later part:
+`away` = `AMY_LIFE_TRAVEL_GRACE_DAYS` (2) consecutive days with no home
+signal — `_has_home_signal()` checks a tagged `kind='home'` place visit
+first, else the `infer_home_cell()` fallback (most-frequented `geo_cells`
+cell over the trailing `AMY_LIFE_BASELINE_WEEKS`, per the corrected
+finding above); `silent` = zero signals across every source; else
+`weekday`/`weekend` from `date.weekday()`. Both `away` and `silent` set
+`grace=True`. Sleep window (`_infer_sleep_window`) only fills in when a
+home-arrival exists AND a plausible 120-720 minute activity-silence gap
+follows it (activity/capture timestamps only, per the approved "geo
+home-arrival + app/capture silence gap" decision) — NULL otherwise, never
+a guessed window.
+
+`amy/life/backfill.py::backfill(ctx, start, end)` loops `compute_day` +
+upsert over a range; CLI `python -m amy.life.backfill <email> <start>
+<end>` looks the user up by email (never a hardcoded uid, per CLAUDE.md).
+Verified against this account's real data shape: early days with
+transactions but no geo history correctly leave geo-derived columns NULL
+while finance-derived columns populate — the honest reading of what's
+actually on file (test `test_backfill_only_populates_actually_recorded_
+signals`).
+
+`life_metrics_daily` job (00:30, previous day, re-checks
+`AMY_LIFE_AUTOPILOT` at runtime) emits `life.metrics_computed` (date/
+day_type/grace/signal_counts only — no coordinates or raw health values,
+privacy floor). New event constants for all four LIFE AUTOPILOT event
+types defined now (`life.metrics_computed/pattern_detected/
+habit_autocompleted/wellbeing_week_computed`) but only referenced by name
+in code, not yet added to `AGENT_RELEVANT_EVENTS` — mirrors how
+`career.*` events were actually handled (defined in Part 1, the
+zero-subscriber warn-set only gained entries once a real subscriber
+existed), not the CONNECTOR-COMPLETION-Part-1-style "add immediately"
+approach the CAREER AUTOPILOT docstring claimed but didn't actually do
+(checked the real `AGENT_RELEVANT_EVENTS` set — no `career.*` members).
+
+`GET /api/life/metrics?from=&to=` (read-only, `amy/saas/routers/life.py`,
+registered in `app.py`). `TimelineEngine` gained a `daily_metrics` source
+(one item per `life_metrics` row, best-effort — degrades silently if the
+table doesn't exist yet on an older `collab.db`); frontend rendering
+(color/legend) is L7's job, an unmapped source already renders in the
+default grey without erroring.
+
+Tests: `tests/test_life_aggregator.py` (9 passing) — seeded weekday
+computes correct office/commute/gym/home/meals/cafe values; idempotent
+recompute (no duplicate rows); low-confidence sleep stays NULL; away-day
+(consecutive zero-home-signal) marks grace; weekend classifies correctly
+via calendar day-of-week (the L2-scoped slice of the weekend-false-
+positive regression — the day-type-matched *baseline comparison* itself
+is L5's job, out of scope here); silent-day zero-signal handling;
+home-cell fallback picks the most-frequented cell; backfill honesty
+(geo-derived NULL where no geo history exists, finance-derived populated
+where transactions do); inverted date range rejected.

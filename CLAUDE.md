@@ -686,6 +686,29 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   job. Kill switch `AMY_AGENT_LIFE_HEALTH`; master switch
   `AMY_LIFE_AUTOPILOT` (read via `config._env`, no dedicated config.py
   constant — same pattern as `AMY_LEARNING_FEED_ENABLED`).
+- `amy/life/aggregator.py` (L2) — `compute_day(ctx, date)` builds one
+  `life_metrics` row from geo visits (office/commute/gym/home-arrival
+  durations, real timestamps), transactions (meals_out/late_night_orders/
+  cafe_spend, merchant-keyword based — see constraints below), captures +
+  `activities` (sleep-window inference input), and calendar (stubbed
+  `None` — no past-date-range calendar helper exists yet; deferred until
+  L3's meeting-load agent needs it). Day typing computed HERE, consumed by
+  every later part: `away` = `AMY_LIFE_TRAVEL_GRACE_DAYS` (2) consecutive
+  days with no home signal (tagged `kind='home'` place visit, or the
+  `infer_home_cell()` fallback); `silent` = zero signals across every
+  source; else `weekday`/`weekend` from the calendar day-of-week. Sleep
+  window only fills in when a home-arrival AND a plausible (120-720 min)
+  activity-silence gap both exist — NULL otherwise (conservative, per the
+  approved design decision). `amy/life/backfill.py`:
+  `python -m amy.life.backfill <email> <start> <end>`, looks the user up
+  by email (never a hardcoded uid). `life_metrics_daily` job (00:30,
+  previous day, idempotent upsert) emits `life.metrics_computed` (counts
+  only) — not yet added to `AGENT_RELEVANT_EVENTS` since no reactive
+  agent subscribes until L3 lands (mirrors how `career.*` events were
+  handled: defined in Part 1, added to the warn-set only once a real
+  subscriber exists). `GET /api/life/metrics?from=&to=` (read-only).
+  `TimelineEngine` gained a `daily_metrics` source (best-effort, degrades
+  silently if `life_metrics` doesn't exist yet on an older `collab.db`).
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -739,7 +762,9 @@ prefs-table guard, advisory) · `career_retention` (monthly 3rd, archives
 NEVER deleted) · `health_bootstrap_check` (06:05, LIFE AUTOPILOT L1 —
 finds/parses the health vault folder, proposes targets, polls for vault
 re-parse; re-checks `AMY_LIFE_AUTOPILOT` + `AMY_AGENT_LIFE_HEALTH` at
-runtime).
+runtime) · `life_metrics_daily` (00:30, LIFE AUTOPILOT L2 — computes the
+previous day's `life_metrics` row, idempotent upsert; re-checks
+`AMY_LIFE_AUTOPILOT` at runtime).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules

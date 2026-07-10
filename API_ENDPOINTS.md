@@ -303,6 +303,28 @@ Jobs: `job_scout_poll` (default 12h, `AMY_JOB_SCOUT_INTERVAL_HOURS`),
 Kill switches: `AMY_AGENT_CAREER_GOAL`, `AMY_AGENT_PORTFOLIO`,
 `AMY_AGENT_JOB_SCOUT`, `AMY_AGENT_APPLICATION_TRACKER`.
 
+## Life Autopilot (L1-L2)
+
+Full spec: `docs/LIFE_AUTOPILOT.md`.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/life/metrics` | `?from=&to=` (defaults to the trailing 30 days) — `life_metrics` rows: office/commute/gym/sleep/meals/day_type/grace per day. Read-only. |
+
+Registry tools:
+
+| Tool | Risk | Notes |
+|------|------|-------|
+| `health_targets` | read | Computed BMR/TDEE/sleep-band/protein/water from `health_profile`; `available:False` (never fabricated) with an incomplete profile |
+
+Jobs: `health_bootstrap_check` (06:05 — finds/parses the health vault
+folder, proposes targets, polls for vault re-parse), `life_metrics_daily`
+(00:30 — computes the previous day's `life_metrics` row, idempotent).
+
+Kill switch: `AMY_AGENT_LIFE_HEALTH`. Master switch: `AMY_LIFE_AUTOPILOT`.
+
+Backfill: `python -m amy.life.backfill <email> <start-date> <end-date>`.
+
 ---
 
 ## Events
