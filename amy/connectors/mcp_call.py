@@ -85,6 +85,17 @@ def _compact(result: dict) -> dict:
     # string fields per item, drop the duplicate "text" mirror, then drop
     # trailing items until it fits the structured budget.
     structured = result.get("structured") if isinstance(result, dict) else None
+    if structured is None and isinstance(result, dict):
+        # Some servers (the official GitHub MCP among them) return JSON
+        # only as a text blob with no structuredContent — parse it here so
+        # big list payloads keep machine shape instead of dying on the
+        # string cap (found live: search_repositories, 15.9KB of text).
+        t = result.get("text")
+        if isinstance(t, str) and t.strip()[:1] in "[{":
+            try:
+                structured = json.loads(t)
+            except Exception:
+                structured = None
     wrap_key = None
     if isinstance(structured, dict):
         # FastMCP wraps list returns as {"result": [...]}; other servers use
