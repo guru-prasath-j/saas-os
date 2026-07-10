@@ -1072,7 +1072,7 @@ punishment — see `docs/LIFE_AUTOPILOT.md` for full text.
 | L9 | Place opportunity triggers (`amy/life/opportunity_rules`, dispatcher agent) | DONE | b08c605 |
 | L5 | Wellbeing index (weekly job, day-type baselines, one-line briefing) | DONE | 1fe8787 |
 | L8 | Extended signals (meal captures, commitments crossover, health_data stub) | DONE | 2755059 |
-| L6 | Life review + integration (monthly vault note, briefing Life section) | PENDING | |
+| L6 | Life review + integration (monthly vault note, briefing Life section) | DONE | (pending commit) |
 | L7 | UI (Habits/Goals tabs, timeline strip, wellbeing line) | PENDING | |
 
 ### Pre-flight (this session)
@@ -1707,3 +1707,76 @@ integration test (propose → approve → L9's pharmacy rule now fires).
 
 Full suite: 733 passed, 23 failed — same as L9's/L5's baseline (22
 pre-existing + the documented flaky filesystem-watcher test).
+
+### Part L6 — Life review + integration (DONE)
+
+**Real gap found and fixed first**: `life.pattern_detected` (an event
+constant defined back in L2 for "the phase that emits, not the phase
+that consumes") was never actually emitted anywhere — L3's `propose()`
+created approvals but no event. Fixed at the source: `propose()` now
+emits `life.pattern_detected` (`{agent, pattern_key, action_type,
+summary}`, counts/keys only) right after a successful proposal, giving
+L6's timeline/briefing/review something real to read instead of an inert
+constant. Not added to `AGENT_RELEVANT_EVENTS` — it's an output/audit
+event like `agent.insight`, nothing subscribes to react to it.
+
+`amy/life/review.py::generate_month(ctx, month=None)` — monthly vault
+note (`09_Memory/Life Review - {month}`), idempotent per month via
+`MemoryWriter.write_atomic`'s own eid dedup (`lifereview-{uid}-{month}`)
+— same "skip on repeat eid" convention as `capture_digest`/
+`meeting_prep`/`interview_debrief`, no new idempotency mechanism
+invented. Five sections, each independently populated:
+- **Observed vs baselines** — reuses `baselines.day_type_baseline()` for
+  three headline metrics (office time, sleep, gym visits), honestly
+  noting "no baseline yet" per metric rather than omitting it silently.
+- **Suggested/Accepted/Rejected** — read directly from `approvals` where
+  `source LIKE 'life_%'` and `created_at` falls in the target month (every
+  L3/L5/L8 proposal source is prefixed `life_`, so this one LIKE clause
+  captures all of them without enumerating each agent).
+- **Pruned** — L9's `prefs` dismiss-counters (`life_opp_dismiss_*` >= 2)
+  ARE the pruning record; no new table, matching the "durable counter is
+  the audit trail" idiom used throughout this phase.
+
+Briefing **Life section** (`amy/automation/closers.py::_life_section`,
+wired into `morning_briefing` as section 5.6 right after `_work_section`,
+identical independently-best-effort-per-check idiom): today's habit
+auto-completions (`life.habit_autocompleted` event count), the longest
+current grace-aware streak (`habits.streak_with_grace()`, only mentioned
+if >=3 days — not noise for a fresh streak), the single most recent
+`life.pattern_detected` event (ONE pattern insight max, literally `LIMIT
+1`), commitments due within 3 days (a genuine gap filled here — no
+existing briefing section surfaced `commitments` at all before this),
+and L8/L9 signals (yesterday's `meal_captures` count, today's
+`life_opp_*` notification count).
+
+**Timeline** — the metrics strip already exists (L2's `daily_metrics`
+source); auto-completion markers and pattern annotations turn out to
+already be covered structurally, since `TimelineEngine._items()` already
+reads EVERY row from the `events` table generically (source="event")
+— `life.habit_autocompleted`/`life.pattern_detected`/
+`life.wellbeing_week_computed` were already appearing on the timeline
+the moment they started being emitted, no new code needed. One small,
+broadly-useful readability fix: `_short()` (the payload-summarizing
+helper) now also checks a `"summary"` key — which `agent.insight`
+events already carry (`_emit_insight`'s payload shape) and now
+`life.pattern_detected` carries too — so both render a real sentence on
+the timeline instead of falling through to the generic `key=val, key=val`
+join.
+
+`life_review_monthly` job (`monthly_day: 1, at: "06:30"`, matching
+`monthly_close`'s cadence convention) — no dedicated kill switch (not in
+the spec's enumerated `AMY_AGENT_LIFE_*` list), gated by
+`AMY_LIFE_AUTOPILOT` only, same precedent as L5/L8's commitments-crossover.
+
+Tests: `tests/test_life_review.py` (8 passing) — the spec's explicit L6
+test: all five sections present in a generated note, plus idempotent
+recompute (second call returns `"already-written"`, no duplicate/
+rewrite); pruned-section lists a >=2-dismissal rule and correctly
+excludes a 1-dismissal one; `propose()` now emits `life.pattern_detected`
+with the right payload shape; the briefing Life section reports auto-
+checks + commitment deadlines, stays empty with nothing to report,
+honors the `AMY_LIFE_AUTOPILOT` master switch, and shows at most one
+pattern-insight line even with two patterns detected.
+
+Full suite: 742 passed, 22 failed (the pre-existing baseline — the
+flaky filesystem-watcher test happened to pass this run).

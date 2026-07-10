@@ -249,6 +249,17 @@ def _life_wellbeing_weekly(ctx: JobCtx) -> dict:
            "line_emitted": row.get("line_emitted") if row else False}
 
 
+def _life_review_monthly(ctx: JobCtx) -> dict:
+    """LIFE AUTOPILOT L6: monthly vault note (09_Memory/Life Review -
+    {month}), idempotent per month via MemoryWriter's own eid dedup. No
+    dedicated kill switch (not in the spec's enumerated AMY_AGENT_LIFE_*
+    list) — gated by AMY_LIFE_AUTOPILOT only, same precedent as L5/L8."""
+    if not _life_autopilot_enabled():
+        return {"skipped": "disabled"}
+    from ..life.review import generate_month
+    return generate_month(ctx)
+
+
 def _connector_sensor_scan(ctx: JobCtx) -> dict:
     """CONNECTOR COMPLETION Part 2: drives GitHubSensor/PlaneSensor.poll()
     on the interval below (poll_hours configurable via
@@ -301,6 +312,7 @@ HANDLERS: dict[str, callable] = {
     "life_metrics_daily": _life_metrics_daily,
     "life_inference_scan": _life_inference_scan,
     "life_wellbeing_weekly": _life_wellbeing_weekly,
+    "life_review_monthly": _life_review_monthly,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -347,6 +359,7 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("life_metrics_daily",     {"daily_at": "00:30"}),
         ("life_inference_scan",    {"daily_at": "10:00"}),
         ("life_wellbeing_weekly",  {"daily_at": "07:15"}),
+        ("life_review_monthly",   {"monthly_day": 1, "at": "06:30"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

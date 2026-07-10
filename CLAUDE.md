@@ -830,6 +830,27 @@ reach an LLM prompt or event payload, honest NULLs, grace not punishment.
   `aggregator._apply_device_sleep()` prefers device sleep data and sets
   the new `life_metrics.sleep_provenance` column (`'inferred'`|`'device'`);
   `steps`/`workouts` are two new `habit_links` signal types.
+- `amy/life/review.py` (L6) — `generate_month(ctx, month=None)`: monthly
+  vault note (`09_Memory/Life Review - {month}`), idempotent via
+  `MemoryWriter.write_atomic`'s eid dedup. Five sections: observed vs
+  `baselines.day_type_baseline()`, Suggested/Accepted/Rejected (`approvals
+  WHERE source LIKE 'life_%'` in the target month — every L3/L5/L8
+  proposal is source-prefixed `life_`, one query covers them all), Pruned
+  (L9's `life_opp_dismiss_*` prefs counters ARE the pruning record, no
+  new table). Real gap fixed here: `life.pattern_detected` (defined in
+  L2, never actually emitted) now fires from `inference.propose()` on
+  every successful proposal — L6's timeline/review depend on it.
+  `_life_section` (`amy/automation/closers.py`, wired into
+  `morning_briefing` as section 5.6): today's auto-checks, longest
+  grace-aware streak (>=3 days), ONE most-recent pattern insight,
+  commitments due within 3 days (a genuine pre-existing briefing gap —
+  no section surfaced `commitments` before this), L8/L9 signals. Timeline
+  needed no new source — `TimelineEngine._items()` already reads every
+  `events` row generically, so `life.*` events were already appearing;
+  `_short()` gained a `"summary"` key check (helps `agent.insight` too).
+  `life_review_monthly` job (`monthly_day: 1, at: "06:30"`), no dedicated
+  kill switch (not in the spec's enumerated list) — `AMY_LIFE_AUTOPILOT`
+  only, same precedent as L5/L8.
 - **Known constraints discovered during L1/L2 planning** (see
   `docs/AGENT_PLAN.md` for the full finding list): habits live in a
   SEPARATE per-user `habits.db` (`HabitEngine`), not `collab.db` — L4's
@@ -890,7 +911,8 @@ at runtime) · `life_inference_scan` (10:00, LIFE AUTOPILOT L3 — runs all
 nine inference agents' weekly-rollup checks; each independently
 re-checks its own kill switch) · `life_wellbeing_weekly` (07:15,
 LIFE AUTOPILOT L5 — computes last week's wellbeing_weekly row; no-ops
-except on Monday).
+except on Monday) · `life_review_monthly` (1st, 06:30, LIFE AUTOPILOT
+L6 — monthly Life Review vault note, idempotent per month).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules

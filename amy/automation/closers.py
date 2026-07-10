@@ -232,6 +232,88 @@ def _work_section(ctx: JobCtx) -> list[str]:
     return ["Work: " + " ".join(lines)] if lines else []
 
 
+def _life_section(ctx: JobCtx) -> list[str]:
+    """LIFE AUTOPILOT L6: today's auto-checks, streaks, ONE pattern
+    insight max, admin deadlines (commitments — not otherwise surfaced
+    anywhere in this briefing), and L8/L9 signals. Every piece
+    independently best-effort, same idiom as _work_section."""
+    from .. import config
+    if config._env("AMY_LIFE_AUTOPILOT", "true").strip().lower() in ("0", "false", "no", "off"):
+        return []
+
+    lines: list[str] = []
+    today_s = _dt.date.today().isoformat()
+
+    try:
+        n = ctx.collab.conn.execute(
+            "SELECT COUNT(*) c FROM events WHERE type='life.habit_autocompleted'"
+            " AND substr(ts,1,10)=?", (today_s,)).fetchone()["c"]
+        if n:
+            lines.append(f"{n} habit(s) auto-tracked today.")
+    except Exception:
+        pass
+
+    try:
+        from ..life.habits import streak_with_grace
+        habits = ctx.open_habits()
+        try:
+            best = None
+            for h in habits.list_habits():
+                s = streak_with_grace(ctx, h["id"], habits)
+                if s and (best is None or s > best[1]):
+                    best = (h["title"], s)
+        finally:
+            habits.close()
+        if best and best[1] >= 3:
+            lines.append(f"Longest streak: {best[0]} ({best[1]} days).")
+    except Exception:
+        pass
+
+    try:
+        row = ctx.collab.conn.execute(
+            "SELECT payload FROM events WHERE type='life.pattern_detected'"
+            " ORDER BY ts DESC LIMIT 1").fetchone()
+        if row:
+            import json as _json
+            p = _json.loads(row["payload"] or "{}")
+            if p.get("agent"):
+                lines.append(f"Pattern noticed: {p['agent']} ({p.get('pattern_key', '')}).")
+    except Exception:
+        pass
+
+    try:
+        fe = ctx.open_finance()
+        try:
+            from ..commitments import CommitmentEngine
+            due_soon = [c for c in CommitmentEngine(fe).list("open") if c["days_left"] <= 3]
+        finally:
+            fe.close()
+        if due_soon:
+            titles = "; ".join(f"{c['title']} ({c['days_left']}d)" for c in due_soon[:3])
+            lines.append(f"Commitments due soon: {titles}.")
+    except Exception:
+        pass
+
+    try:
+        yesterday = (_dt.date.today() - _dt.timedelta(days=1)).isoformat()
+        y = ctx.store.get_life_metrics(ctx.user_id, yesterday)
+        if y and y.get("meal_captures"):
+            lines.append(f"{y['meal_captures']} meal capture(s) logged yesterday.")
+    except Exception:
+        pass
+
+    try:
+        n = ctx.collab.conn.execute(
+            "SELECT COUNT(*) c FROM notifications WHERE type LIKE 'life_opp_%'"
+            " AND substr(created_at,1,10)=?", (today_s,)).fetchone()["c"]
+        if n:
+            lines.append(f"{n} place-opportunity nudge(s) today.")
+    except Exception:
+        pass
+
+    return ["Life: " + " ".join(lines)] if lines else []
+
+
 def _career_briefing_lines(ctx: JobCtx) -> list[str]:
     """CAREER AUTOPILOT Part 4/6: high-match jobs discovered in the last
     24h, application status changes, a stall nudge, and the next milestone
@@ -427,6 +509,13 @@ def morning_briefing(ctx: JobCtx) -> dict:
     # 5.5 — Work: PRs/tasks/meetings ("project_pulse", CONNECTOR COMPLETION Part 2)
     try:
         lines.extend(_work_section(ctx))
+    except Exception:
+        pass
+
+    # 5.6 — Life: today's auto-checks, streaks, one pattern insight max,
+    # admin deadlines, L8/L9 signals (LIFE AUTOPILOT L6)
+    try:
+        lines.extend(_life_section(ctx))
     except Exception:
         pass
 

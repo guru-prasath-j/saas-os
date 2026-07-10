@@ -123,7 +123,17 @@ def propose(ctx, agent: str, pattern_key: str, title: str, body: str,
         ctx, 2, action_type, title=title, body=body, payload=payload,
         source=f"life_{agent}", dedup_key=dedup_key, reasoning=reasoning,
         risk="write", affected_entity=affected_entity)
-    return result if result.get("status") != "duplicate" else None
+    if result.get("status") == "duplicate":
+        return None
+    try:
+        ctx.events().emit(
+            "life.pattern_detected",
+            {"agent": agent, "pattern_key": pattern_key, "action_type": action_type,
+             "summary": f"{agent}: {pattern_key}"},
+            source=f"life_{agent}")
+    except Exception:
+        pass
+    return result
 
 
 def _should_renotify(ctx, key: str, days: int) -> bool:

@@ -16,7 +16,7 @@ def _short(payload: str, n: int = 80) -> str:
     try:
         d = json.loads(payload or "{}")
         if isinstance(d, dict):
-            for key in ("title", "query", "detail", "name"):
+            for key in ("title", "query", "detail", "name", "summary"):
                 if d.get(key):
                     return str(d[key])[:n]
             return ", ".join(f"{k}={v}" for k, v in list(d.items())[:2])[:n]
