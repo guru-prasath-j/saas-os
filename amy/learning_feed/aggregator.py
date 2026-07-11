@@ -213,4 +213,20 @@ async def fetch_all(topic: str, connector_rows: list) -> list[dict]:
                 continue
             seen_urls.add(item["url"])
             items.append(item)
-    return items
+    # Interleave round-robin by source: the ranker only scores the first
+    # _MAX_ITEMS (40) items, so with sources concatenated in registration
+    # order, a later-registered source's ENTIRE result set could sit past
+    # the ranking window and stay relevance=None forever (found live: the
+    # courses source, registered last, never got scored). Round-robin puts
+    # every source inside the window.
+    by_src: dict[str, list[dict]] = {}
+    for it in items:
+        by_src.setdefault(it["source"], []).append(it)
+    interleaved: list[dict] = []
+    queues = list(by_src.values())
+    while queues:
+        for q in list(queues):
+            interleaved.append(q.pop(0))
+            if not q:
+                queues.remove(q)
+    return interleaved

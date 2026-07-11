@@ -217,3 +217,30 @@ async def _fake_coro_inner(v):
 
 def _fake_coro(v):
     return _fake_coro_inner(v)
+
+
+def test_fetch_all_interleaves_sources_for_ranking_window():
+    """Sources must be round-robin interleaved: the ranker only scores the
+    first 40 items, so a last-registered source concatenated at the tail
+    would never be scored (found live with courses)."""
+    import asyncio
+    from types import SimpleNamespace
+    from amy.learning_feed import aggregator
+
+    async def run():
+        rows = [SimpleNamespace(name="hackernews"), SimpleNamespace(name="courses")]
+
+        async def fake_fetch(row, tool, topic):
+            n = 45 if "hacker" in row.name else 5
+            return [{"title": f"{row.name} {i}", "url": f"https://{row.name}/{i}"}
+                    for i in range(n)]
+        orig = aggregator._fetch_one
+        aggregator._fetch_one = fake_fetch
+        try:
+            return await aggregator.fetch_all("topic", rows)
+        finally:
+            aggregator._fetch_one = orig
+
+    items = asyncio.run(run())
+    first_40 = {it["source"] for it in items[:40]}
+    assert "courses" in first_40 and "hackernews" in first_40
