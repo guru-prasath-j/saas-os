@@ -363,9 +363,15 @@ def _weekly_milestones(target_role: str, weeks: int, gaps: list[str],
     applications 25% / interview prep 10%) — not LLM-dependent, so this
     step never fails regardless of provider availability.
 
-    learn_role (Part 5F ladder): skill/portfolio weeks build toward the
-    north-star role; application/interview weeks stay on the immediate
-    target_role. Same role for both when there's no ladder."""
+    learn_role (Part 5F ladder): skill/portfolio phases build toward the
+    north-star role; application/interview phases stay on the immediate
+    target_role. Same role for both when there's no ladder.
+
+    Granularity adapts to the horizon: a 52-week plan used to emit 52
+    near-identical one-line rows ("Week 14: Skill building — X" x21 —
+    user-reported as useless noise); phases now emit a handful of
+    multi-week BLOCKS, each with a concrete outcome, so a year-long goal
+    reads as ~a dozen real milestones instead of a wall of repetition."""
     weeks = max(weeks, 4)
     learn_role = learn_role or target_role
     skill_weeks = max(1, round(weeks * 0.4))
@@ -373,21 +379,41 @@ def _weekly_milestones(target_role: str, weeks: int, gaps: list[str],
     apply_weeks = max(1, round(weeks * 0.25))
     interview_weeks = max(1, weeks - skill_weeks - portfolio_weeks - apply_weeks)
 
-    gap_list = gaps or [learn_role]
+    gap_list = [g for g in (gaps or []) if str(g).strip()] or [learn_role]
     out: list[str] = []
     cursor = 1
-    for i in range(skill_weeks):
-        out.append(f"Week {cursor}: Skill building — {gap_list[i % len(gap_list)]}")
-        cursor += 1
-    for i in range(portfolio_weeks):
-        out.append(f"Week {cursor}: Portfolio project #{i + 1} for {learn_role}")
-        cursor += 1
-    for i in range(apply_weeks):
-        out.append(f"Week {cursor}: Applications — {target_role} roles")
-        cursor += 1
-    for i in range(interview_weeks):
-        out.append(f"Week {cursor}: Interview prep for {target_role}")
-        cursor += 1
+
+    def _span(length: int) -> str:
+        nonlocal cursor
+        start, end = cursor, cursor + length - 1
+        cursor = end + 1
+        return f"Week {start}" if length == 1 else f"Weeks {start}-{end}"
+
+    def _blocks(total_weeks: int, n_blocks: int) -> list[int]:
+        n_blocks = max(1, min(n_blocks, total_weeks))
+        base, rem = divmod(total_weeks, n_blocks)
+        return [base + (1 if i < rem else 0) for i in range(n_blocks)]
+
+    # skills: one block per gap (up to 6) — each block is a named topic
+    # with a shippable outcome, not a repeated one-liner
+    for i, length in enumerate(_blocks(skill_weeks, min(6, len(gap_list)))):
+        gap = gap_list[i % len(gap_list)]
+        out.append(f"{_span(length)}: Skill building — {gap}: course/docs, "
+                   "then a small working demo committed to GitHub")
+    # portfolio: up to 3 substantial projects themed on the top gaps
+    for i, length in enumerate(_blocks(portfolio_weeks, min(3, portfolio_weeks))):
+        theme = gap_list[i % len(gap_list)]
+        out.append(f"{_span(length)}: Portfolio project #{i + 1} for "
+                   f"{learn_role} — a {theme} project with README, tests "
+                   "and a runnable demo")
+    # applications: one block (two for long horizons) with a concrete cadence
+    for length in _blocks(apply_weeks, 1 if apply_weeks <= 8 else 2):
+        out.append(f"{_span(length)}: Applications — {target_role} roles: "
+                   "steady weekly cadence, resume tailored per posting, "
+                   "follow-ups tracked")
+    # interview prep: one block
+    out.append(f"{_span(interview_weeks)}: Interview prep for {target_role} — "
+               "mock interviews, DSA/system-design reps, company research")
     return out
 
 
