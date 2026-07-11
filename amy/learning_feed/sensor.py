@@ -182,6 +182,17 @@ class LearningFeedSensor(Sensor):
 
         items = ranker.rank(items, topic, self.llm)
         top = items[:TOP_SAVE]
+        # Source-fairness floor (COURSES SOURCE): high-volume feeds (HN/
+        # Dev.to return ~20 each) can push a smaller source's entire result
+        # set below the save cap — found live: the courses source fetched 12
+        # items and saved 0. Any source with zero rows in the top slice gets
+        # its best 3 swapped in for the lowest-ranked overflow.
+        represented = {it.get("source") for it in top}
+        floor: list[dict] = []
+        for src in {it.get("source") for it in items} - represented:
+            floor.extend([it for it in items if it.get("source") == src][:3])
+        if floor:
+            top = top[:max(0, TOP_SAVE - len(floor))] + floor
         self._upsert(top, topic, focus_id)
         self._emit(top, topic, focus_id)
         note = self._write_note(top, topic, focus_id)

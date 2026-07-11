@@ -179,3 +179,41 @@ def test_kill_switch_disables_course_proposals(ctx, monkeypatch):
     fid = _seed_focus_with_course(ctx, gid)
     _emit_refresh(ctx, fid)
     assert _course_proposals(ctx) == []
+
+
+def test_source_fairness_floor_keeps_small_source_in_the_cut(ctx, monkeypatch):
+    """HN/Dev.to volume must not crowd a smaller source's items out of the
+    save cap entirely (found live: 12 course items fetched, 0 saved)."""
+    from amy.learning_feed import sensor as sensor_mod
+    from amy.learning_feed.sensor import LearningFeedSensor, add_focus
+
+    fid = add_focus(ctx.collab.conn, ctx.user_id, "genai floor test")
+    big = [{"id": f"h{i}", "source": "hackernews", "title": f"story {i}",
+            "url": f"https://hn/{i}", "summary": "", "score": 0,
+            "published_at": None} for i in range(40)]
+    small = [{"id": f"c{i}", "source": "courses", "title": f"course {i}",
+              "url": f"https://c/{i}", "summary": "", "score": 0,
+              "published_at": None} for i in range(5)]
+    monkeypatch.setattr(sensor_mod.aggregator, "fetch_all",
+                        lambda *a, **k: _fake_coro(big + small))
+    monkeypatch.setattr(sensor_mod.ranker, "rank", lambda items, t, llm: items)
+    monkeypatch.setattr(LearningFeedSensor, "_write_note", lambda self, *a: None)
+
+    from amy.events.store import EventStore
+    s = LearningFeedSensor(EventStore(ctx.collab), ctx.collab, ctx.user_id,
+                           llm=None, connector_rows=[object()])
+    s.poll_one({"id": fid, "topic": "genai floor test"})
+    rows = ctx.collab.conn.execute(
+        "SELECT source, COUNT(*) n FROM learning_feed_items WHERE focus_id=?"
+        " GROUP BY source", (fid,)).fetchall()
+    by_src = {r["source"]: r["n"] for r in rows}
+    assert by_src.get("courses", 0) >= 3          # floor held
+    assert sum(by_src.values()) <= sensor_mod.TOP_SAVE
+
+
+async def _fake_coro_inner(v):
+    return v
+
+
+def _fake_coro(v):
+    return _fake_coro_inner(v)
