@@ -300,6 +300,7 @@ _LOCAL_MCP_SERVERS = [
     ("hackernews", _REPO_ROOT / "mcp_servers" / "hackernews_server.py", 8001),
     ("youtube",    _REPO_ROOT / "mcp_servers" / "youtube_server.py",    8003),
     ("devto",      _REPO_ROOT / "mcp_servers" / "devto_server.py",      8004),
+    ("courses",    _REPO_ROOT / "mcp_servers" / "courses_server.py",    8005),
 ]
 _local_mcp_procs: dict = {}   # name -> subprocess.Popen
 

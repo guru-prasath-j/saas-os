@@ -1573,6 +1573,7 @@
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('youtube')">YouTube</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('bluesky')">Bluesky</button>
             <button type="button" class="ghost sm" onclick="mcpApplyPreset('devto')">Dev.to</button>
+            <button type="button" class="ghost sm" onclick="mcpApplyPreset('courses')">Courses</button>
           </div>
           <div id="mcpPresetSteps" class="hidden" style="margin-top:8px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2)"></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
@@ -2774,6 +2775,10 @@ const _MCP_PRESETS={
       'Deploy/run a Dev.to MCP server — it must expose a <b>search_articles</b> tool taking a <code>query</code> argument',
       'Amy needs an HTTP or SSE URL — stdio-only servers must be bridged (e.g. supergateway) first',
       'Paste your instance\'s URL into "Server URL"',
+      'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
+  courses:{name:'Courses',server_url:'http://localhost:8005/mcp',auth_type:'none',risk_tier:'platform_api',
+    steps:['Free-courses search (freeCodeCamp curriculum + Microsoft Learn official catalog API) — served by Amy\'s own local MCP server, auto-started with the app',
+      'No key needed; Google Cloud Skills Boost is deliberately not included (no public API)',
       'After adding: flip <b>"Also sync to vault"</b> on the card — the Learning Feed only reads promoted sources']},
 };
 function mcpApplyPreset(key){

@@ -10,15 +10,15 @@ python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
 ```
 
 App startup auto-launches+supervises the local MCP servers behind the
-Job Search/HackerNews/YouTube/Dev.to connectors (`mcp_servers/*.py`, ports
-8935/8001/8003/8004 — see `_local_mcp_supervisor_loop` in `amy/saas/app.py`).
+Job Search/HackerNews/YouTube/Dev.to/Courses connectors (`mcp_servers/*.py`,
+ports 8935/8001/8003/8004/8005 — see `_local_mcp_supervisor_loop` in `amy/saas/app.py`).
 Force-killing the main app (above) does **not** kill these children on
 Windows — they keep running independently, which is intentional (the
 supervisor detects they're already up on next start and won't duplicate
 them). To stop everything including the children:
 ```bash
 # Kill main app + all four local MCP servers:
-Get-NetTCPConnection -LocalPort 8849,8935,8001,8003,8004 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+Get-NetTCPConnection -LocalPort 8849,8935,8001,8003,8004,8005 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 ```
 Opt out of auto-start with `AMY_LOCAL_MCP_SERVERS=0`. YouTube needs
 `YOUTUBE_API_KEY` in `.env` (YouTube Data API v3) — without it the server
@@ -428,7 +428,14 @@ Multi-focus learning tracker behind the Learn tab + dashboard Learning card.
   note; `poll_all` loops every active focus for a user, one failing
   focus never blocks the others). `learning_feed_refresh` automation job
   (every 6h, gated by `AMY_LEARNING_FEED_ENABLED`) calls `poll_all()`.
-- Local MCP servers for HackerNews/YouTube/Dev.to: `mcp_servers/*.py`
+- Local MCP servers for HackerNews/YouTube/Dev.to/Courses: `mcp_servers/*.py`
+  (courses_server.py = free-courses search: freeCodeCamp curriculum JSON +
+  Microsoft Learn OFFICIAL catalog API, 24h in-process cache; Google Cloud
+  Skills Boost deliberately omitted — no public API, scraping is ToS-risky.
+  Skill-gap targeting is free: the career goal creates one learning_focus
+  per gap and poll_all fans every focus out to every promoted source. The
+  learning agent proposes a high-relevance course (>=8/10) on a goal-linked
+  focus as ONE tier-2 add_goal_task per course, dedup course_{focus}_{url-hash})
   (ports/env in the Run section above). arXiv/Reddit/Bluesky need an
   external community MCP server registered instead — `SOURCE_TOOLS` in
   `aggregator.py` lists the candidate tool names per source.

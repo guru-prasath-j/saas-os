@@ -205,6 +205,7 @@ _LOCAL_MCP_DESCRIPTORS = [
     ("HackerNews", "hackernews", 8001),
     ("YouTube", "youtube", 8003),
     ("Dev.to", "devto", 8004),
+    ("Courses", "courses", 8005),
 ]
 
 

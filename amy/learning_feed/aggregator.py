@@ -29,6 +29,7 @@ SOURCE_TOOLS: list[tuple[str, tuple[str, ...]]] = [
     ("bluesky", ("search_posts", "search")),
     ("dev.to", ("search_articles",)),
     ("devto", ("search_articles",)),
+    ("courses", ("search_courses",)),
 ]
 
 # argument-name candidates for the topic, preferred first (nickytonline's

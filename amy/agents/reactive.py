@@ -460,6 +460,38 @@ def _learning_agent(events, ctx):
                              actor="agent")
                 return
 
+            # goal-linked focus + course items (COURSES SOURCE): a highly
+            # relevant free course for a goal-linked gap proposes ONE tier-2
+            # "take this course" task on that goal — a WRITE, so it goes
+            # through the approval inbox; the feed items themselves stay
+            # advisory/ungated. Dedup key = per course URL, so a course is
+            # proposed at most once ever, never auto-added.
+            import hashlib as _hl
+
+            courses = ctx.collab.conn.execute(
+                "SELECT title, url, relevance FROM learning_feed_items"
+                " WHERE uid=? AND focus_id=? AND source='courses'"
+                " AND COALESCE(relevance,0) >= 8"
+                " ORDER BY relevance DESC LIMIT 3",
+                (ctx.user_id, focus_id)).fetchall()
+            if courses:
+                from .. import tools
+                for c in courses:
+                    key = f"course_{focus_id}_{_hl.sha1((c['url'] or '').encode()).hexdigest()[:8]}"
+                    reasoning = (f"'{c['title']}' scored {c['relevance']}/10 for "
+                                 f"'{topic}', which is linked to your goal — "
+                                 f"proposing it as a goal task. {c['url']}")
+                    ctx._extras["agent_name"] = "learning_agent"
+                    ctx._extras["agent_reasoning"] = reasoning
+                    ctx._extras["agent_dedup_key"] = key
+                    try:
+                        tools.invoke(ctx, "add_goal_task",
+                                     {"goal_id": goal_id,
+                                      "title": f"Take course: {c['title']} — {c['url']}"},
+                                     actor="agent")
+                    except Exception:
+                        pass   # one bad course row must not block the rest
+
             # goal-linked focus: nudge (never propose a write) if it's stale
             stats = ctx.collab.conn.execute(
                 "SELECT COUNT(*) AS total, COALESCE(SUM(saved),0) AS saved_ct,"

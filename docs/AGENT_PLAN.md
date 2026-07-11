@@ -1002,6 +1002,40 @@ promotes (goal active, meta+profile re-aimed) vs closes without a star;
 accepted-offer proposal carries promote_to_role. Plus a PATCH-route test
 in `tests/test_career_routes.py`.
 
+### COURSES SOURCE — free-courses discovery through the Learning Feed (DONE)
+
+`mcp_servers/courses_server.py` (port 8005, supervised like the other four):
+`search_courses(query, limit)` over two REAL sources, each isolated in its
+own try/except with a 24h in-process cache — (a) freeCodeCamp's curriculum
+structure JSON from their GitHub repo (raw curriculum/structure/
+curriculum.json; the /curriculum-data/v1 URL 404s now, found live), and
+(b) Microsoft Learn's OFFICIAL catalog API (learningPaths + courses).
+Google Cloud Skills Boost deliberately omitted — no public API, scraping
+is ToS-risky (same rule that kept Naukri workarounds out of the scout).
+Matching is whole-word with a 2-distinct-token floor for multi-word
+queries — substring matching made 'rag' hit 'storage' (found in smoke
+tests).
+
+Wiring is pure reuse: SOURCE_TOOLS entry, _LOCAL_MCP_SERVERS +
+_LOCAL_MCP_DESCRIPTORS rows, a Courses preset in index.html, README/
+CLAUDE.md port lists. Skill-gap targeting needed NO new code: the career
+goal already creates one learning_focus per gap and poll_all fans every
+active focus out to every promoted source.
+
+The only approvals involvement is a WRITE: _learning_agent's
+on_feed_refreshed now proposes a `Take course: {title}` add_goal_task
+(tier 2) when a course item scores >=8/10 relevance on a goal-LINKED
+focus — dedup `course_{focus_id}_{sha1(url)[:8]}` (at most one proposal
+per course ever, capped at 3 per refresh), never an auto-add; feed items
+themselves stay advisory/ungated.
+
+Tests: tests/test_courses_source.py (8 passing) — canned-JSON matching for
+both sources; whole-word 'rag'-vs-'storage' regression; one source failing
+shrinks results; cache hit doesn't re-fetch; SOURCE_TOOLS/descriptor/
+supervisor wiring; goal-linked high-relevance course parks exactly one
+tier-2 proposal (dedup pinned on a second refresh); low-relevance and
+unlinked focuses propose nothing; kill switch respected.
+
 ## CAREER AUTOPILOT — summary
 
 All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3

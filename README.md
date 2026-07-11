@@ -15,7 +15,7 @@ LLM providers degrade gracefully: NVIDIA → OpenAI → Groq → local Ollama �
 
 ## Local MCP servers
 
-The Job Search / HackerNews / YouTube / Dev.to sources in Account → MCP
+The Job Search / HackerNews / YouTube / Dev.to / Courses sources in Account → MCP
 Sources are served by the self-hosted MCP servers in `mcp_servers/`. The app
 auto-starts and supervises them while it runs (`_local_mcp_supervisor_loop`
 in `amy/saas/app.py`; opt out with `AMY_LOCAL_MCP_SERVERS=0`), so normally
@@ -26,7 +26,7 @@ After pulling changes, restart everything with:
 ```bash
 git pull
 # kill the app + local MCP servers (PowerShell):
-#   Get-NetTCPConnection -LocalPort 8849,8935,8001,8003,8004 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+#   Get-NetTCPConnection -LocalPort 8849,8935,8001,8003,8004,8005 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
 python -m uvicorn amy.saas.app:app --host 0.0.0.0 --port 8849
 ```
 
@@ -37,6 +37,7 @@ python mcp_servers/jobspy_server.py       # Job Search → http://localhost:8935
 python mcp_servers/hackernews_server.py   # HackerNews → http://localhost:8001/mcp
 python mcp_servers/youtube_server.py      # YouTube    → http://localhost:8003/mcp
 python mcp_servers/devto_server.py        # Dev.to     → http://localhost:8004/mcp
+python mcp_servers/courses_server.py      # Courses    → http://localhost:8005/mcp
 ```
 
 ## Features
