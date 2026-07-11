@@ -49,6 +49,12 @@ class Milestone(BaseModel):
     title: str
 
 
+class GoalUpdate(BaseModel):
+    title: str | None = None
+    status: str | None = None          # active | done | paused | archived
+    target_date: str | None = None
+
+
 class Pref(BaseModel):
     key: str
     value: str
@@ -135,6 +141,95 @@ def list_goals(user: User = Depends(current_user)):
         db.close()
 
 
+@router.patch("/api/goals/{goal_id}")
+def update_goal(goal_id: str, body: GoalUpdate, user: User = Depends(current_user)):
+    """Human edit of the user's own goal — direct write, not gated."""
+    db, _, planner, *_ = _collab_light(user)
+    try:
+        ok = planner.update_goal(goal_id, title=body.title, status=body.status,
+                                 target_date=body.target_date)
+        if not ok:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404,
+                                detail="goal not found (or nothing to change)")
+        return {"ok": True, "plan": planner.get_plan(goal_id)}
+    finally:
+        db.close()
+
+
+@router.delete("/api/goals/{goal_id}")
+def delete_goal(goal_id: str, user: User = Depends(current_user)):
+    """Deletes the goal + its milestones/tasks; goal-linked learning
+    focuses are unlinked, not deleted."""
+    db, _, planner, *_ = _collab_light(user)
+    try:
+        if not planner.delete_goal(goal_id):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="goal not found")
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+_SUGGEST_SYSTEM = (
+    "Suggest 5-8 concrete, outcome-oriented milestones for this goal — each "
+    "one a single line a person can tick off, specific enough that 'done' is "
+    "unambiguous. Do not repeat existing milestones. Respond with EXACTLY "
+    'ONE JSON object: {"milestones": ["<title>", ...]}'
+)
+
+
+def _suggest_titles(goal: dict, existing: list[str], user: User) -> list[str]:
+    """One non-sensitive LLM call (goal title/domain only — no personal
+    data), degrading to a deterministic generic breakdown so the button
+    always produces something."""
+    import json as _json
+    import re as _re
+    fallback = [
+        "Define scope and what 'done' looks like",
+        "Research the approach and pick the first concrete step",
+        "Ship the first small deliverable",
+        "Midpoint review — adjust plan against reality",
+        "Finish, review outcomes, write down what changed",
+    ]
+    try:
+        from ...llm import LLMRouter
+        from ..deps import _user_key
+        llm = LLMRouter(openai_api_key=_user_key(user), use_global_keys=True)
+        prompt = (f"Goal: {goal.get('title')}\nDomain: {goal.get('domain')}\n"
+                  f"Target date: {goal.get('target_date') or 'none set'}\n"
+                  f"Existing milestones: {', '.join(existing) or 'none'}")
+        text, provider = llm.generate(_SUGGEST_SYSTEM, prompt, sensitive=False)
+        if provider == "template":
+            return fallback
+        m = _re.search(r"\{.*\}", text, _re.DOTALL)
+        if not m:
+            return fallback
+        titles = [str(t).strip() for t in
+                  (_json.loads(m.group(0)).get("milestones") or []) if str(t).strip()]
+        existing_low = {e.lower() for e in existing}
+        titles = [t for t in titles if t.lower() not in existing_low]
+        return titles[:8] or fallback
+    except Exception:
+        return fallback
+
+
+@router.post("/api/goals/{goal_id}/milestones/suggest")
+def suggest_milestones(goal_id: str, user: User = Depends(current_user)):
+    """AI-drafted milestones the USER decides on — nothing is added until
+    they click add; suggestions are returned, never written."""
+    db, _, planner, *_ = _collab_light(user)
+    try:
+        plan = planner.get_plan(goal_id)
+        if plan is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="goal not found")
+        existing = [m["title"] for m in plan.get("milestones") or []]
+        return {"suggestions": _suggest_titles(plan, existing, user)}
+    finally:
+        db.close()
+
+
 @router.post("/api/goals/{goal_id}/milestones")
 def add_milestone(goal_id: str, body: Milestone, user: User = Depends(current_user)):
     db, _, planner, *_ = _collab_light(user)
@@ -151,6 +246,31 @@ def complete_milestone(milestone_id: str, done: bool = True,
     db, _, planner, *_ = _collab_light(user)
     try:
         planner.complete_milestone(milestone_id, done)
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@router.patch("/api/milestones/{milestone_id}")
+def update_milestone(milestone_id: str, body: Milestone,
+                     user: User = Depends(current_user)):
+    db, _, planner, *_ = _collab_light(user)
+    try:
+        if not planner.update_milestone(milestone_id, body.title):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="milestone not found")
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@router.delete("/api/milestones/{milestone_id}")
+def delete_milestone(milestone_id: str, user: User = Depends(current_user)):
+    db, _, planner, *_ = _collab_light(user)
+    try:
+        if not planner.delete_milestone(milestone_id):
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="milestone not found")
         return {"ok": True}
     finally:
         db.close()

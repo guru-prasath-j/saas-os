@@ -2159,21 +2159,86 @@ async function importVault(){
 }
 
 // ---- goals ----
+let _goalsCache=[]; let _sugCache={};
 async function loadGoals(){
   const d=await jget('/api/goals'); const el=document.getElementById('goalsList'); el.innerHTML='';
-  (d.goals||[]).forEach(g=>{
-    const ms=(g.milestones||[]).map(m=>'<div class="toggle"><span>'+(m.done?'✅':'⬜')+' '+m.title+'</span><button class="ghost sm" onclick="completeMs(\''+m.id+'\','+(m.done?'false':'true')+')">'+(m.done?'undo':'done')+'</button></div>').join('');
+  _goalsCache=d.goals||[];
+  _goalsCache.forEach(g=>{
+    const ms=(g.milestones||[]).map(m=>'<div class="toggle"><span>'+(m.done?'✅':'⬜')+' '+_dEsc(m.title)+'</span><span style="display:flex;gap:4px">'
+      +'<button class="ghost sm" onclick="completeMs(\''+m.id+'\','+(m.done?'false':'true')+')">'+(m.done?'undo':'done')+'</button>'
+      +'<button class="ghost sm" title="edit" onclick="editMs(\''+g.id+'\',\''+m.id+'\')">✎</button>'
+      +'<button class="ghost sm" title="delete" onclick="delMs(\''+m.id+'\')">✕</button></span></div>').join('');
     el.insertAdjacentHTML('beforeend',
-      '<div class="card"><b>'+g.title+'</b> <span class="muted">('+g.domain+' · '+g.status+')</span>'+
-      '<div style="height:8px"></div><div class="bar"><i style="width:'+(g.progress||0)+'%"></i></div>'+
-      '<div class="meta">'+(g.progress||0)+'%</div>'+ms+
-      '<div class="row" style="margin-top:10px"><input placeholder="new milestone" id="ms-'+g.id+'"/><button class="sm" style="flex:0 0 78px" onclick="addMs(\''+g.id+'\')">+ add</button></div></div>');
+      '<div class="card"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">'
+      +'<span><b>'+_dEsc(g.title)+'</b> <span class="muted">('+_dEsc(g.domain)+' · '+_dEsc(g.status)+')</span></span>'
+      +'<span style="display:flex;gap:4px;flex:0 0 auto">'
+      +'<button class="ghost sm" title="suggest milestones" onclick="suggestMs(\''+g.id+'\')">✨ suggest</button>'
+      +'<button class="ghost sm" title="rename goal" onclick="editGoal(\''+g.id+'\')">✎</button>'
+      +'<button class="ghost sm" title="delete goal" onclick="delGoal(\''+g.id+'\')">✕</button></span></div>'
+      +'<div style="height:8px"></div><div class="bar"><i style="width:'+(g.progress||0)+'%"></i></div>'
+      +'<div class="meta">'+(g.progress||0)+'%</div>'+ms
+      +'<div id="sug-'+g.id+'"></div>'
+      +'<div class="row" style="margin-top:10px"><input placeholder="new milestone" id="ms-'+g.id+'"/><button class="sm" style="flex:0 0 78px" onclick="addMs(\''+g.id+'\')">+ add</button></div></div>');
   });
-  if(!(d.goals||[]).length) el.innerHTML='<p class="muted">No goals yet.</p>';
+  if(!_goalsCache.length) el.innerHTML='<p class="muted">No goals yet.</p>';
 }
 async function createGoal(){ const t=document.getElementById('goalTitle').value.trim(); if(!t)return; await jpost('/api/goals',{title:t,domain:(document.getElementById('goalDomain').value.trim()||'general')}); document.getElementById('goalTitle').value=''; loadGoals(); }
 async function addMs(gid){ const v=document.getElementById('ms-'+gid).value.trim(); if(!v)return; await jpost('/api/goals/'+gid+'/milestones',{title:v}); loadGoals(); }
 async function completeMs(mid,done){ await jpost('/api/milestones/'+mid+'/complete?done='+done,{}); loadGoals(); }
+async function editGoal(gid){
+  const g=_goalsCache.find(x=>x.id===gid); if(!g)return;
+  const t=prompt('Rename goal:',g.title); if(!t||!t.trim()||t.trim()===g.title)return;
+  await api('/api/goals/'+gid,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t.trim()})});
+  loadGoals();
+}
+async function delGoal(gid){
+  const g=_goalsCache.find(x=>x.id===gid);
+  if(!confirm('Delete goal "'+(g?g.title:'')+'" and all its milestones? This cannot be undone.'))return;
+  await api('/api/goals/'+gid,{method:'DELETE'});
+  loadGoals();
+}
+async function editMs(gid,mid){
+  const g=_goalsCache.find(x=>x.id===gid); const m=((g&&g.milestones)||[]).find(x=>x.id===mid); if(!m)return;
+  const t=prompt('Edit milestone:',m.title); if(!t||!t.trim()||t.trim()===m.title)return;
+  await api('/api/milestones/'+mid,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:t.trim()})});
+  loadGoals();
+}
+async function delMs(mid){
+  if(!confirm('Delete this milestone?'))return;
+  await api('/api/milestones/'+mid,{method:'DELETE'});
+  loadGoals();
+}
+async function suggestMs(gid){
+  const el=document.getElementById('sug-'+gid); if(!el)return;
+  el.innerHTML='<p class="faint" style="margin:8px 0 0">Thinking of milestones…</p>';
+  try{
+    const d=await jpost('/api/goals/'+gid+'/milestones/suggest',{});
+    const s=d.suggestions||[];
+    if(!s.length){ el.innerHTML='<p class="faint">No suggestions this time.</p>'; return; }
+    _sugCache[gid]=s;
+    el.innerHTML='<div style="margin-top:8px">'+s.map((t,i)=>
+      '<div class="toggle"><span>💡 '+_dEsc(t)+'</span><button class="ghost sm" onclick="addSug(\''+gid+'\','+i+')">+ add</button></div>').join('')
+      +'<div class="row" style="margin-top:6px"><button class="ghost sm" onclick="addAllSug(\''+gid+'\')">add all</button>'
+      +'<button class="ghost sm" onclick="document.getElementById(\'sug-'+gid+'\').innerHTML=\'\'">dismiss</button></div></div>';
+  }catch(e){ el.innerHTML='<p class="faint">Could not fetch suggestions.</p>'; }
+}
+async function addSug(gid,i){
+  const t=(_sugCache[gid]||[])[i]; if(!t)return;
+  await jpost('/api/goals/'+gid+'/milestones',{title:t});
+  _sugCache[gid]=(_sugCache[gid]||[]).filter((_,x)=>x!==i);
+  const remaining=_sugCache[gid];
+  await loadGoals();
+  if(remaining.length){ _sugCache[gid]=remaining;
+    const el=document.getElementById('sug-'+gid);
+    if(el) el.innerHTML='<div style="margin-top:8px">'+remaining.map((t2,x)=>
+      '<div class="toggle"><span>💡 '+_dEsc(t2)+'</span><button class="ghost sm" onclick="addSug(\''+gid+'\','+x+')">+ add</button></div>').join('')+'</div>';
+  }
+}
+async function addAllSug(gid){
+  for(const t of (_sugCache[gid]||[])) await jpost('/api/goals/'+gid+'/milestones',{title:t});
+  _sugCache[gid]=[];
+  loadGoals();
+}
 
 // ---- reflect ----
 async function loadReflect(){

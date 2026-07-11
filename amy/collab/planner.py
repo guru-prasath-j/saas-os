@@ -60,6 +60,72 @@ class PlannerAgent:
         if row:
             self._recompute(row["goal_id"])
 
+    def update_goal(self, goal_id: str, title: str | None = None,
+                    status: str | None = None,
+                    target_date: str | None = None) -> bool:
+        """Human-facing edit of the user's own goal — direct write, same
+        stance as the career profile PUT."""
+        sets, args = [], []
+        if title is not None and title.strip():
+            sets.append("title=?"); args.append(title.strip())
+        if status is not None and status in ("active", "done", "paused", "archived"):
+            sets.append("status=?"); args.append(status)
+        if target_date is not None:
+            sets.append("target_date=?"); args.append(target_date or None)
+        if not sets:
+            return False
+        args.append(goal_id)
+        c = self.db.execute(f"UPDATE goals SET {', '.join(sets)} WHERE id=?", args)
+        self.db.commit()
+        return c.rowcount > 0
+
+    def delete_goal(self, goal_id: str) -> bool:
+        """Delete a goal with its milestones/tasks; goal-linked learning
+        focuses are unlinked (kept), not deleted — the focus is the user's
+        own reading interest, the goal was just an annotation on it."""
+        if self.db.execute("SELECT id FROM goals WHERE id=?", (goal_id,)).fetchone() is None:
+            return False
+        self.db.execute("DELETE FROM milestones WHERE goal_id=?", (goal_id,))
+        try:
+            self.db.execute("DELETE FROM tasks WHERE goal_id=?", (goal_id,))
+        except Exception:
+            pass
+        try:
+            # lazily-created table (AutomationStore) — may not exist yet
+            self.db.execute("UPDATE learning_focuses SET goal_id=NULL WHERE goal_id=?",
+                            (goal_id,))
+        except Exception:
+            pass
+        self.db.execute("DELETE FROM goals WHERE id=?", (goal_id,))
+        self.db.commit()
+        return True
+
+    def update_milestone(self, milestone_id: str, title: str) -> bool:
+        if not (title or "").strip():
+            return False
+        c = self.db.execute("UPDATE milestones SET title=? WHERE id=?",
+                            (title.strip(), milestone_id))
+        self.db.commit()
+        return c.rowcount > 0
+
+    def delete_milestone(self, milestone_id: str) -> bool:
+        row = self.db.execute("SELECT goal_id FROM milestones WHERE id=?",
+                              (milestone_id,)).fetchone()
+        if row is None:
+            return False
+        self.db.execute("DELETE FROM milestones WHERE id=?", (milestone_id,))
+        self.db.commit()
+        # _recompute no-ops on zero milestones — reset progress explicitly
+        # so deleting the last one doesn't freeze a stale percentage
+        if self.db.execute("SELECT COUNT(*) c FROM milestones WHERE goal_id=?",
+                           (row["goal_id"],)).fetchone()["c"] == 0:
+            self.db.execute("UPDATE goals SET progress=0, status='active' WHERE id=?",
+                            (row["goal_id"],))
+            self.db.commit()
+        else:
+            self._recompute(row["goal_id"])
+        return True
+
     def _recompute(self, goal_id: str):
         rs = self.db.execute("SELECT done FROM milestones WHERE goal_id=?", (goal_id,)).fetchall()
         if not rs:
