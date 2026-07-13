@@ -44,47 +44,65 @@ python mcp_servers/courses_server.py      # Courses    → http://localhost:8005
 
 | Module | What it does |
 |---|---|
-| **Finance CFO** | Import CSV/XLS/PDF statements, Gmail sync, budgets, subscriptions, investments |
+| **Finance CFO** | Import CSV/XLS/PDF statements, Gmail sync, budgets, subscriptions, investments, income sources |
 | **Budget suggestions** | LLM-backed caps from income + actual spend + location |
-| **Subscription detect** | Finds recurring charges in transaction history |
-| **Custodial accounts** | Track SBI-style pass-through accounts without polluting your own finances |
+| **Subscription / investment / income detect** | Finds recurring charges, SIP debits, and salary credits in transaction history (account-scoped) |
+| **Custodial accounts** | Track SBI-style pass-through accounts without polluting your own finances; Google Sheets export |
 | **Business entities** | Register any side business via a form; per-entity Ledger (Accountant/Auditor) + Compliance suggestions — see `BUSINESS.md` |
+| **Obligations & jurisdictions** | Zakat/advance-tax/quarterly-estimate presets per country pack (`amy/jurisdictions/`), live nisab/hawl for zakat |
+| **Values screening** | Flags transactions against a values profile (interest, sin-category, etc.) |
 | **"Can I afford this?"** | Checks a purchase against cashflow, budget headroom, and goals |
+| **Career Autopilot** | Job discovery/scoring, portfolio analysis, application pipeline (draft → approval → send), inbound HR-reply detection |
+| **Life Autopilot** | Health targets, behavior-pattern inference, auto-tracked habits, weekly wellbeing index, place-triggered nudges — built on the geo/commitments/captures layers |
+| **Learning Feed** | Multi-focus topic tracker fanning out to HN/YouTube/arXiv/Reddit/Dev.to/Courses, LLM-ranked |
+| **Connectors** | GitHub + Plane via MCP (PR/task sensors, reactive agents), meeting prep, unified connector health tab |
+| **Automation layer** | Tiered agent writes (auto / auto+notify / approval-gated), ~25 scheduled jobs, Approval Inbox, drift tracking |
 | **Vault** | Obsidian-style markdown note journal, auto-written from events |
 | **Knowledge graph** | Cross-source typed nodes + edges with timestamps |
-| **Event bus** | All write actions emit typed events; Memory Writer journals them automatically |
-| **Context module** | Rolling event window surfaced to agents for LLM injection |
-| **Gmail sensor** | Poll-based sensor that wraps Gmail sync and emits structured events |
+| **Event bus** | All write actions emit typed events; reactive agents + Memory Writer subscribe |
 | **Google OAuth** | Gmail, Calendar, Tasks via Google OAuth 2.0 |
-| **Agents / Intelligence / Twin** | Additional AI modules (see routers/) |
+| **Digital Twin / Intelligence / Timeline** | Additional AI modules — see `PROJECT_CONTEXT.md` for the full router-by-router breakdown |
 
 ## Architecture
 
 ```
 amy/
   saas/
-    app.py          FastAPI entry point (all routers)
-    routers/        ~15 routers — finance, auth, connectors, vault, knowledge…
+    app.py          FastAPI entry point (all routers, local-MCP supervisor)
+    routers/        ~30 routers — finance, career, life, learning_feed, connectors,
+                     automation, business, obligations, values, geo, commitments…
     static/
-      index.html    Entire frontend (single ~3000-line file)
-  finance/          FinanceEngine, categorizer, import parsers, custodial
-  events/           EventStore pub/sub + default triggers
+      index.html    Entire frontend (single ~5000-line file)
+  finance/          FinanceEngine, categorizer, import parsers, custodial, detectors
+  automation/       Job scheduler, tool-gated executors, orchestrator, career/life jobs
+  agents/           Reactive agents (event-subscribed) + persona sub-agents
+  career_scout.py / career_apply.py / career_inbound.py   Career Autopilot
+  life/             Life Autopilot (targets, inference, habits, wellbeing, opportunity)
+  geo/ commitments/ patterns.py   Context layer (places, deadlines, cadences)
+  learning_feed/    Multi-focus learning tracker + MCP source aggregation
+  connectors/       Generic MCP client + GitHub/Plane sensors
+  events/           EventStore pub/sub + reactive-agent wiring (factory.py)
   memory/           MemoryWriter — idempotent vault journaling
   knowledge_graph/  GraphStore — typed nodes + edges
-  context.py        ContextModule for agent injection
-  vault_watcher.py  mtime-based vault change detector
-  llm.py            LLMRouter (multi-provider fallback chain)
+  jurisdictions/    Country packs (JSON) — zakat/tax/deadlines
+  llm.py            LLMRouter (multi-provider fallback chain, sensitive-data routing)
   config.py         Env var loader
 ```
 
-Data: `saas_data/` (gitignored) — `amy_saas.db` (users), `index/{uid}/finance.db`, `index/{uid}/connectors/`.
+Data: `saas_data/` (gitignored) — `amy_saas.db` (users), `index/{uid}/finance.db`,
+`index/{uid}/collab.db` (events/automation/goals/geo/career/life…),
+`index/{uid}/connectors/`. Full schema in `PROJECT_CONTEXT.md`.
 
 ## Docs
 
 | File | Covers |
 |---|---|
 | `CLAUDE.md` | Architecture, schema, all routes, quirks — read this first when coding |
-| `API_ENDPOINTS.md` | Full endpoint reference |
+| `PROJECT_CONTEXT.md` | Single-file project brain dump — full architecture, every DB table/column, every API route, event/job/agent catalog, known gaps, and future-enhancement ideas. Paste this whole file into a fresh chat to discuss what to build next. |
+| `API_ENDPOINTS.md` | Endpoint reference (finance-focused) |
+| `BUSINESS.md` | Business-entity module design |
+| `docs/AGENT_PLAN.md` | Source of truth for the agentic-finance project phases |
+| `docs/LIFE_AUTOPILOT.md` | Life Autopilot binding spec |
 
 ## Google OAuth setup
 

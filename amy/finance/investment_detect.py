@@ -78,7 +78,13 @@ def _guess_type(merchant: str) -> str:
 
 
 def _find_candidates(transactions: list[dict]) -> list[dict]:
-    by_merchant: dict[str, list[dict]] = defaultdict(list)
+    # Bucket by (account_id, merchant) — see subscription_detect.py's
+    # _find_candidates for why: the same merchant name recurring across two
+    # different accounts (household's two cards, etc.) must not be merged
+    # before the cadence/amount checks, or a real SIP in one account gets
+    # dropped because it's averaged against an unrelated debit of a
+    # different amount in the other account.
+    by_merchant: dict[tuple, list[dict]] = defaultdict(list)
     for t in transactions:
         if t.get("amount", 0) >= 0:
             continue  # only outgoing debits can be a contribution
@@ -87,7 +93,7 @@ def _find_candidates(transactions: list[dict]) -> list[dict]:
         merchant = (t.get("merchant") or "").strip()
         if not merchant:
             continue
-        by_merchant[merchant.lower()].append(t)
+        by_merchant[(t.get("account_id"), merchant.lower())].append(t)
 
     candidates = []
     for txns in by_merchant.values():

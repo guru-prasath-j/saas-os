@@ -40,14 +40,17 @@ def _now_iso() -> str:
     return _dt.datetime.now(_dt.timezone.utc).isoformat()
 
 
-def _this_month_range() -> tuple[str, str]:
-    d = _dt.date.today()
+def _month_bounds(d: _dt.date) -> tuple[str, str]:
     start = d.replace(day=1)
     if d.month == 12:
         end = d.replace(year=d.year + 1, month=1, day=1) - _dt.timedelta(days=1)
     else:
         end = d.replace(month=d.month + 1, day=1) - _dt.timedelta(days=1)
     return start.isoformat(), end.isoformat()
+
+
+def _this_month_range() -> tuple[str, str]:
+    return _month_bounds(_dt.date.today())
 
 
 class FinanceEngine:
@@ -880,8 +883,24 @@ class FinanceEngine:
         return sum(_to_monthly_amount(r["amount"], r["recurrence"])
                    for r in self.list_income_sources())
 
-    def this_month_spend(self) -> dict[str, float]:
-        start, end = _this_month_range()
+    def latest_month_range(self) -> tuple[str, str]:
+        """Month containing the most recent transaction, falling back to the
+        real calendar month when there's no transaction data yet. Used by the
+        dashboard overview so an imported historical statement (e.g. a bank
+        export that ends months before "today") doesn't render as all-zero
+        just because none of its rows fall in the real current month —
+        Overview should reflect the most recent period that actually has
+        data, whatever month/year that is. Other callers (obligations/zakat,
+        values screening, budget suggestions, closers) keep using the real
+        calendar month via `_this_month_range()` — this is dashboard-only."""
+        row = self.conn.execute("SELECT MAX(date) d FROM transactions").fetchone()
+        latest = row["d"] if row else None
+        if not latest:
+            return _this_month_range()
+        return _month_bounds(_dt.date.fromisoformat(latest[:10]))
+
+    def this_month_spend(self, date_range: tuple[str, str] | None = None) -> dict[str, float]:
+        start, end = date_range or _this_month_range()
         rows = self.conn.execute(
             "SELECT t.category, SUM(t.amount) total FROM transactions t"
             " LEFT JOIN accounts a ON t.account_id = a.id"
@@ -891,14 +910,15 @@ class FinanceEngine:
             (start, end)).fetchall()
         return {r["category"]: abs(r["total"]) for r in rows}
 
-    def this_month_income_txn(self) -> float:
-        start, end = _this_month_range()
+    def this_month_income_txn(self, date_range: tuple[str, str] | None = None) -> float:
+        start, end = date_range or _this_month_range()
         row = self.conn.execute(
             "SELECT COALESCE(SUM(amount),0) total FROM transactions"
             " WHERE date>=? AND date<=? AND amount>0", (start, end)).fetchone()
         return row["total"]
 
-    def effective_monthly_income(self, tolerance: float = 0.05) -> float:
+    def effective_monthly_income(self, tolerance: float = 0.05,
+                                  date_range: tuple[str, str] | None = None) -> float:
         """
         This month's real credited amount (any positive transaction, excluding
         custodial accounts — a refill there isn't the user's income) plus any
@@ -906,7 +926,7 @@ class FinanceEngine:
         already reflected among those transactions — avoids double-counting
         salary that's both entered manually and imported/synced from the bank.
         """
-        start, end = _this_month_range()
+        start, end = date_range or _this_month_range()
         rows = self.conn.execute(
             "SELECT t.amount FROM transactions t"
             " LEFT JOIN accounts a ON t.account_id = a.id"
@@ -959,12 +979,12 @@ class FinanceEngine:
         med = totals[mid] if len(totals) % 2 else (totals[mid - 1] + totals[mid]) / 2
         return round(med, 2)
 
-    def balance_estimate(self) -> float:
-        return (self.effective_monthly_income()
-                - sum(self.this_month_spend().values()))
+    def balance_estimate(self, date_range: tuple[str, str] | None = None) -> float:
+        return (self.effective_monthly_income(date_range=date_range)
+                - sum(self.this_month_spend(date_range).values()))
 
-    def budget_status(self) -> list[dict]:
-        spend = self.this_month_spend()
+    def budget_status(self, date_range: tuple[str, str] | None = None) -> list[dict]:
+        spend = self.this_month_spend(date_range)
         limits = {r["category"]: r["monthly_limit"] for r in self.list_budgets()}
         result = []
         for cat in sorted(set(spend) | set(limits)):
@@ -996,11 +1016,13 @@ class FinanceEngine:
         return row["t"]
 
     def overview(self) -> dict:
+        date_range = self.latest_month_range()
         return {
-            "balance_estimate": round(self.balance_estimate(), 2),
-            "monthly_income": round(self.effective_monthly_income(), 2),
-            "this_month_spend": {k: round(v, 2) for k, v in self.this_month_spend().items()},
-            "budget_status": self.budget_status(),
+            "period": date_range[0][:7],
+            "balance_estimate": round(self.balance_estimate(date_range), 2),
+            "monthly_income": round(self.effective_monthly_income(date_range=date_range), 2),
+            "this_month_spend": {k: round(v, 2) for k, v in self.this_month_spend(date_range).items()},
+            "budget_status": self.budget_status(date_range),
             "upcoming_bills": self.upcoming_bills(30),
             "subscription_monthly_total": round(self.subscription_total_monthly(), 2),
             "portfolio": self.portfolio_summary(),

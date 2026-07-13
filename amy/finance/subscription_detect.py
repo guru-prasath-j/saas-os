@@ -37,14 +37,20 @@ def _parse_date(s: str):
 
 
 def _find_candidates(transactions: list[dict]) -> list[dict]:
-    by_merchant: dict[str, list[dict]] = defaultdict(list)
+    # Bucket by (account_id, merchant) — not merchant alone. Two different
+    # accounts can legitimately have the same recurring merchant name (e.g.
+    # a household's two cards both billed for Netflix); merging them here
+    # interleaves their charge dates/amounts and corrupts the cadence and
+    # amount-consistency checks below, silently dropping real subscriptions.
+    # Same precedent as amy/finance/dedup.py's account-scoped bucketing.
+    by_merchant: dict[tuple, list[dict]] = defaultdict(list)
     for t in transactions:
         if t.get("amount", 0) >= 0:
             continue  # only outgoing spend can be a subscription
         merchant = (t.get("merchant") or "").strip()
         if not merchant:
             continue
-        by_merchant[merchant.lower()].append(t)
+        by_merchant[(t.get("account_id"), merchant.lower())].append(t)
 
     candidates = []
     for txns in by_merchant.values():

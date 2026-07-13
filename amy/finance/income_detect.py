@@ -69,7 +69,11 @@ def _guess_recurrence(avg_gap: float) -> str:
 
 
 def _find_candidates(transactions: list[dict]) -> list[dict]:
-    by_merchant: dict[str, list[dict]] = defaultdict(list)
+    # Bucket by (account_id, merchant) — see subscription_detect.py's
+    # _find_candidates for why: merging the same merchant name across two
+    # different accounts interleaves their credit dates/amounts and
+    # corrupts the cadence/amount checks below.
+    by_merchant: dict[tuple, list[dict]] = defaultdict(list)
     for t in transactions:
         if t.get("amount", 0) <= 0:
             continue  # only incoming credits can be an income source
@@ -78,7 +82,7 @@ def _find_candidates(transactions: list[dict]) -> list[dict]:
             continue
         if any(k in merchant.lower() for k in _EXCLUDE_KEYWORDS):
             continue
-        by_merchant[merchant.lower()].append(t)
+        by_merchant[(t.get("account_id"), merchant.lower())].append(t)
 
     candidates = []
     for txns in by_merchant.values():

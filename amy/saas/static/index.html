@@ -4920,12 +4920,12 @@ async function loadFinOverview(){
       jget('/api/finance/subscriptions'),
       jget('/api/finance/forecast/cashflow').catch(()=>({})),
     ]);
-    const spending = ov.monthly_spending || 0;
-    const income = inc.monthly_total || 0;
+    const spending = ov.this_month_spend ? Object.values(ov.this_month_spend).reduce((s,v)=>s+(+v||0),0) : 0;
+    const income = (+ov.monthly_income) || (inc.monthly_total || 0);
     const net = income - spending;
     const subTotal = subs.monthly_total || 0;
     const portTotal = (inv.portfolio||{}).total_value || 0;
-    const alerts = (ov.alerts||[]).length;
+    const alerts = (ov.budget_status||[]).filter(b=>b.over_budget).length;
     const kpi=(label,value,accent,sub='',valueColor='')=>`
       <div class="kpi" style="--kpi-accent:${accent}">
         <div class="kpi-label">${label}</div>
@@ -4935,7 +4935,13 @@ async function loadFinOverview(){
     const netSigned=(net>=0?'+':'−')+_fmt(Math.abs(net));
     const netCol=net>=0?'var(--success)':'var(--danger)';
     const empty=!income && !spending && !subTotal && !portTotal;
-    el.innerHTML=
+    const periodLabel = ov.period ? (()=>{
+      const [y,m]=ov.period.split('-');
+      const label=new Date(+y,+m-1,1).toLocaleString('en-US',{month:'long',year:'numeric'});
+      const isCurrent = ov.period === new Date().toISOString().slice(0,7);
+      return isCurrent ? '' : `<p class="muted" style="grid-column:1/-1;margin:0 0 4px;font-size:12px">Showing ${label} — the most recent month with data</p>`;
+    })() : '';
+    el.innerHTML=periodLabel+
       kpi('Monthly income', _fmt(income), 'var(--success)')+
       kpi('Spent this month', _fmt(spending), 'var(--danger)')+
       kpi('Net cashflow', netSigned, netCol, 'income − spend', netCol)+
@@ -6137,7 +6143,7 @@ async function previewImport(aid, type){
     const d=await r.json();
     if(!r.ok){msg.innerHTML=`<span style="color:var(--danger)">${d.detail||'Parse failed'}</span>`;return;}
     if(d.needs_mapping){
-      msg.innerHTML='<span style="color:var(--warn)">⚠ Could not auto-detect columns. Upload and map manually.</span>';
+      renderColumnMappingUI(aid, type, d.headers||[], d.sample_rows||[]);
       return;
     }
     const txns=d.transactions||[];
@@ -6190,6 +6196,78 @@ function cancelImport(aid,type){
   delete _stagedFiles[aid];
   document.getElementById('importPreview-'+aid).innerHTML='';
   document.getElementById('importMsg-'+aid).innerHTML='';
+}
+
+// Manual column-mapping UI — shown when the backend can't auto-detect a
+// bank's CSV/XLS layout (unrecognized headers, e.g. a beneficiaries sheet
+// or an unfamiliar bank export). Backend flow: save a column_map via
+// POST .../column-map, then re-run the same preview, which now succeeds.
+function renderColumnMappingUI(aid, type, headers, sampleRows){
+  const msg=document.getElementById('importMsg-'+aid);
+  const preview=document.getElementById('importPreview-'+aid);
+  msg.innerHTML='<span style="color:var(--warn)">⚠ Could not auto-detect columns — map them manually below.</span>';
+  if(!headers.length){
+    preview.innerHTML='<p class="muted" style="margin-top:10px">No headers detected in this file — it may not be a transaction statement (e.g. a beneficiaries/template sheet). Try the Custodial tab\'s sheet import instead if this is a beneficiaries sheet.</p>';
+    return;
+  }
+  const opts=['<option value="">— none —</option>']
+    .concat(headers.map(h=>`<option value="${h}">${h}</option>`)).join('');
+  const field=(label,id,required)=>`
+    <label style="display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted)">
+      ${label}${required?' *':''}
+      <select id="${id}" style="padding:5px 8px;font-size:12px;background:var(--bg-2,#111);color:inherit;border:1px solid rgba(255,255,255,.12);border-radius:6px">${opts}</select>
+    </label>`;
+  preview.innerHTML=`
+    <div style="margin-top:12px;border:1px solid rgba(255,255,255,.08);border-radius:10px;padding:14px">
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:10px">
+        ${field('Date','mapDate-'+aid,true)}
+        ${field('Description','mapDesc-'+aid,true)}
+        ${field('Debit','mapDebit-'+aid,false)}
+        ${field('Credit','mapCredit-'+aid,false)}
+        ${field('Amount (single col)','mapAmount-'+aid,false)}
+        ${field('Dr/Cr type','mapType-'+aid,false)}
+      </div>
+      <p class="faint" style="font-size:11px;margin:0 0 10px">Use Debit+Credit for two-column statements, or Amount (with an optional Dr/Cr column) for one-column statements.</p>
+      ${sampleRows.length?`
+      <div style="max-height:160px;overflow:auto;margin-bottom:12px;border:1px solid rgba(255,255,255,.06);border-radius:8px">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead><tr>${headers.map(h=>`<th style="text-align:left;padding:5px 8px;color:var(--muted);white-space:nowrap;background:rgba(255,255,255,.04)">${h}</th>`).join('')}</tr></thead>
+          <tbody>${sampleRows.map(r=>`<tr>${headers.map(h=>`<td style="padding:5px 8px;white-space:nowrap;color:var(--muted)">${(r[h]??'')}</td>`).join('')}</tr>`).join('')}</tbody>
+        </table>
+      </div>`:''}
+      <div style="display:flex;gap:8px">
+        <button onclick="saveColumnMappingAndPreview('${aid}','${type}')" style="padding:6px 16px;font-size:12px">✓ Save mapping &amp; preview</button>
+        <button class="ghost sm" onclick="cancelImport('${aid}','${type}')" style="color:var(--danger)">✕ Cancel</button>
+      </div>
+    </div>`;
+}
+
+async function saveColumnMappingAndPreview(aid, type){
+  const get=id=>document.getElementById(id).value;
+  const date=get('mapDate-'+aid), description=get('mapDesc-'+aid);
+  const debit=get('mapDebit-'+aid), credit=get('mapCredit-'+aid);
+  const amount=get('mapAmount-'+aid), colType=get('mapType-'+aid);
+  const msg=document.getElementById('importMsg-'+aid);
+  if(!date||!description){
+    msg.innerHTML='<span style="color:var(--danger)">Date and Description are required.</span>';
+    return;
+  }
+  if(!debit&&!credit&&!amount){
+    msg.innerHTML='<span style="color:var(--danger)">Pick Debit+Credit columns, or a single Amount column.</span>';
+    return;
+  }
+  const column_map={date, description};
+  if(debit) column_map.debit=debit;
+  if(credit) column_map.credit=credit;
+  if(amount) column_map.amount=amount;
+  if(colType) column_map.type=colType;
+  msg.innerHTML='<span style="color:var(--muted)">Saving mapping…</span>';
+  try{
+    await jpost(`/api/finance/accounts/${aid}/column-map`,{column_map});
+    await previewImport(aid, type);
+  }catch(e){
+    msg.innerHTML=`<span style="color:var(--danger)">${e.message}</span>`;
+  }
 }
 
 async function confirmImport(aid,type){
