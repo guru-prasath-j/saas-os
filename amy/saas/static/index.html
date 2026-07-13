@@ -1547,6 +1547,18 @@
         </div>
 
         <div class="card">
+          <h3>Resume Versions</h3>
+          <p class="muted">Generate a track-specific resume draft from your master resume + showcase portfolio bullets + real skill-demand ordering — never invents a skill you don't have. Every version is PROPOSED, not saved: check Agent Approvals to accept it. Content is never shown here (same rule as your master resume) — only performance stats per version, from applications you've actually sent.</p>
+          <div class="row">
+            <input id="rvTrack" placeholder="target track (e.g. GenAI Engineer)"/>
+            <input id="rvLabel" placeholder="label (optional)" style="max-width:200px"/>
+            <button class="sm" style="flex:0 0 90px" onclick="generateResumeVersion()">Generate</button>
+          </div>
+          <p class="meta" id="rvMsg"></p>
+          <div id="rvList" style="margin-top:10px"><span class="faint">Loading…</span></div>
+        </div>
+
+        <div class="card">
           <h3>Portfolio</h3>
           <p class="muted">Classifies your GitHub repos against real postings for your target role — SHOWCASE (resume-ready), NEEDS WORK (relevant but incomplete), and skill GAPS with buildable project ideas. Estimates, factors shown.</p>
           <button onclick="loadCareerPortfolio()">Analyze portfolio</button>
@@ -3147,7 +3159,7 @@ function _careerDaysLeft(deadline){
 }
 async function loadCareerTab(){
   await Promise.all([_loadCareerGoalHeader(), _loadCareerFunnel(), _loadCareerPostings(),
-                     _loadJdHistory()]);
+                     _loadJdHistory(), loadResumeVersions()]);
 }
 async function _loadCareerGoalHeader(){
   const el=document.getElementById('careerGoalHeader');
@@ -3341,6 +3353,44 @@ async function _showJdHistoryItem(id){
     resultEl.innerHTML=_renderJdAnalysis(a);
     resultEl.scrollIntoView({behavior:'smooth', block:'nearest'});
   }catch(e){ resultEl.innerHTML='<span class="faint">Could not load that analysis.</span>'; }
+}
+async function generateResumeVersion(){
+  const track=document.getElementById('rvTrack').value.trim();
+  const label=document.getElementById('rvLabel').value.trim();
+  const msg=document.getElementById('rvMsg');
+  if(!track){ msg.textContent='Enter a target track first.'; return; }
+  msg.textContent='Generating…';
+  try{
+    const d=await api('/api/career/resume/versions',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({target_track:track, label:label||null})});
+    if(d.status==='duplicate'){
+      msg.textContent='Already proposed a version for this track today — check Agent Approvals.';
+    }else if(d.status==='pending'){
+      msg.textContent='Proposed — review it in Agent Approvals to save it.';
+      document.getElementById('rvLabel').value='';
+    }else{
+      msg.textContent=d.skipped ? d.skipped : 'Done.';
+    }
+  }catch(e){ msg.textContent='Could not generate: '+(e.message||e); }
+}
+async function loadResumeVersions(){
+  const el=document.getElementById('rvList');
+  try{
+    const [vd,pd]=await Promise.all([jget('/api/career/resume/versions'), jget('/api/career/resume/performance')]);
+    const versions=vd.versions||[];
+    if(!versions.length){
+      el.innerHTML='<span class="faint">No resume versions yet — generate one above (it lands in Agent Approvals first).</span>';
+      return;
+    }
+    const perfById={}; (pd.versions||[]).forEach(p=>perfById[p.id]=p);
+    el.innerHTML=versions.map(v=>{
+      const p=perfById[v.id]||{};
+      const perfChip = p.confidence==='observed'
+        ? `<span class="chip">${p.interview_rate_pct}% interview rate (${p.applications_count} sent, ${p.offers_count} offer${p.offers_count===1?'':'s'})</span>`
+        : `<span class="faint">${p.applications_count||0} application(s) — too few for a rate yet</span>`;
+      return `<div class="toggle"><span><b>${_dEsc(v.label)}</b> <span class="faint">${_dEsc(v.target_track||'')} · ${v.chars} chars · ${_dEsc((v.created_at||'').slice(0,10))}</span></span>${perfChip}</div>`;
+    }).join('');
+  }catch(e){ el.innerHTML='<span class="faint">Could not load resume versions.</span>'; }
 }
 async function loadCareerPortfolio(){
   const el=document.getElementById('careerPortfolio');
