@@ -279,3 +279,80 @@ def resume_performance(ctx) -> dict:
             entry["interview_rate_pct"] = round(100.0 * interviews / n, 1)
         out.append(entry)
     return {"versions": out}
+
+
+# ---------------------------------------------------------------------------
+# PDF export — the whole point of "generate a resume version" is to get a
+# file you can actually send; a resume is not GSTIN/PAN-class data (it
+# EXISTS to be shared), so unlike list_resume_versions' metadata-only rule
+# this deliberately returns the real content, to its own owner only.
+# ---------------------------------------------------------------------------
+
+# fpdf2's core (non-embedded) fonts are latin-1 only and raise on anything
+# outside it — found live: an em dash from an LLM-drafted version crashed
+# rendering. Transliterate the common offenders instead of shipping a bundled
+# Unicode font just for a plain-text resume; a final latin-1 replace-encode
+# is the never-crash safety net for anything still unmapped.
+_PDF_CHAR_MAP = {
+    "—": "-", "–": "-",   # em dash, en dash
+    "‘": "'", "’": "'",   # curly single quotes
+    "“": '"', "”": '"',   # curly double quotes
+    "…": "...",                     # ellipsis
+    "•": "-",                       # bullet
+}
+
+
+def _pdf_safe(text: str) -> str:
+    for src, dst in _PDF_CHAR_MAP.items():
+        text = text.replace(src, dst)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
+
+def render_resume_pdf(content: str, title: str = "Resume") -> bytes:
+    """Plain, legible PDF of a resume version's exact text — same content
+    the /content route returns, just paginated. Minimal markdown-ish
+    parsing matching _deterministic_draft's own output shape ('## ' and
+    '# ' headers, '- ' bullets); anything else renders as a paragraph."""
+    from fpdf import FPDF
+    from fpdf.enums import XPos, YPos
+
+    # fpdf2's multi_cell defaults to new_x=XPos.RIGHT — after a short line
+    # (rendered in one pass, not wrapped) the cursor is left at the cell's
+    # right edge, not the left margin. With w=0 (full remaining width) that
+    # edge sits AT the right margin, so the next multi_cell call finds ~0mm
+    # left and raises "not enough horizontal space" (found live). Every
+    # call below must explicitly reset to the left margin.
+    def _line(text, h, **kw):
+        pdf.multi_cell(0, h, text, new_x=XPos.LMARGIN, new_y=YPos.NEXT, **kw)
+
+    pdf = FPDF(format="A4", unit="mm")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.set_margins(18, 16, 18)
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 16)
+    _line(_pdf_safe(title), 9)
+    pdf.ln(2)
+    pdf.set_font("Helvetica", size=11)
+
+    for raw_line in content.split("\n"):
+        line = _pdf_safe(raw_line.rstrip())
+        stripped = line.strip()
+        if not stripped:
+            pdf.ln(3)
+            continue
+        if stripped.startswith("## "):
+            pdf.set_font("Helvetica", "B", 13)
+            pdf.ln(2)
+            _line(stripped[3:], 7)
+            pdf.set_font("Helvetica", size=11)
+        elif stripped.startswith("# "):
+            pdf.set_font("Helvetica", "B", 14)
+            _line(stripped[2:], 7)
+            pdf.set_font("Helvetica", size=11)
+        elif stripped.startswith("- "):
+            _line("  -  " + stripped[2:], 6)
+        else:
+            _line(stripped, 6)
+
+    out = pdf.output()
+    return bytes(out)

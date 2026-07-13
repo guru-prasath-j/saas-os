@@ -11,7 +11,9 @@ repeat clicks are harmless.
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+import re
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from ..db import User
@@ -338,6 +340,55 @@ def get_resume_performance(user: User = Depends(current_user)):
     try:
         from ...career_resume import resume_performance
         return resume_performance(ctx)
+    finally:
+        cdb.close()
+
+
+def _own_resume_version_content(ctx, user: User, version_id: str) -> tuple[str, dict]:
+    """Shared lookup for the two routes below. 404s if the version doesn't
+    belong to this user (get_resume_version_content is uid-scoped, so a
+    foreign id simply returns None — never leaks whether it exists for
+    someone else)."""
+    content = ctx.store.get_resume_version_content(user.id, version_id)
+    if content is None:
+        raise HTTPException(status_code=404, detail="resume version not found")
+    meta = next((v for v in ctx.store.list_resume_versions(user.id)
+                if v["id"] == version_id), {})
+    return content, meta
+
+
+@router.get("/api/career/resume/versions/{version_id}/content")
+def get_resume_version_content(version_id: str, user: User = Depends(current_user)):
+    """Decrypted resume-version text — OWNER-ONLY. Deliberately diverges
+    from list_resume_versions' 'never expose content_enc' rule: that rule
+    protects the METADATA list from leaking full resume text where it
+    isn't needed; a user reading/downloading a resume THEY generated, to
+    actually use it, is the entire point of the Resume Versions feature. A
+    resume is not GSTIN/PAN-class data — it exists to be shared with
+    employers, so the analogy to career_profile.resume_text's 'never over
+    the wire' rule stops at 'don't leak it to routes/other users that
+    don't need it', not 'the owner can never retrieve it'."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        content, meta = _own_resume_version_content(ctx, user, version_id)
+        return {"id": version_id, "label": meta.get("label"),
+               "target_track": meta.get("target_track"), "content": content}
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/resume/versions/{version_id}/pdf")
+def download_resume_version_pdf(version_id: str, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        content, meta = _own_resume_version_content(ctx, user, version_id)
+        from ...career_resume import render_resume_pdf
+        label = meta.get("label") or "Resume"
+        pdf_bytes = render_resume_pdf(content, title=label)
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", label).strip("-") or "resume"
+        return Response(content=pdf_bytes, media_type="application/pdf",
+                        headers={"Content-Disposition":
+                                f'attachment; filename="{safe_name}.pdf"'})
     finally:
         cdb.close()
 

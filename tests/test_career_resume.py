@@ -18,7 +18,7 @@ from amy.automation import build_ctx
 from amy.career_portfolio import persist_classification
 from amy.career_resume import (
     generate_resume_version, propose_course_completion_bullet,
-    resume_performance, scan_course_completions,
+    render_resume_pdf, resume_performance, scan_course_completions,
 )
 from amy.career_scout import _extract_posting_keywords
 from amy.collab import CollabDB
@@ -216,3 +216,47 @@ def test_set_application_resume_version_roundtrips(ctx):
     assert ctx.store.set_application_resume_version(ctx.user_id, aid, vid) is True
     app = ctx.store.get_application(ctx.user_id, aid)
     assert app["resume_version_id"] == vid
+
+
+# ---------------------------------------------------------------------------
+# PDF export — found live: fpdf2's multi_cell defaults to leaving the
+# cursor at the cell's right edge (new_x=XPos.RIGHT) rather than the left
+# margin, so a second full-width multi_cell right after a short one-line
+# heading raised "not enough horizontal space" the first time this ran
+# against real content. Also found live: an em dash from an LLM-drafted
+# version crashed fpdf2's latin-1-only core font.
+# ---------------------------------------------------------------------------
+
+def test_render_resume_pdf_produces_valid_pdf_bytes():
+    pdf_bytes = render_resume_pdf(
+        "Resume\n\n## Project highlights\n- Built a thing\n\nPlain paragraph.",
+        title="Plain Track")
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert len(pdf_bytes) > 200
+
+
+def test_render_resume_pdf_survives_heading_then_bullet():
+    """The exact sequence that raised FPDFException live: a short '## '
+    heading (one line, doesn't wrap) immediately followed by a bullet."""
+    pdf_bytes = render_resume_pdf(
+        "## Project highlights\n- Built a RAG pipeline for a client",
+        title="T")
+    assert pdf_bytes[:5] == b"%PDF-"
+
+
+def test_render_resume_pdf_handles_unicode_punctuation():
+    """Em dash / curly quotes / ellipsis / bullet — all crash fpdf2's core
+    (latin-1-only) font untranslated; render_resume_pdf must not raise."""
+    content = ("Summary — building things.\n"
+              "- It’s a “great” project…\n"
+              "• also a literal bullet char")
+    pdf_bytes = render_resume_pdf(content, title="Unicode Track")
+    assert pdf_bytes[:5] == b"%PDF-"
+
+
+def test_render_resume_pdf_handles_multi_page_content():
+    long_content = "\n".join(f"- Bullet point number {i} with some detail text"
+                             for i in range(120))
+    pdf_bytes = render_resume_pdf(long_content, title="Long")
+    assert pdf_bytes[:5] == b"%PDF-"
+    assert len(pdf_bytes) > 2000   # multiple pages worth of content

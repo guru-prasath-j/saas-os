@@ -198,3 +198,58 @@ def test_patch_goal_ladder_updates_meta_and_profile(app_client):
         assert g["north_star_role"] is None
     finally:
         cdb.close()
+
+
+# ---------------------------------------------------------------------------
+# Resume version content / PDF export
+# ---------------------------------------------------------------------------
+
+def test_resume_version_content_and_pdf_routes(app_client):
+    c, headers, uid, _ = app_client
+    cdb, store = _store_for(uid)
+    try:
+        vid = store.create_resume_version(uid, "My Label", "## Highlights\n- Did a thing",
+                                          target_track="GenAI Engineer")
+    finally:
+        cdb.close()
+
+    r = c.get(f"/api/career/resume/versions/{vid}/content", headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["label"] == "My Label"
+    assert "Did a thing" in body["content"]
+
+    r2 = c.get(f"/api/career/resume/versions/{vid}/pdf", headers=headers)
+    assert r2.status_code == 200
+    assert r2.headers["content-type"] == "application/pdf"
+    assert "My-Label.pdf" in r2.headers["content-disposition"]
+    assert r2.content[:5] == b"%PDF-"
+
+
+def test_resume_version_content_unknown_id_404(app_client):
+    c, headers, uid, _ = app_client
+    assert c.get("/api/career/resume/versions/nope/content",
+                 headers=headers).status_code == 404
+    assert c.get("/api/career/resume/versions/nope/pdf",
+                 headers=headers).status_code == 404
+
+
+def test_resume_version_content_is_owner_scoped(app_client):
+    """A second user's resume version must 404 for the first user — the
+    lookup is uid-scoped, never leaking cross-account."""
+    c, headers, uid, _ = app_client
+    cdb, store = _store_for(uid)
+    try:
+        vid = store.create_resume_version(uid, "Owner Only", "secret content",
+                                          target_track="X")
+    finally:
+        cdb.close()
+
+    email2 = f"other-{uuid.uuid4().hex[:8]}@test.com"
+    r2 = c.post("/auth/signup", json={"email": email2, "password": "test1234"})
+    headers2 = {"Authorization": f"Bearer {r2.json()['token']}"}
+    from amy.saas import tenancy
+    tenancy.ensure_dirs(r2.json()["user"]["id"])
+
+    assert c.get(f"/api/career/resume/versions/{vid}/content",
+                headers=headers2).status_code == 404

@@ -3361,8 +3361,11 @@ async function generateResumeVersion(){
   if(!track){ msg.textContent='Enter a target track first.'; return; }
   msg.textContent='Generating…';
   try{
-    const d=await api('/api/career/resume/versions',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({target_track:track, label:label||null})});
+    // jpost (not api) — api() returns the raw fetch Response, whose own
+    // .status is the HTTP status code (200), not our payload's status
+    // field; using api() directly here always fell into the 'Done.'
+    // fallback even on a real successful proposal (found live).
+    const d=await jpost('/api/career/resume/versions', {target_track:track, label:label||null});
     if(d.status==='duplicate'){
       msg.textContent='Already proposed a version for this track today — check Agent Approvals.';
     }else if(d.status==='pending'){
@@ -3388,9 +3391,36 @@ async function loadResumeVersions(){
       const perfChip = p.confidence==='observed'
         ? `<span class="chip">${p.interview_rate_pct}% interview rate (${p.applications_count} sent, ${p.offers_count} offer${p.offers_count===1?'':'s'})</span>`
         : `<span class="faint">${p.applications_count||0} application(s) — too few for a rate yet</span>`;
-      return `<div class="toggle"><span><b>${_dEsc(v.label)}</b> <span class="faint">${_dEsc(v.target_track||'')} · ${v.chars} chars · ${_dEsc((v.created_at||'').slice(0,10))}</span></span>${perfChip}</div>`;
+      return `<div class="toggle"><span><b>${_dEsc(v.label)}</b> <span class="faint">${_dEsc(v.target_track||'')} · ${v.chars} chars · ${_dEsc((v.created_at||'').slice(0,10))}</span></span>`
+        +`<span style="display:flex;gap:4px;align-items:center">${perfChip}`
+        +`<button class="ghost sm" onclick="previewResumeVersion('${v.id}')">Preview</button>`
+        +`<button class="ghost sm" onclick="downloadResumeVersionPdf('${v.id}','${_dEsc(v.label).replace(/'/g,"\\'")}')">⬇ PDF</button></span></div>`
+        +`<div id="rv-preview-${v.id}"></div>`;
     }).join('');
   }catch(e){ el.innerHTML='<span class="faint">Could not load resume versions.</span>'; }
+}
+async function previewResumeVersion(id){
+  const el=document.getElementById('rv-preview-'+id);
+  if(!el) return;
+  if(el.innerHTML){ el.innerHTML=''; return; }   // toggle closed on second click
+  el.innerHTML='<p class="faint" style="margin:6px 0">Loading…</p>';
+  try{
+    const d=await jget('/api/career/resume/versions/'+id+'/content');
+    el.innerHTML='<pre style="white-space:pre-wrap;background:var(--surface);'
+      +'padding:10px;border-radius:8px;margin:6px 0;font-size:12px;max-height:400px;overflow:auto">'
+      +_dEsc(d.content)+'</pre>';
+  }catch(e){ el.innerHTML='<p class="faint">Could not load preview.</p>'; }
+}
+async function downloadResumeVersionPdf(id, label){
+  try{
+    const r=await api('/api/career/resume/versions/'+id+'/pdf');
+    if(!r.ok) throw new Error('download failed');
+    const url=URL.createObjectURL(await r.blob());
+    const a=document.createElement('a');
+    a.href=url; a.download=(label||'resume')+'.pdf';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 4000);
+  }catch(e){ alert('Could not download PDF: '+(e.message||e)); }
 }
 async function loadCareerPortfolio(){
   const el=document.getElementById('careerPortfolio');
