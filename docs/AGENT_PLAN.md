@@ -1036,6 +1036,98 @@ supervisor wiring; goal-linked high-relevance course parks exactly one
 tier-2 proposal (dedup pinned on a second refresh); low-relevance and
 unlinked focuses propose nothing; kill switch respected.
 
+### JD MATCH ADVISOR (DONE)
+
+Started from an external brief ("Phase D4, extends Phase D3 Resume
+Tailoring Engine") that assumed resume-versioning infrastructure —
+`resume_entries`, `resume_version_id`, a `score_entry_relevance` function,
+D3's reorder-proposal mechanism — none of which exists anywhere in this
+codebase (verified by grep before writing any code: zero hits). Confirmed
+scope with the user before building: adapt the JD-match idea to this
+repo's REAL resume model — one field, `career_profile.resume_text` — and
+skip everything that needs versions/entries/reorder (documented as
+out-of-scope in `amy/jd_match.py`'s module docstring, not silently
+dropped).
+
+`amy/jd_match.py` (new flat module, same convention as career_scout.py/
+career_apply.py/career_inbound.py): `analyze_jd(ctx, jd_text,
+job_posting_id=None)` extracts keywords via
+`orchestrator._extract_keywords` (the SAME extractor `career_apply.py`'s
+ATS estimate already uses — not a second extraction method) and scores
+coverage via a new shared `orchestrator.score_keyword_coverage(resume_text,
+keywords)` — `_ats_estimate` was refactored to delegate to this function
+instead of duplicating the matched/missing arithmetic inline, so
+posting-level and JD-level scoring share one definition of "covered"
+(this is the real-codebase mapping of the brief's "refactor D3's scorer
+to accept an arbitrary keyword list, don't duplicate the logic"
+instruction). Existing `_ats_estimate` tests re-verified unchanged
+(delegation is behavior-preserving).
+
+Three MUTUALLY EXCLUSIVE report buckets per JD term — pinned by test to
+confirm literal_term_gaps isn't collapsed into missing_requirements:
+`matched_requirements` (literal substring match), `literal_term_gaps`
+(no literal match, but a curated single-token synonym — e.g. k8s/
+kubernetes, js/javascript — IS present in the resume; a real ATS gap
+since many real ATS systems literal-string match), `missing_requirements`
+(neither — each entry traces to a real JD snippet via `stated_in_jd_as`,
+never fabricated). Synonym dict is single-token-only on both sides: the
+extractor's regex (`[A-Za-z][A-Za-z0-9+.#]{2,}`) never emits a token with
+a space, so a multi-word canonical like "machine learning" could never
+match a real extracted term — included in the original brief's synonym
+examples but dead weight here, left out. `confidence` is `"low"` for a
+short/sparse JD (word-count + keyword-count heuristic) — the honest
+report for a vague JD is smaller, not padded.
+
+`job_posting_id` is optional and only ever narrows/links, never required
+— a JD pasted from a forwarded email works standalone. When explicitly
+linked to a posting whose stored `keywords` is thin (found live:
+`job_postings.keywords` is set to `[]` at discovery time in
+career_scout.py and NEVER populated afterward — every posting in the
+system had empty keywords before this), the analysis backfills it via a
+new `AutomationStore.set_posting_keywords` — opt-in, explicit-link-only,
+per the brief's "never pollute Phase A aggregate stats with an unverified
+standalone JD" constraint (this repo has no literal "Phase A", the
+constraint maps onto not silently writing to `job_postings` for anything
+but an explicit, human-chosen link).
+
+Two real extraction-quality bugs found live (both in the SHARED
+extractor, so the fix benefits `_ats_estimate` and `_skill_gaps`'s
+deterministic fallback too, not just this module): (1) a sentence-final
+period stayed attached to the last extracted token ("Kubernetes." never
+literal-matched "Kubernetes" in a resume) — the regex allows `.`/`#`/`+`
+mid-token on purpose (Node.js, C#, C++), so the fix strips a trailing `.`
+post-match rather than touching the regex; (2) `_SKILL_STOPWORDS` was
+sized for filtering a top-15 frequency count across MANY aggregated
+postings, where incidental prose words rarely dominate — scoring ONE
+document (a single pasted JD) breaks that assumption, since every word
+has frequency 1 and ordinary sentence words ("hiring", "you", "required",
+"plus") outranked real skill terms; stopword list substantially widened,
+re-verified zero regressions against existing ATS/skill-gap tests (none
+were pinned to specific extracted words).
+
+Routes: `POST /api/career/jd/analyze`, `GET /api/career/jd/analyses[/{id}]`.
+Tools: `analyze_jd` / `explain_jd_match`, both `risk: read` (a JD/resume
+match is a query; the module makes no writes outside the opt-in posting-
+keyword backfill and its own `jd_analyses` cache row). UI: new "JD Match
+Advisor" card on the Career tab — textarea, optional posting-link
+dropdown, score/confidence chips, three-bucket result rendering,
+collapsible history.
+
+Tests: `tests/test_jd_match.py` (19 passing, all fixture text explicitly
+labeled synthetic) — strong match (high score, few gaps); weak/short JD
+(low confidence, NOT padded — asserts a hard cap on bucket sizes); no-
+resume-on-file honesty; the literal-term-gap case AND its inverse (no
+synonym evidence -> missing, not a gap) confirming the three-way
+partition is real; missing-requirement JD-text traceability; standalone
+JD never touches `job_postings`; linked+thin backfills, linked+populated
+does NOT overwrite; persistence + list + explain_jd_match (no re-score);
+unknown-id and empty-JD honest errors; JD-analyzed event emission; both
+tools registered read-risk; `_ats_estimate`/`analyze_jd` proven to share
+one scorer (not two copies); route-level analyze/list/get + 400/404
+paths. Full career regression sweep (career_apply/goal_flow/ladder/
+job_scout/portfolio) re-run after the shared-extractor changes: 65
+passed, zero regressions.
+
 ## CAREER AUTOPILOT — summary
 
 All six parts DONE (commits: Part 1 `1b2f404`, Part 2 `5183bf1`, Part 3

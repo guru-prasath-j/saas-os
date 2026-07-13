@@ -177,20 +177,20 @@ def _recommend_channel(posting: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def _ats_estimate(resume_text: str, posting: dict) -> dict:
-    from .automation.orchestrator import _extract_keywords
+    """Posting-level ATS estimate. The actual coverage arithmetic lives in
+    orchestrator.score_keyword_coverage() — shared with amy/jd_match.py's
+    analyze_jd() (JD-level, pasted text instead of a stored posting) so
+    there is exactly one keyword-coverage scorer in the codebase, not two
+    subtly-different ones."""
+    from .automation.orchestrator import _extract_keywords, score_keyword_coverage
     keywords = _extract_keywords([posting], top_n=15)
-    if not keywords:
-        return {"coverage_pct": None, "matched": [], "missing": [],
-                "note": "no extractable keywords from this posting"}
-    if not (resume_text or "").strip():
-        return {"coverage_pct": None, "matched": [], "missing": keywords,
-                "note": "no resume on file — set one via set_career_profile "
-                        "for an ATS estimate"}
-    resume_l = resume_text.lower()
-    matched = [k for k in keywords if k.lower() in resume_l]
-    missing = [k for k in keywords if k.lower() not in resume_l]
-    return {"coverage_pct": round(100.0 * len(matched) / len(keywords), 1),
-           "matched": matched, "missing": missing}
+    out = score_keyword_coverage(resume_text, keywords)
+    if out["note"] == "no extractable keywords":
+        out["note"] = "no extractable keywords from this posting"
+    elif out["note"] == "no resume text to score against":
+        out["note"] = ("no resume on file — set one via set_career_profile "
+                       "for an ATS estimate")
+    return out
 
 
 # ---------------------------------------------------------------------------

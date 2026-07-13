@@ -1532,6 +1532,21 @@
         </div>
 
         <div class="card">
+          <h3>JD Match Advisor</h3>
+          <p class="muted">Paste a job description — get a grounded match report against your saved resume: overall coverage, which requirements are literally covered vs missing (with the exact JD text they came from), and literal ATS keyword gaps (e.g. your resume says "K8s", the JD says "Kubernetes"). Deterministic keyword matching only — nothing fabricated. If the JD is short/vague, the report says so instead of overstating confidence.</p>
+          <textarea id="jdText" rows="6" placeholder="Paste the full job description here…" style="width:100%"></textarea>
+          <div class="row" style="margin-top:8px">
+            <select id="jdPostingLink" style="flex:1"><option value="">Not linked to a discovered posting</option></select>
+            <button class="sm" style="flex:0 0 90px" onclick="analyzeJd()">Analyze</button>
+          </div>
+          <p class="meta" id="jdMsg"></p>
+          <div id="jdResult" style="margin-top:10px"></div>
+          <details style="margin-top:10px"><summary class="meta" style="cursor:pointer">History</summary>
+            <div id="jdHistory" style="margin-top:8px"><span class="faint">Loading…</span></div>
+          </details>
+        </div>
+
+        <div class="card">
           <h3>Portfolio</h3>
           <p class="muted">Classifies your GitHub repos against real postings for your target role — SHOWCASE (resume-ready), NEEDS WORK (relevant but incomplete), and skill GAPS with buildable project ideas. Estimates, factors shown.</p>
           <button onclick="loadCareerPortfolio()">Analyze portfolio</button>
@@ -3131,7 +3146,8 @@ function _careerDaysLeft(deadline){
   return Math.ceil((d-new Date())/(1000*60*60*24));
 }
 async function loadCareerTab(){
-  await Promise.all([_loadCareerGoalHeader(), _loadCareerFunnel(), _loadCareerPostings()]);
+  await Promise.all([_loadCareerGoalHeader(), _loadCareerFunnel(), _loadCareerPostings(),
+                     _loadJdHistory()]);
 }
 async function _loadCareerGoalHeader(){
   const el=document.getElementById('careerGoalHeader');
@@ -3218,6 +3234,9 @@ async function _loadCareerPostings(){
   try{
     const d=await jget('/api/career/postings?limit=10');
     const rows=(d.postings||[]).filter(p=>p.status!=='applied' && p.status!=='dismissed');
+    const linkSel=document.getElementById('jdPostingLink');
+    if(linkSel) linkSel.innerHTML='<option value="">Not linked to a discovered posting</option>'
+      +rows.map(p=>`<option value="${p.id}">${_dEsc(p.title)} — ${_dEsc(p.company)}</option>`).join('');
     if(!rows.length){
       el.innerHTML='<span class="faint">No postings discovered yet — job scouting runs '
         +'automatically once a career goal is active.</span>';
@@ -3252,6 +3271,76 @@ async function careerApply(postingId, btn){
     btn.textContent='error'; btn.disabled=false;
     setTimeout(()=>{ btn.textContent=orig; },2000);
   }
+}
+function _jdScoreColor(score){
+  if(score==null) return 'var(--muted)';
+  return score>=70 ? 'var(--success)' : (score>=40 ? 'var(--warn, orange)' : 'var(--muted)');
+}
+function _renderJdAnalysis(a){
+  const score=a.overall_match_score;
+  const scoreChip=`<span class="chip" style="color:${_jdScoreColor(score)}">${score!=null?score+'/100':'N/A'}</span>`;
+  const confChip=`<span class="chip">${_dEsc(a.confidence)} confidence</span>`;
+  const lowNote=a.confidence==='low'
+    ? '<p class="faint" style="margin-top:6px">This JD is short or yielded few extractable terms — treat this report as a rough signal, not a verdict.</p>' : '';
+  const matched=(a.matched_requirements||[]).map(t=>`<span class="chip" style="margin:2px">${_dEsc(t)}</span>`).join('') || '<span class="faint">none</span>';
+  const missing=(a.missing_requirements||[]).map(m=>
+    `<div class="toggle"><span>✕ <b>${_dEsc(m.term)}</b> — <span class="faint">"${_dEsc(m.stated_in_jd_as)}"</span></span></div>`).join('')
+    || '<span class="faint">none</span>';
+  const gaps=(a.literal_term_gaps||[]).map(g=>
+    `<div class="toggle"><span>⚠ JD says "<b>${_dEsc(g.jd_term)}</b>", your resume says "${_dEsc(g.resume_has_synonym)}" — ${_dEsc(g.suggestion)}</span></div>`).join('')
+    || '';
+  const backfillNote=a.backfilled_posting_keywords
+    ? '<p class="faint" style="margin-top:6px">Linked posting\'s keyword data was thin — backfilled from this JD.</p>' : '';
+  return `<div class="card" style="margin:0">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${scoreChip}${confChip}</div>
+    ${lowNote}
+    <div style="margin-top:10px"><b>Matched requirements</b><div style="margin-top:4px">${matched}</div></div>
+    <div style="margin-top:10px"><b>Missing requirements</b>${missing}</div>
+    ${gaps?`<div style="margin-top:10px"><b>Literal ATS keyword gaps</b>${gaps}</div>`:''}
+    ${backfillNote}
+  </div>`;
+}
+async function analyzeJd(){
+  const text=document.getElementById('jdText').value.trim();
+  const msg=document.getElementById('jdMsg');
+  const resultEl=document.getElementById('jdResult');
+  if(!text){ msg.textContent='Paste a job description first.'; return; }
+  msg.textContent='Analyzing…';
+  resultEl.innerHTML='';
+  try{
+    const postingId=document.getElementById('jdPostingLink').value || null;
+    const d=await api('/api/career/jd/analyze',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({jd_text:text, job_posting_id:postingId})});
+    msg.textContent='';
+    resultEl.innerHTML=_renderJdAnalysis(d);
+    _loadJdHistory();
+  }catch(e){ msg.textContent='Could not analyze: '+(e.message||e); }
+}
+async function _loadJdHistory(){
+  const el=document.getElementById('jdHistory');
+  if(!el) return;
+  try{
+    const d=await jget('/api/career/jd/analyses?limit=10');
+    const rows=d.analyses||[];
+    if(!rows.length){ el.innerHTML='<span class="faint">No analyses yet.</span>'; return; }
+    el.innerHTML=rows.map(a=>{
+      const preview=(a.raw_jd_text||'').replace(/\s+/g,' ').slice(0,80);
+      const score=a.overall_match_score;
+      return `<div class="toggle" style="cursor:pointer" onclick="_showJdHistoryItem('${a.id}')">
+        <span><span class="chip" style="color:${_jdScoreColor(score)}">${score!=null?score+'/100':'N/A'}</span> ${_dEsc(preview)}…</span>
+        <span class="faint">${_dEsc((a.created_at||'').slice(0,10))}</span>
+      </div>`;
+    }).join('');
+  }catch(e){ el.innerHTML='<span class="faint">Could not load history.</span>'; }
+}
+async function _showJdHistoryItem(id){
+  const resultEl=document.getElementById('jdResult');
+  resultEl.innerHTML='<span class="faint">Loading…</span>';
+  try{
+    const a=await jget('/api/career/jd/analyses/'+id);
+    resultEl.innerHTML=_renderJdAnalysis(a);
+    resultEl.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }catch(e){ resultEl.innerHTML='<span class="faint">Could not load that analysis.</span>'; }
 }
 async function loadCareerPortfolio(){
   const el=document.getElementById('careerPortfolio');

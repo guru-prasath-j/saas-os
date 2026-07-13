@@ -71,6 +71,7 @@ CAREER_APPLICATION_PREPARED = "career.application_prepared"
 CAREER_APPLICATION_SENT = "career.application_sent"
 CAREER_APPLICATION_STATUS_CHANGED = "career.application_status_changed"
 CAREER_PORTFOLIO_ANALYZED = "career.portfolio_analyzed"
+CAREER_JD_ANALYZED = "career.jd_analyzed"
 
 # Life events (LIFE AUTOPILOT phase) — payloads are metric keys/counts only,
 # never coordinates or raw health values (privacy floor, docs/LIFE_AUTOPILOT.md).

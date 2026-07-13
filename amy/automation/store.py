@@ -275,6 +275,22 @@ class AutomationStore:
                 logged_at             TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS jd_analyses (
+                id                    TEXT PRIMARY KEY,
+                uid                   TEXT NOT NULL,
+                job_posting_id        TEXT,
+                raw_jd_text           TEXT NOT NULL,
+                extracted_keywords    TEXT DEFAULT '[]',
+                overall_match_score   REAL,
+                matched_requirements  TEXT DEFAULT '[]',
+                missing_requirements  TEXT DEFAULT '[]',
+                literal_term_gaps     TEXT DEFAULT '[]',
+                confidence            TEXT DEFAULT 'low',
+                created_at            TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_jd_analyses_uid
+                ON jd_analyses(uid, created_at);
+
             CREATE TABLE IF NOT EXISTS life_metrics (
                 uid                     TEXT NOT NULL,
                 date                    TEXT NOT NULL,
@@ -1182,6 +1198,19 @@ class AutomationStore:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def set_posting_keywords(self, uid: str, posting_id: str,
+                             keywords: list[str]) -> bool:
+        """JD Match Advisor opt-in backfill: job_postings.keywords is set to
+        [] at discovery time and never populated afterward (career_scout.py
+        never calls the extractor) — jd_match.analyze_jd calls this only
+        when the analysis is explicitly linked to this posting AND its
+        keywords are still thin, never for a standalone pasted JD."""
+        cur = self.conn.execute(
+            "UPDATE job_postings SET keywords=? WHERE uid=? AND id=?",
+            (json.dumps(keywords), uid, posting_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
     # --- applications (CAREER AUTOPILOT Part 1) --------------------------------
 
     # "accepted" (Part 5E) is the new terminal success status — an accepted
@@ -1626,6 +1655,50 @@ class AutomationStore:
         d["questions"] = json.loads(d["questions"] or "[]")
         d["weakness_tags"] = json.loads(d["weakness_tags"] or "[]")
         return d
+
+    # --- JD Match Advisor --------------------------------------------------
+
+    def create_jd_analysis(self, uid: str, raw_jd_text: str,
+                           job_posting_id: str | None,
+                           extracted_keywords: list[str],
+                           overall_match_score: float | None,
+                           matched_requirements: list[str],
+                           missing_requirements: list[dict],
+                           literal_term_gaps: list[dict],
+                           confidence: str) -> str:
+        aid = _uuid()
+        self.conn.execute(
+            "INSERT INTO jd_analyses(id,uid,job_posting_id,raw_jd_text,"
+            " extracted_keywords,overall_match_score,matched_requirements,"
+            " missing_requirements,literal_term_gaps,confidence,created_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (aid, uid, job_posting_id, raw_jd_text,
+             json.dumps(extracted_keywords), overall_match_score,
+             json.dumps(matched_requirements), json.dumps(missing_requirements),
+             json.dumps(literal_term_gaps), confidence, _now_iso()))
+        self.conn.commit()
+        return aid
+
+    @staticmethod
+    def _jd_analysis_row(row) -> dict:
+        d = dict(row)
+        d["extracted_keywords"] = json.loads(d["extracted_keywords"] or "[]")
+        d["matched_requirements"] = json.loads(d["matched_requirements"] or "[]")
+        d["missing_requirements"] = json.loads(d["missing_requirements"] or "[]")
+        d["literal_term_gaps"] = json.loads(d["literal_term_gaps"] or "[]")
+        return d
+
+    def get_jd_analysis(self, uid: str, analysis_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM jd_analyses WHERE uid=? AND id=?",
+            (uid, analysis_id)).fetchone()
+        return self._jd_analysis_row(row) if row else None
+
+    def list_jd_analyses(self, uid: str, limit: int = 20) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM jd_analyses WHERE uid=? ORDER BY created_at DESC LIMIT ?",
+            (uid, limit)).fetchall()
+        return [self._jd_analysis_row(r) for r in rows]
 
 
 # ---------------------------------------------------------------------------

@@ -238,7 +238,24 @@ _SKILL_STOPWORDS = {"with", "that", "this", "from", "have", "will", "your",
                     "other", "such", "also", "into", "about", "need",
                     "looking", "join", "help", "build", "develop", "working",
                     "must", "should", "which", "they", "them", "their",
-                    "what", "when", "where", "company", "candidate"}
+                    "what", "when", "where", "company", "candidate",
+                    # Ordinary prose/function words — harmless in a top-15
+                    # frequency count over MANY postings, but dominant noise
+                    # scoring a SINGLE job description (found live building
+                    # amy/jd_match.py: "are", "hiring", "you" outranked real
+                    # skill terms in a one-document extraction).
+                    "are", "you", "our", "the", "and", "for", "hiring",
+                    "hire", "hires", "seeking", "seek", "wanted", "want",
+                    "plus", "required", "requirements", "requirement",
+                    "responsibilities", "responsible", "preferred", "ideal",
+                    "you'll", "you're", "we're", "we'll", "who", "why",
+                    "how", "can", "may", "not", "all", "any", "one", "new",
+                    "job", "jobs", "position", "opportunity", "career",
+                    "apply", "application", "engineer", "engineering",
+                    "developer", "development", "employees", "employee",
+                    "benefits", "salary", "location", "remote", "hybrid",
+                    "onsite", "full", "time", "part", "level", "senior",
+                    "junior", "mid", "per", "day", "week", "month"}
 
 
 def _is_career_goal(text: str) -> bool:
@@ -312,16 +329,47 @@ def _extract_role_and_deadline(ctx: JobCtx, goal: str) -> tuple[str, str, int, s
 def _extract_keywords(postings: list[dict], top_n: int = 8) -> list[str]:
     """Deterministic keyword-frequency fallback for _skill_gaps() when no
     LLM is available — never as good as the LLM pass, just never blocks the
-    plan (mirrors ranker.py's 'return items unranked' stance)."""
+    plan (mirrors ranker.py's 'return items unranked' stance). Also the
+    extractor amy/career_apply.py's ATS estimate and amy/jd_match.py's JD
+    analyzer both call — one extraction method, not several.
+
+    The regex allows '.'/'#'/'+' mid-token on purpose (Node.js, C#, C++),
+    but that means an ordinary sentence-final word ("Kubernetes.") keeps
+    its trailing period as part of the "keyword" — found live scoring a
+    JD, where "Kubernetes." (with period) then never literal-matched
+    "Kubernetes" in a resume. Trailing '.' is stripped after matching;
+    "Node.js" is unaffected since its match never ends in '.'."""
     from collections import Counter
     counts: Counter = Counter()
     for p in postings:
         text = f"{p.get('title', '')} {p.get('description', '')}"
-        for w in re.findall(r"[A-Za-z][A-Za-z0-9+.#]{2,}", text):
+        for raw in re.findall(r"[A-Za-z][A-Za-z0-9+.#]{2,}", text):
+            w = raw.rstrip(".")
             if w.lower() in _SKILL_STOPWORDS or len(w) < 3:
                 continue
             counts[w] += 1
     return [w for w, _n in counts.most_common(top_n)]
+
+
+def score_keyword_coverage(resume_text: str, keywords: list[str]) -> dict:
+    """Shared keyword-coverage scorer: ONE function, ONE definition of
+    "does this resume cover this term" — reused by career_apply.py's
+    _ats_estimate (keywords = one posting's extracted terms) and
+    amy/jd_match.py's analyze_jd (keywords = one pasted JD's extracted
+    terms). Deterministic case-insensitive substring match, never
+    LLM-guessed. Honestly returns coverage_pct=None with an empty
+    resume/keyword list rather than fabricating a percentage."""
+    if not keywords:
+        return {"coverage_pct": None, "matched": [], "missing": [],
+                "note": "no extractable keywords"}
+    if not (resume_text or "").strip():
+        return {"coverage_pct": None, "matched": [], "missing": list(keywords),
+                "note": "no resume text to score against"}
+    resume_l = resume_text.lower()
+    matched = [k for k in keywords if k.lower() in resume_l]
+    missing = [k for k in keywords if k.lower() not in resume_l]
+    return {"coverage_pct": round(100.0 * len(matched) / len(keywords), 1),
+           "matched": matched, "missing": missing, "note": ""}
 
 
 def _skill_gaps(ctx: JobCtx, target_role: str, profile: dict) -> list[str]:

@@ -1430,6 +1430,45 @@ fabricated job postings or company intel.
   ?city=&confidence=&is_target=`, `PATCH /api/career/companies/{id}/
   target`, `GET /api/career/companies/{id}/postings`.
 
+- **JD Match Advisor** (`amy/jd_match.py`): paste a JD, get a grounded
+  match report against `career_profile.resume_text` — NOT a resume-
+  versioning tool (no `resume_entries`/versions/reorder proposals exist in
+  this codebase; a brief written for that shape was adapted down to this
+  repo's real one-field resume model, documented in the module docstring).
+  Keyword extraction and coverage scoring are the SAME functions
+  `career_apply.py`'s ATS estimate uses —
+  `orchestrator._extract_keywords` / `orchestrator.score_keyword_coverage`
+  — refactored so posting-level and JD-level scoring can never silently
+  diverge; `_ats_estimate` now delegates to `score_keyword_coverage`
+  rather than duplicating the arithmetic. Report has three MUTUALLY
+  EXCLUSIVE buckets per JD term: `matched_requirements` (literal
+  substring), `literal_term_gaps` (no literal match but a curated,
+  single-token synonym IS present in the resume — e.g. JD says
+  "Kubernetes", resume says "K8s" — real ATS gap since many real ATS
+  systems literal-string match), `missing_requirements` (neither — traces
+  to a real snippet of the JD via `stated_in_jd_as`, never fabricated).
+  Synonym pairs are a small hardcoded dict, single-token only on both
+  sides (the extractor's regex never emits multi-word tokens, so a
+  multi-word canonical could never match) — no LLM guessing. `confidence`
+  is `"low"` when the JD is short/sparse (word/keyword-count heuristic) —
+  the honest output for a vague JD is a SMALLER report, not a padded one.
+  `job_posting_id` is optional (a JD pasted from a forwarded email works
+  standalone); when explicitly linked to a posting whose stored
+  `keywords` is thin, backfills it (`job_postings.keywords` is set to
+  `[]` at discovery time and never populated otherwise — found while
+  building this) — never for a standalone/unlinked JD, so a one-off paste
+  can't pollute keyword data other career features read. Registered tools
+  `analyze_jd` / `explain_jd_match` (both `risk: read` — the JD/resume
+  match itself is a query, not a write; any reorder/edit stays out of
+  scope per the adapted brief). Two extraction-quality bugs found live
+  and fixed in the SHARED extractor (benefiting the ATS estimate and
+  `_skill_gaps`'s deterministic fallback too): a sentence-final period
+  stuck to the last word of a token ("Kubernetes." never matched
+  "Kubernetes"), and `_SKILL_STOPWORDS` was too small for single-document
+  extraction (ordinary prose words like "hiring"/"you"/"required"
+  outranked real skill terms when scoring ONE document instead of many
+  postings' aggregate frequency).
+
 ```
 GET/PUT           /api/career/profile
 PATCH             /api/career/goal                       # ladder roles (Part 5F)
@@ -1449,6 +1488,8 @@ GET               /api/career/interviews/patterns              # Phase F
 GET               /api/career/companies?city=&confidence=&is_target=  # Company Discovery
 PATCH             /api/career/companies/{id}/target
 GET               /api/career/companies/{id}/postings
+POST              /api/career/jd/analyze                 # JD Match Advisor
+GET               /api/career/jd/analyses[/{id}]          # history
 ```
 
 ## Life Autopilot

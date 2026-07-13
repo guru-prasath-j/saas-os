@@ -452,3 +452,48 @@ def apply_to_career_posting(posting_id: str, force: bool = False,
         return result
     finally:
         cdb.close()
+
+
+# ---------------------------------------------------------------------------
+# JD Match Advisor — paste a JD, get a grounded match report against the
+# saved resume. See amy/jd_match.py's module docstring for the scope note
+# (adapted from a resume-versioning brief this codebase never built).
+# ---------------------------------------------------------------------------
+
+class JdAnalyzeBody(BaseModel):
+    jd_text: str
+    job_posting_id: str | None = None
+
+
+@router.post("/api/career/jd/analyze")
+def analyze_jd_route(body: JdAnalyzeBody, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...jd_match import analyze_jd
+        result = analyze_jd(ctx, body.jd_text, job_posting_id=body.job_posting_id)
+        if "error" in result:
+            raise HTTPException(status_code=400, detail=result["error"])
+        return result
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/jd/analyses")
+def list_jd_analyses(limit: int = 20, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        return {"analyses": ctx.store.list_jd_analyses(user.id, limit=limit)}
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/jd/analyses/{analysis_id}")
+def get_jd_analysis(analysis_id: str, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        a = ctx.store.get_jd_analysis(user.id, analysis_id)
+        if a is None:
+            raise HTTPException(status_code=404, detail="analysis not found")
+        return a
+    finally:
+        cdb.close()

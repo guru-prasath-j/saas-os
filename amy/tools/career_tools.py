@@ -346,6 +346,34 @@ def _t_resume_performance(ctx, args):
     return resume_performance(ctx)
 
 
+@register_tool("analyze_jd",
+               "Paste a job description and get a grounded match report "
+               "against the user's saved resume: overall match score, "
+               "which JD requirements are literally covered vs missing, "
+               "and literal-string ATS keyword gaps (e.g. resume says "
+               "'K8s', JD says 'Kubernetes'). Deterministic keyword "
+               "matching only, no fabricated requirements. job_posting_id "
+               "is optional — works for a JD pasted from anywhere, not "
+               "only postings this system already discovered.",
+               _obj({"jd_text": {"type": "string"},
+                     "job_posting_id": {"type": "string"}}, ["jd_text"]),
+               RISK_READ)
+def _t_analyze_jd(ctx, args):
+    from ..jd_match import analyze_jd
+    return analyze_jd(ctx, args["jd_text"], job_posting_id=args.get("job_posting_id"))
+
+
+@register_tool("explain_jd_match",
+               "Plain-language summary of an already-computed JD analysis "
+               "by id (from analyze_jd or GET /api/career/jd/analyses). "
+               "Read-only lookup — never re-scores.",
+               _obj({"analysis_id": {"type": "string"}}, ["analysis_id"]),
+               RISK_READ)
+def _t_explain_jd_match(ctx, args):
+    from ..jd_match import explain_jd_match
+    return explain_jd_match(ctx, args["analysis_id"])
+
+
 # ===========================================================================
 # WRITE tools
 # ===========================================================================
