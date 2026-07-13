@@ -240,9 +240,19 @@ def _subscription_agent(events, ctx):
                               f"New subscription detected: {c['name']}", reasoning,
                               {"name": c["name"], "amount": c["amount"],
                                "source_event_id": ev.get("id")})
-                # propose through the registry → R3 gate parks it for approval
+                # propose through the registry → R3 gate parks it for approval.
+                # dedup_key found MISSING live: every import that still sees
+                # the same recurring charge (which it always does — the
+                # transaction never leaves history) re-proposed a FRESH
+                # approval, and each approve() inserted another row (fixed
+                # separately in FinanceEngine.add_subscription's own dedup
+                # guard) — three "YouTube Premium" approvals/rows from three
+                # Gmail syncs. Keyed on the normalized name so it survives
+                # case/whitespace drift across detections.
+                norm_name = " ".join(str(c["name"]).split()).lower()
                 ctx._extras["agent_name"] = "subscription_agent"
                 ctx._extras["agent_reasoning"] = reasoning
+                ctx._extras["agent_dedup_key"] = f"subscription_{norm_name}"
                 tools.invoke(ctx, "add_subscription",
                              {"name": c["name"], "monthly_cost": c["amount"],
                               "renewal_date": c.get("next_due")},

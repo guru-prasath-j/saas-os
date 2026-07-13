@@ -638,6 +638,27 @@ class FinanceEngine:
                          annual_cost: float = 0, renewal_date: str | None = None,
                          auto_renew: bool = True, payment_method: str = "",
                          status: str = "active") -> str:
+        """Dedup guard (found live: repeat Gmail-sync detections of the
+        same recurring charge each created a fresh row — 'YouTube Premium'
+        x3 at the same cost/renewal date): an existing ACTIVE subscription
+        whose name matches case/whitespace-insensitively is updated in
+        place (cost/renewal_date refreshed) instead of duplicated. A
+        cancelled-then-resubscribed sub (status != 'active') is not
+        matched, so a genuine new subscription after cancellation still
+        inserts a fresh row."""
+        norm = " ".join(name.split()).lower()
+        active = self.conn.execute(
+            "SELECT id, name FROM subscriptions WHERE status='active'").fetchall()
+        existing = next((r for r in active
+                         if " ".join(r["name"].split()).lower() == norm), None)
+        if existing:
+            sid = existing["id"]
+            self.conn.execute(
+                "UPDATE subscriptions SET monthly_cost=?, annual_cost=?,"
+                " renewal_date=COALESCE(?, renewal_date) WHERE id=?",
+                (monthly_cost, annual_cost, renewal_date, sid))
+            self.conn.commit()
+            return sid
         sid = _uuid()
         self.conn.execute(
             "INSERT INTO subscriptions(id,name,monthly_cost,annual_cost,"
