@@ -1,8 +1,26 @@
 """Graph store (graph.db) — cross-source nodes + typed edges, with traversal.
 
-Node types: note, email, calendar, task, goal, memory.
-Relationship types: depends_on, related_to, supports, blocks, belongs_to.
+Node types: note, email, calendar, task, goal, memory (documentation only —
+add_node does not validate against NODE_TYPES, so callers may use other
+types, e.g. the AML monitoring module's "account"/"beneficiary" nodes in
+their own separate aml_graph.db — see amy/finance/aml_engine.py — or the
+Career Intelligence Graph's "skill"/"company"/"project"/"target_role"
+nodes, which DO live in this SHARED graph.db, namespaced with
+skill:/company:/project:/role: id prefixes to avoid colliding with
+amy/automation/orchestrator.py's agentgoal:/agenttask: plan-graph ids —
+see amy/career_graph.py).
+Relationship types: depends_on, related_to, supports, blocks, belongs_to,
+transferred_to (added for AML circular-transfer detection), requires,
+matched_by, demonstrates, applied_to (added for the Career Intelligence
+Graph). REL_TYPES IS enforced — add_edge raises on an unknown rel.
 Plain sqlite3; per-user file.
+
+Direction note: neighbors()/traverse() are direction-agnostic (they union
+src=? and dst=? — an edge A->B and B->A look identical to them). edges()
+does preserve src/dst direction. Any caller that needs a DIRECTED
+traversal (e.g. cycle detection) must work off edges() directly rather
+than neighbors()/traverse(), which would silently produce false positives
+for "connected" being mistaken for "cyclical."
 
 Distinct from amy/knowledge/ (embeddings/retrieval for vault RAG search —
 chunking.py/embeddings.py/retrieval.py/search.py) and specifically from
@@ -18,7 +36,9 @@ import sqlite3
 from pathlib import Path
 
 NODE_TYPES = ["note", "email", "calendar", "task", "goal", "memory"]
-REL_TYPES = ["depends_on", "related_to", "supports", "blocks", "belongs_to"]
+REL_TYPES = ["depends_on", "related_to", "supports", "blocks", "belongs_to",
+            "transferred_to", "requires", "matched_by", "demonstrates",
+            "applied_to"]
 
 
 class GraphStore:

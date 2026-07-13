@@ -98,5 +98,20 @@
   "seasonal_notes": [
     { "months": [11, 12], "note": "Holiday season — discretionary spending typically rises." }
   ],
+  "loan_config": {
+    "_disclaimer": "illustrative values for a demo project, not verified against current regulation",
+    "loan_limits": {
+      "personal":  { "amount": 50000,  "currency": "USD", "basis": "max_principal" },
+      "home":      { "amount": 750000, "currency": "USD", "basis": "max_principal" },
+      "business":  { "amount": 500000, "currency": "USD", "basis": "max_principal" },
+      "auto":      { "amount": 100000, "currency": "USD", "basis": "max_principal" },
+      "education": { "amount": 200000, "currency": "USD", "basis": "max_principal" }
+    },
+    "minimum_income": { "amount": 20000, "currency": "USD", "basis": "annual" },
+    "max_debt_to_income_ratio": 0.43,
+    "late_fee_rules": { "type": "flat_fee", "amount": 35, "currency": "USD", "grace_days": 15 },
+    "interest_calculation_defaults": "simple",
+    "islamic_finance_available": false
+  },
   "disclaimer": "Figures produced from this pack are ESTIMATES for planning, not professional tax advice. The pack's rates and dates are shown (with effective dates) so you can verify them; confirm filings with a qualified professional."
 }

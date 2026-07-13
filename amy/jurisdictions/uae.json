@@ -99,5 +99,20 @@
   "seasonal_notes": [
     { "hijri_months": [9], "note": "Fasting month — food/charity spending patterns typically shift; giving rises." }
   ],
+  "loan_config": {
+    "_disclaimer": "illustrative values for a demo project, not verified against current regulation",
+    "loan_limits": {
+      "personal":  { "amount": 300000,  "currency": "AED", "basis": "max_principal" },
+      "home":      { "amount": 5000000, "currency": "AED", "basis": "max_principal" },
+      "business":  { "amount": 2000000, "currency": "AED", "basis": "max_principal" },
+      "auto":      { "amount": 500000,  "currency": "AED", "basis": "max_principal" },
+      "education": { "amount": 500000,  "currency": "AED", "basis": "max_principal" }
+    },
+    "minimum_income": { "amount": 5000, "currency": "AED", "basis": "monthly" },
+    "max_debt_to_income_ratio": 0.50,
+    "late_fee_rules": { "type": "percentage_of_overdue", "rate": 0.03, "grace_days": 5 },
+    "interest_calculation_defaults": "reducing_balance",
+    "islamic_finance_available": true
+  },
   "disclaimer": "Figures produced from this pack are ESTIMATES for planning, not professional tax or religious-obligation advice. The pack's rates, thresholds, and dates are shown (with effective dates) so you can verify them; confirm with a qualified professional."
 }

@@ -357,6 +357,106 @@ def _exec_set_budget(ctx: JobCtx, payload: dict) -> dict:
         fe.close()
 
 
+@register("fraud_review_action")
+def _exec_fraud_review_action(ctx: JobCtx, payload: dict) -> dict:
+    """Fraud Detection Module (Phase 1, amy/finance/fraud_engine.py).
+    Persists a fraud score onto its transaction (only reached for LOW/MEDIUM
+    immediately, or HIGH/CRITICAL once a human approves — see
+    fraud_engine.review_transaction's tier routing) and emits fraud.detected
+    with counts/risk_level only, never raw transaction amounts/merchant
+    beyond what the approval body already showed the human."""
+    transaction_id = payload["transaction_id"]
+    score = payload["score"]
+    fe = ctx.open_finance()
+    try:
+        fe.save_fraud_score(transaction_id, score)
+    finally:
+        fe.close()
+    try:
+        ctx.events().emit("fraud.detected", {
+            "transaction_id": transaction_id,
+            "risk_level": score.get("risk_level"),
+            "recommended_action": score.get("recommended_action"),
+            "reason_code_count": len(score.get("reason_codes") or []),
+        }, source="fraud_engine")
+    except Exception:
+        pass
+    return {"transaction_id": transaction_id, "risk_level": score.get("risk_level"),
+            "action": score.get("recommended_action")}
+
+
+@register("aml_case_escalate")
+def _exec_aml_case_escalate(ctx: JobCtx, payload: dict) -> dict:
+    """AML Monitoring Module (Phase 2, amy/finance/aml_engine.py). Only
+    reached once a human approves the tier-2 escalation request
+    (aml_engine.escalate_case always parks at tier 2, fixed — see its
+    docstring) — sets the case to 'escalated' and appends a timeline entry."""
+    case_id = payload["case_id"]
+    fe = ctx.open_finance()
+    try:
+        fe.update_aml_case_status(case_id, "escalated")
+        fe.append_aml_case_timeline(case_id, {
+            "date": _dt.date.today().isoformat(), "event": "escalated by human approval"})
+    finally:
+        fe.close()
+    return {"case_id": case_id, "status": "escalated"}
+
+
+@register("aml_case_sar_draft")
+def _exec_aml_case_sar_draft(ctx: JobCtx, payload: dict) -> dict:
+    """AML Monitoring Module (Phase 2). Only reached once a human approves
+    the tier-2 SAR draft request (aml_engine.generate_sar_draft) — builds
+    the draft text (draft/demo header baked in by build_sar_draft_text)
+    and persists it on the case. Never called automatically from a scan."""
+    from ..finance.aml_engine import build_sar_draft_text
+
+    case_id = payload["case_id"]
+    fe = ctx.open_finance()
+    try:
+        case = fe.get_aml_case(case_id)
+        if case is None:
+            raise ValueError(f"aml case {case_id!r} not found")
+        draft = build_sar_draft_text(case)
+        fe.save_aml_sar_draft(case_id, draft)
+    finally:
+        fe.close()
+    return {"case_id": case_id, "sar_draft": draft}
+
+
+@register("loan_decision")
+def _exec_loan_decision(ctx: JobCtx, payload: dict) -> dict:
+    """Loan Underwriting Module (Phase 5, amy/finance/loan_engine.py).
+    Only reached once a human approves the tier-2 loan decision
+    (loan_engine.apply_for_loan always parks at tier 2, fixed — this
+    engine proposes, it never auto-approves). Sets the application to
+    'approved' and generates its installment schedule. Rejection needs no
+    executor here — see loan_engine._reconcile()'s docstring for why."""
+    from ..finance.loan_engine import build_schedule
+
+    application_id = payload["application_id"]
+    decision = payload["decision"]
+    fe = ctx.open_finance()
+    try:
+        fe.update_loan_application_status(application_id, "approved")
+        schedule = build_schedule(
+            decision["recommended_amount"], decision["recommended_rate"],
+            decision["term_months"], decision["interest_calculation_method"],
+            structure=decision.get("financing_structure"))
+        fe.save_loan_schedule(application_id, schedule)
+    finally:
+        fe.close()
+    try:
+        ctx.events().emit("loan.approved", {
+            "application_id": application_id,
+            "recommended_amount": decision["recommended_amount"],
+            "emi": decision["emi"],
+        }, source="loan_engine")
+    except Exception:
+        pass
+    return {"application_id": application_id, "status": "approved",
+           "installments": len(schedule)}
+
+
 # ---------------------------------------------------------------------------
 # R3: agent gate — every registry write/destructive tool invoked by an agent
 # parks in the Approval Inbox instead of executing.
@@ -738,6 +838,90 @@ def _exec_propose_goal(ctx: JobCtx, payload: dict) -> dict:
         payload["title"], domain=payload.get("domain", "life"),
         target_date=payload.get("target_date"))
     return {"goal_id": gid}
+
+
+@register("career_sprint_create")
+def _exec_career_sprint_create(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Phase C: creates the week's sprint goal + its
+    milestones/tasks atomically on approval/auto-execute. Deliberately
+    domain='career_sprint', NOT 'career' — every existing "find the
+    career goal" query in this codebase (_active_career_goal, job_scout_
+    poll, portfolio_review, career_goal_stall_check) does `WHERE
+    domain='career' AND status='active' ORDER BY created_at DESC LIMIT 1`
+    expecting exactly one row; a sprint goal sharing domain='career'
+    would out-rank the real goal the moment it's created (more recent
+    created_at) and silently hijack every one of those lookups (e.g.
+    job_scout_poll would lose the real target_role). career_meta is set
+    via a direct UPDATE right after create_goal — the same two-step
+    sequence amy/automation/orchestrator.py::_run_career_template already
+    uses to tag a goal with structured metadata (create_goal itself takes
+    no career_meta arg)."""
+    import json as _json
+
+    from ..autonomous import GoalEngine
+
+    engine = GoalEngine(ctx.collab, events=ctx.events())
+    gid = engine.create_goal(payload["title"], domain="career_sprint",
+                             target_date=payload.get("target_date"))
+    ctx.collab.conn.execute(
+        "UPDATE goals SET career_meta=? WHERE id=?",
+        (_json.dumps({"sprint": True}), gid))
+    ctx.collab.conn.commit()
+    for title in payload.get("milestones") or []:
+        engine.add_milestone(gid, title)
+    for title in payload.get("tasks") or []:
+        engine.add_task(gid, title)
+    return {"goal_id": gid}
+
+
+@register("resume_version_create")
+def _exec_resume_version_create(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Phase D: persists an approved track-specific resume
+    draft as a new resume_versions row (Fernet-encrypted inside the store
+    method, same convention as career_profile.resume_text_enc). Always
+    reached via a tier-2 approval — amy/career_resume.py::generate_
+    resume_version() calls submit_action(tier=2) directly, never through
+    the tools registry, so this executor only ever runs after an explicit
+    human approval regardless of who proposed it."""
+    rid = ctx.store.create_resume_version(
+        ctx.user_id, payload["label"], payload["content"],
+        target_track=payload.get("target_track", ""),
+        source=payload.get("source", "resume_manager"))
+    return {"resume_version_id": rid}
+
+
+@register("portfolio_item_update")
+def _exec_portfolio_item_update(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Phase D: applies an approved why/bullets refresh to
+    an existing portfolio_items row — classification/matched_keywords/
+    missing are left untouched (those come from the classifier, not this
+    proposal). Never writes back to GitHub — a local suggestion only."""
+    existing = ctx.store.get_portfolio_item(ctx.user_id, payload["repo_name"])
+    if existing is None:
+        return {"updated": False, "error": f"no portfolio item {payload['repo_name']!r} on file"}
+    ctx.store.upsert_portfolio_item(
+        ctx.user_id, payload["repo_name"], existing["classification"],
+        matched_keywords=existing["matched_keywords"], missing=existing["missing"],
+        why=payload.get("why", existing.get("why", "")),
+        bullets=payload.get("bullets") or existing.get("bullets") or [],
+        target_role=existing.get("target_role", ""),
+        last_pushed_at=existing.get("last_pushed_at"))
+    return {"updated": True, "repo_name": payload["repo_name"]}
+
+
+@register("interview_log_create")
+def _exec_interview_log_create(ctx: JobCtx, payload: dict) -> dict:
+    """CAREER AUTOPILOT Phase F: persists a logged interview. Always
+    reached via a tier-1 submit_action call (amy/interview_memory.py::
+    log_interview() calls submit_action(tier=1) directly) — auto-
+    executed + notified, never a tier-2 approval: this is the user's own
+    self-report, not an external action."""
+    lid = ctx.store.create_interview_log(
+        ctx.user_id, payload.get("application_id"), payload.get("company", ""),
+        payload["round_type"], payload.get("questions") or [],
+        payload["self_assessed_outcome"], payload.get("weakness_tags") or [],
+        payload.get("notes", ""))
+    return {"interview_log_id": lid}
 
 
 @register("complete_habit_check")

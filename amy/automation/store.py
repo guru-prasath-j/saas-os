@@ -226,6 +226,55 @@ class AutomationStore:
                 PRIMARY KEY (uid, company)
             );
 
+            CREATE TABLE IF NOT EXISTS portfolio_items (
+                id                TEXT PRIMARY KEY,
+                uid               TEXT NOT NULL,
+                repo_name         TEXT NOT NULL,
+                classification    TEXT NOT NULL,
+                matched_keywords  TEXT DEFAULT '[]',
+                missing           TEXT DEFAULT '[]',
+                why               TEXT DEFAULT '',
+                bullets           TEXT DEFAULT '[]',
+                target_role       TEXT DEFAULT '',
+                last_pushed_at    TEXT,
+                updated_at        TEXT NOT NULL,
+                UNIQUE(uid, repo_name)
+            );
+
+            CREATE TABLE IF NOT EXISTS resume_versions (
+                id           TEXT PRIMARY KEY,
+                uid          TEXT NOT NULL,
+                label        TEXT NOT NULL,
+                content_enc  TEXT NOT NULL,
+                target_track TEXT DEFAULT '',
+                source       TEXT DEFAULT '',
+                created_at   TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS opportunity_signals (
+                id           TEXT PRIMARY KEY,
+                uid          TEXT NOT NULL,
+                source       TEXT NOT NULL,
+                company      TEXT DEFAULT '',
+                signal_type  TEXT NOT NULL,
+                detail       TEXT DEFAULT '{}',
+                score        REAL,
+                detected_at  TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS interview_logs (
+                id                    TEXT PRIMARY KEY,
+                uid                   TEXT NOT NULL,
+                application_id        TEXT,
+                company               TEXT DEFAULT '',
+                round_type            TEXT NOT NULL,
+                questions             TEXT DEFAULT '[]',
+                self_assessed_outcome TEXT NOT NULL,
+                weakness_tags         TEXT DEFAULT '[]',
+                notes                 TEXT DEFAULT '',
+                logged_at             TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS life_metrics (
                 uid                     TEXT NOT NULL,
                 date                    TEXT NOT NULL,
@@ -299,6 +348,10 @@ class AutomationStore:
             CREATE INDEX IF NOT EXISTS idx_appl_uid    ON applications(uid, status);
             CREATE INDEX IF NOT EXISTS idx_appl_posting ON applications(posting_id);
             CREATE INDEX IF NOT EXISTS idx_habit_links_uid ON habit_links(uid, habit_id);
+            CREATE INDEX IF NOT EXISTS idx_portfolio_uid ON portfolio_items(uid, classification);
+            CREATE INDEX IF NOT EXISTS idx_resume_versions_uid ON resume_versions(uid, target_track);
+            CREATE INDEX IF NOT EXISTS idx_opp_signals_uid ON opportunity_signals(uid, source, detected_at);
+            CREATE INDEX IF NOT EXISTS idx_interview_logs_uid ON interview_logs(uid, logged_at);
             """
         )
         self.conn.commit()
@@ -350,6 +403,16 @@ class AutomationStore:
             self.conn.commit()
         except Exception:
             pass   # column already exists
+        # CAREER AUTOPILOT Phase D: which resume_versions row (if any) was
+        # used for this application — nullable, set after the fact via
+        # set_application_resume_version(), never a join table (one
+        # application uses at most one version).
+        try:
+            self.conn.execute(
+                "ALTER TABLE applications ADD COLUMN resume_version_id TEXT")
+            self.conn.commit()
+        except Exception:
+            pass   # column already exists
         # LIFE AUTOPILOT L8: per-row sleep provenance — 'inferred' (activity-
         # gap method, L2's default) or 'device' (a health_data-shaped MCP
         # connector is registered and returned real sleep data for that day).
@@ -368,6 +431,36 @@ class AutomationStore:
             self.conn.commit()
         except Exception:
             pass   # column already exists
+        # Company Discovery + ATS Fast-Track (extends CAREER AUTOPILOT Phase
+        # E): company_intel's real PK is (uid, company) — no synthetic id.
+        # Adding one (functionally unique, not a real PK — SQLite can't
+        # cheaply ALTER a PK after the fact) so /api/career/companies/{id}
+        # routes have something to address; pre-existing rows are backfilled
+        # once below. The rest are the new discovery/ATS/LinkedIn fields.
+        for col, decl in (
+                ("id", "TEXT"),
+                ("city", "TEXT DEFAULT ''"),
+                ("matched_via", "TEXT"),
+                ("confidence", "TEXT"),
+                ("size_estimate", "TEXT DEFAULT ''"),
+                ("relevance_tags", "TEXT DEFAULT '[]'"),
+                ("ats_platform", "TEXT"),
+                ("ats_company_slug", "TEXT"),
+                ("linkedin_slug", "TEXT"),
+                ("linkedin_source", "TEXT"),
+                ("last_ats_poll_at", "TEXT"),
+                ("is_target", "INTEGER DEFAULT 0")):
+            try:
+                self.conn.execute(f"ALTER TABLE company_intel ADD COLUMN {col} {decl}")
+                self.conn.commit()
+            except Exception:
+                pass   # column already exists
+        try:
+            self.conn.execute(
+                "UPDATE company_intel SET id=lower(hex(randomblob(16))) WHERE id IS NULL")
+            self.conn.commit()
+        except Exception:
+            pass
 
     # --- global pause -------------------------------------------------------
 
@@ -1024,6 +1117,20 @@ class AutomationStore:
              1 if posting.get("is_remote") else 0, posting.get("description") or "",
              json.dumps(posting.get("keywords") or []), "discovered", _now_iso()))
         self.conn.commit()
+        # Opportunistic, free ATS-platform detection (Company Discovery
+        # extension) — every posting-discovery path in this codebase
+        # funnels through this one method, so hooking it here covers all
+        # of them (JobScoutSensor, opportunity_radar's HN scan, ...)
+        # without touching each call site individually.
+        try:
+            from ..company_discovery import detect_ats_platform
+            detected = detect_ats_platform(url)
+            if detected:
+                platform, slug = detected
+                self._upsert_ats_platform_for_company(
+                    uid, posting.get("company") or "", platform, slug)
+        except Exception:
+            pass   # best-effort — never blocks a real posting insert
         return pid, True
 
     def get_posting(self, uid: str, posting_id: str) -> dict | None:
@@ -1086,18 +1193,33 @@ class AutomationStore:
     def create_application(self, uid: str, posting_id: str, channel: str = "",
                            match_score: float | None = None,
                            ats_estimate: float | None = None,
-                           draft: str = "", note: str = "") -> str:
+                           draft: str = "", note: str = "",
+                           resume_version_id: str | None = None) -> str:
         aid = _uuid()
         now = _now_iso()
         timeline = [{"ts": now, "status": "prepared", "note": note}]
         self.conn.execute(
             "INSERT INTO applications(id,uid,posting_id,channel,status,"
-            " match_score,ats_estimate,draft,timeline,created_at,updated_at)"
-            " VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            " match_score,ats_estimate,draft,timeline,created_at,updated_at,"
+            " resume_version_id)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
             (aid, uid, posting_id, channel, "prepared", match_score,
-             ats_estimate, draft, json.dumps(timeline), now, now))
+             ats_estimate, draft, json.dumps(timeline), now, now,
+             resume_version_id))
         self.conn.commit()
         return aid
+
+    def set_application_resume_version(self, uid: str, application_id: str,
+                                       resume_version_id: str) -> bool:
+        """CAREER AUTOPILOT Phase D: attach a resume_versions row to an
+        already-created application (e.g. picked after the fact from the
+        Resume Manager) — nullable, at most one version per application,
+        no join table needed."""
+        cur = self.conn.execute(
+            "UPDATE applications SET resume_version_id=? WHERE uid=? AND id=?",
+            (resume_version_id, uid, application_id))
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def get_application(self, uid: str, application_id: str) -> dict | None:
         row = self.conn.execute(
@@ -1179,22 +1301,330 @@ class AutomationStore:
 
     def upsert_company_intel(self, uid: str, company: str, notes: str,
                              sources: list[str]) -> None:
+        # id supplied only for the INSERT branch (a fresh row) — the ON
+        # CONFLICT UPDATE never touches it, so an existing row's id (real
+        # or backfilled) is never overwritten.
         self.conn.execute(
-            "INSERT INTO company_intel(uid,company,notes,sources,cached_at)"
-            " VALUES(?,?,?,?,?)"
+            "INSERT INTO company_intel(uid,company,notes,sources,cached_at,id)"
+            " VALUES(?,?,?,?,?,?)"
             " ON CONFLICT(uid,company) DO UPDATE SET"
             "  notes=excluded.notes, sources=excluded.sources, cached_at=excluded.cached_at",
-            (uid, company, notes, json.dumps(sources), _now_iso()))
+            (uid, company, notes, json.dumps(sources), _now_iso(), _uuid()))
         self.conn.commit()
 
     def get_company_intel(self, uid: str, company: str) -> dict | None:
         row = self.conn.execute(
             "SELECT * FROM company_intel WHERE uid=? AND company=?",
             (uid, company)).fetchone()
+        return self._company_intel_row(row) if row else None
+
+    @staticmethod
+    def _company_intel_row(row) -> dict:
+        d = dict(row)
+        d["sources"] = json.loads(d.get("sources") or "[]")
+        d["relevance_tags"] = json.loads(d.get("relevance_tags") or "[]")
+        d["is_target"] = bool(d.get("is_target"))
+        return d
+
+    # --- company discovery + ATS fast-track (extends CAREER AUTOPILOT Phase E) -
+    # Distinct write paths into the SAME company_intel row, kept separate so
+    # none of them stomps fields the others own: _upsert_ats_platform_for_
+    # company (URL-derived, opportunistic — see add_posting_if_new below)
+    # only ever touches ats_platform/ats_company_slug; _upsert_company_
+    # discovery (the weekly scan) only touches city/matched_via/confidence/
+    # relevance_tags; upsert_company_intel above (career_apply.py's web-
+    # search cache) only touches notes/sources/cached_at.
+
+    def _upsert_ats_platform_for_company(self, uid: str, company: str,
+                                         platform: str, slug: str) -> None:
+        if not company:
+            return
+        self.conn.execute(
+            "INSERT INTO company_intel(uid,company,ats_platform,ats_company_slug,id)"
+            " VALUES(?,?,?,?,?)"
+            " ON CONFLICT(uid,company) DO UPDATE SET"
+            "  ats_platform=excluded.ats_platform,"
+            "  ats_company_slug=excluded.ats_company_slug",
+            (uid, company, platform, slug, _uuid()))
+        self.conn.commit()
+
+    def _upsert_linkedin_slug(self, uid: str, company: str, slug: str, source: str) -> None:
+        if not company:
+            return
+        self.conn.execute(
+            "INSERT INTO company_intel(uid,company,linkedin_slug,linkedin_source,id)"
+            " VALUES(?,?,?,?,?)"
+            " ON CONFLICT(uid,company) DO UPDATE SET"
+            "  linkedin_slug=excluded.linkedin_slug,"
+            "  linkedin_source=excluded.linkedin_source",
+            (uid, company, slug, source, _uuid()))
+        self.conn.commit()
+
+    def _upsert_company_discovery(self, uid: str, company: str, city: str = "",
+                                  matched_via: str = "keyword", confidence: str = "verify",
+                                  relevance_tags: list[str] | None = None) -> str:
+        existing = self.conn.execute(
+            "SELECT id FROM company_intel WHERE uid=? AND company=?",
+            (uid, company)).fetchone()
+        cid = (existing["id"] if existing and existing["id"] else None) or _uuid()
+        self.conn.execute(
+            "INSERT INTO company_intel(uid,company,city,matched_via,confidence,"
+            " relevance_tags,id) VALUES(?,?,?,?,?,?,?)"
+            " ON CONFLICT(uid,company) DO UPDATE SET"
+            "  city=excluded.city, matched_via=excluded.matched_via,"
+            "  confidence=excluded.confidence, relevance_tags=excluded.relevance_tags",
+            (uid, company, city, matched_via, confidence,
+             json.dumps(relevance_tags or []), cid))
+        self.conn.commit()
+        return cid
+
+    def set_company_last_ats_poll(self, uid: str, company: str, ts: str) -> None:
+        self.conn.execute(
+            "UPDATE company_intel SET last_ats_poll_at=? WHERE uid=? AND company=?",
+            (ts, uid, company))
+        self.conn.commit()
+
+    def list_ats_known_companies(self, uid: str, target_only: bool = False) -> list[dict]:
+        if target_only:
+            rows = self.conn.execute(
+                "SELECT * FROM company_intel WHERE uid=? AND ats_platform IS NOT NULL"
+                " AND is_target=1", (uid,)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM company_intel WHERE uid=? AND ats_platform IS NOT NULL",
+                (uid,)).fetchall()
+        return [self._company_intel_row(r) for r in rows]
+
+    def list_company_intel(self, uid: str, city: str | None = None,
+                           confidence: str | None = None,
+                           is_target: bool | None = None) -> list[dict]:
+        query = "SELECT * FROM company_intel WHERE uid=?"
+        params: list = [uid]
+        if city:
+            query += " AND city=?"; params.append(city)
+        if confidence:
+            query += " AND confidence=?"; params.append(confidence)
+        if is_target is not None:
+            query += " AND is_target=?"; params.append(1 if is_target else 0)
+        query += " ORDER BY cached_at DESC"
+        rows = self.conn.execute(query, params).fetchall()
+        return [self._company_intel_row(r) for r in rows]
+
+    def get_company_intel_by_id(self, uid: str, company_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM company_intel WHERE uid=? AND id=?",
+            (uid, company_id)).fetchone()
+        return self._company_intel_row(row) if row else None
+
+    def set_company_is_target(self, uid: str, company_id: str, is_target: bool) -> bool:
+        cur = self.conn.execute(
+            "UPDATE company_intel SET is_target=? WHERE uid=? AND id=?",
+            (1 if is_target else 0, uid, company_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # --- portfolio items (CAREER AUTOPILOT Phase D) ---------------------------
+    # Persists amy/agents/reactive.py::_classify_repos()'s SHOWCASE/NEEDS_WORK/
+    # NOT_RELEVANT output, keyed uid+repo_name — previously only reached a
+    # vault note as formatted text (see amy/career_graph.py's module
+    # docstring, confirmed at the time).
+
+    def upsert_portfolio_item(self, uid: str, repo_name: str, classification: str,
+                              matched_keywords: list[str] | None = None,
+                              missing: list[str] | None = None, why: str = "",
+                              bullets: list[str] | None = None,
+                              target_role: str = "",
+                              last_pushed_at: str | None = None) -> str:
+        existing = self.conn.execute(
+            "SELECT id FROM portfolio_items WHERE uid=? AND repo_name=?",
+            (uid, repo_name)).fetchone()
+        pid = existing["id"] if existing else _uuid()
+        self.conn.execute(
+            "INSERT INTO portfolio_items(id,uid,repo_name,classification,"
+            " matched_keywords,missing,why,bullets,target_role,last_pushed_at,updated_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?,?)"
+            " ON CONFLICT(uid,repo_name) DO UPDATE SET"
+            "  classification=excluded.classification,"
+            "  matched_keywords=excluded.matched_keywords, missing=excluded.missing,"
+            "  why=excluded.why, bullets=excluded.bullets,"
+            "  target_role=excluded.target_role, last_pushed_at=excluded.last_pushed_at,"
+            "  updated_at=excluded.updated_at",
+            (pid, uid, repo_name, classification, json.dumps(matched_keywords or []),
+             json.dumps(missing or []), why, json.dumps(bullets or []), target_role,
+             last_pushed_at, _now_iso()))
+        self.conn.commit()
+        return pid
+
+    def get_portfolio_item(self, uid: str, repo_name: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM portfolio_items WHERE uid=? AND repo_name=?",
+            (uid, repo_name)).fetchone()
+        if not row:
+            return None
+        return self._portfolio_item_row(row)
+
+    def list_portfolio_items(self, uid: str, classification: str | None = None) -> list[dict]:
+        if classification:
+            rows = self.conn.execute(
+                "SELECT * FROM portfolio_items WHERE uid=? AND classification=?"
+                " ORDER BY updated_at DESC", (uid, classification)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM portfolio_items WHERE uid=? ORDER BY updated_at DESC",
+                (uid,)).fetchall()
+        return [self._portfolio_item_row(r) for r in rows]
+
+    @staticmethod
+    def _portfolio_item_row(row) -> dict:
+        d = dict(row)
+        d["matched_keywords"] = json.loads(d["matched_keywords"] or "[]")
+        d["missing"] = json.loads(d["missing"] or "[]")
+        d["bullets"] = json.loads(d["bullets"] or "[]")
+        return d
+
+    # --- resume versions (CAREER AUTOPILOT Phase D) ---------------------------
+    # content_enc is Fernet-encrypted the same way career_profile.resume_
+    # text_enc already is — a resume is sensitive, same class as GSTIN/PAN.
+
+    def create_resume_version(self, uid: str, label: str, content: str,
+                              target_track: str = "", source: str = "") -> str:
+        from ..saas.security import encrypt_secret
+        rid = _uuid()
+        self.conn.execute(
+            "INSERT INTO resume_versions(id,uid,label,content_enc,target_track,"
+            " source,created_at) VALUES(?,?,?,?,?,?,?)",
+            (rid, uid, label, encrypt_secret(content), target_track, source, _now_iso()))
+        self.conn.commit()
+        return rid
+
+    def list_resume_versions(self, uid: str) -> list[dict]:
+        """Metadata only — id/label/target_track/created_at/char count. NEVER
+        decrypts content_enc here: matches get_career_profile's own "never
+        return raw resume text over the wire" rule (amy/saas/routers/
+        career.py::get_career_profile pops resume_text before responding)."""
+        from ..saas.security import decrypt_secret
+        rows = self.conn.execute(
+            "SELECT * FROM resume_versions WHERE uid=? ORDER BY created_at DESC",
+            (uid,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            try:
+                chars = len(decrypt_secret(d.pop("content_enc")))
+            except Exception:
+                chars = 0
+                d.pop("content_enc", None)
+            d["chars"] = chars
+            out.append(d)
+        return out
+
+    def get_resume_version_content(self, uid: str, version_id: str) -> str | None:
+        """Decrypted content — internal use only (e.g. drafting an
+        application from a specific version), never exposed via a list
+        route."""
+        from ..saas.security import decrypt_secret
+        row = self.conn.execute(
+            "SELECT content_enc FROM resume_versions WHERE uid=? AND id=?",
+            (uid, version_id)).fetchone()
+        if not row:
+            return None
+        try:
+            return decrypt_secret(row["content_enc"])
+        except Exception:
+            return None
+
+    # --- opportunity signals (CAREER AUTOPILOT Phase E) ------------------------
+    # Company-level hiring signals that aren't a specific job posting (GitHub
+    # org activity, Product Hunt launches, ...) — a specific posting (HN
+    # "Who is Hiring" comments) reuses job_postings instead, see amy/
+    # opportunity_radar.py's module docstring.
+
+    def create_opportunity_signal(self, uid: str, source: str, company: str,
+                                  signal_type: str, detail: dict,
+                                  score: float | None) -> str:
+        sid = _uuid()
+        self.conn.execute(
+            "INSERT INTO opportunity_signals(id,uid,source,company,signal_type,"
+            " detail,score,detected_at) VALUES(?,?,?,?,?,?,?,?)",
+            (sid, uid, source, company, signal_type, json.dumps(detail or {}),
+             score, _now_iso()))
+        self.conn.commit()
+        return sid
+
+    def get_opportunity_signal(self, uid: str, signal_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM opportunity_signals WHERE uid=? AND id=?",
+            (uid, signal_id)).fetchone()
         if not row:
             return None
         d = dict(row)
-        d["sources"] = json.loads(d["sources"] or "[]")
+        d["detail"] = json.loads(d["detail"] or "{}")
+        return d
+
+    def list_opportunity_signals(self, uid: str, source: str | None = None) -> list[dict]:
+        if source:
+            rows = self.conn.execute(
+                "SELECT * FROM opportunity_signals WHERE uid=? AND source=?"
+                " ORDER BY detected_at DESC", (uid, source)).fetchall()
+        else:
+            rows = self.conn.execute(
+                "SELECT * FROM opportunity_signals WHERE uid=? ORDER BY detected_at DESC",
+                (uid,)).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["detail"] = json.loads(d["detail"] or "{}")
+            out.append(d)
+        return out
+
+    # --- interview logs (CAREER AUTOPILOT Phase F) -----------------------------
+    # Manually-logged journal, not passive detection — every field traces to
+    # what the user reported (directly or via the LLM-assisted chat path,
+    # which only reorganizes, never invents). application_id is nullable —
+    # an interview not yet tracked as a formal application (a referral chat,
+    # an early informational round) still gets a company-only row.
+
+    _ROUND_TYPES = ("phone_screen", "technical", "system_design", "behavioral",
+                    "onsite", "other")
+    _OUTCOMES = ("strong", "ok", "weak")
+
+    def create_interview_log(self, uid: str, application_id: str | None, company: str,
+                             round_type: str, questions: list[str],
+                             self_assessed_outcome: str, weakness_tags: list[str],
+                             notes: str) -> str:
+        if round_type not in self._ROUND_TYPES:
+            raise ValueError(f"unknown round_type {round_type!r}")
+        if self_assessed_outcome not in self._OUTCOMES:
+            raise ValueError(f"unknown self_assessed_outcome {self_assessed_outcome!r}")
+        lid = _uuid()
+        self.conn.execute(
+            "INSERT INTO interview_logs(id,uid,application_id,company,round_type,"
+            " questions,self_assessed_outcome,weakness_tags,notes,logged_at)"
+            " VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (lid, uid, application_id, company, round_type, json.dumps(questions or []),
+             self_assessed_outcome, json.dumps(weakness_tags or []), notes, _now_iso()))
+        self.conn.commit()
+        return lid
+
+    def get_interview_log(self, uid: str, log_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM interview_logs WHERE uid=? AND id=?",
+            (uid, log_id)).fetchone()
+        if not row:
+            return None
+        return self._interview_log_row(row)
+
+    def list_interview_logs(self, uid: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM interview_logs WHERE uid=? ORDER BY logged_at DESC",
+            (uid,)).fetchall()
+        return [self._interview_log_row(r) for r in rows]
+
+    @staticmethod
+    def _interview_log_row(row) -> dict:
+        d = dict(row)
+        d["questions"] = json.loads(d["questions"] or "[]")
+        d["weakness_tags"] = json.loads(d["weakness_tags"] or "[]")
         return d
 
 

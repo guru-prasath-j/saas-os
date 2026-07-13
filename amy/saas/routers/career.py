@@ -33,6 +33,30 @@ class CareerProfileBody(BaseModel):
 class ApplicationStatusBody(BaseModel):
     status: str
     note: str = ""
+    resume_version_id: str | None = None   # Phase D — optional, attach after the fact
+
+
+class PortfolioItemRefreshBody(BaseModel):
+    repo_name: str
+
+
+class ResumeVersionBody(BaseModel):
+    target_track: str
+    label: str | None = None
+
+
+class InterviewLogBody(BaseModel):
+    application_id: str | None = None
+    company: str = ""
+    round_type: str = "other"
+    questions: list[str] | None = None
+    self_assessed_outcome: str = "ok"
+    weakness_tags: list[str] | None = None
+    notes: str = ""
+
+
+class CompanyTargetBody(BaseModel):
+    is_target: bool
 
 
 class CareerLadderBody(BaseModel):
@@ -165,6 +189,9 @@ def update_career_application(application_id: str, body: ApplicationStatusBody,
             raise HTTPException(status_code=400, detail=str(exc))
         if not ok:
             raise HTTPException(status_code=404, detail="application not found")
+        if body.resume_version_id:
+            ctx.store.set_application_resume_version(
+                user.id, application_id, body.resume_version_id)
         try:
             from ...events.store import CAREER_APPLICATION_STATUS_CHANGED
             ctx.events().emit(CAREER_APPLICATION_STATUS_CHANGED,
@@ -177,12 +204,226 @@ def update_career_application(application_id: str, body: ApplicationStatusBody,
         cdb.close()
 
 
+@router.get("/api/career/skill-demand")
+def get_career_skill_demand(track: str | None = None, propose: bool = True,
+                            user: User = Depends(current_user)):
+    """CAREER AUTOPILOT Phase A — market-demand report over job_postings.
+    keywords. Has side effects like GET /api/career/portfolio below (may
+    propose Learning Feed focuses for frequently-demanded missing
+    skills, tier-2 by default) — same established precedent in this
+    router, set propose=false to compute without proposing."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...career_scout import skill_demand_report, skill_demand_reports
+        if track:
+            return skill_demand_report(ctx, track, propose=propose)
+        return {"tracks": skill_demand_reports(ctx, propose=propose)}
+    finally:
+        cdb.close()
+
+
 @router.get("/api/career/portfolio")
 def get_career_portfolio(user: User = Depends(current_user)):
     cdb, ctx = _ctx(user)
     try:
         from ...agents.reactive import portfolio_analyze
         return portfolio_analyze(ctx.events(), ctx)
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/sprint/current")
+def get_current_sprint(user: User = Depends(current_user)):
+    """CAREER AUTOPILOT Phase C: the most-recently generated weekly
+    sprint goal (domain='career_sprint' — deliberately NOT 'career', see
+    amy/career_sprint.py's module docstring), with milestones/tasks +
+    computed progress — same shape _active_career_goal above returns for
+    the main career goal."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...career_sprint import _latest_sprint_goal
+        from ...autonomous import GoalEngine
+        sprint = _latest_sprint_goal(ctx)
+        if sprint is None:
+            return {"sprint": None}
+        engine = GoalEngine(ctx.collab)
+        milestones = [dict(r) for r in ctx.collab.conn.execute(
+            "SELECT id,title,done FROM milestones WHERE goal_id=?",
+            (sprint["id"],)).fetchall()]
+        return {"sprint": {
+            **sprint,
+            "milestones": milestones,
+            "tasks": engine.list_tasks(sprint["id"]),
+            "progress": engine.progress(sprint["id"]),
+        }}
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/sprint/history")
+def get_sprint_history(limit: int = 12, user: User = Depends(current_user)):
+    """Past sprint goals (target_date already passed), most recent first."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        rows = ctx.collab.conn.execute(
+            "SELECT * FROM goals WHERE domain='career_sprint'"
+            " AND target_date IS NOT NULL AND target_date < ? ORDER BY created_at DESC"
+            " LIMIT ?", (today, limit)).fetchall()
+        return {"sprints": [dict(r) for r in rows]}
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/portfolio/items")
+def list_portfolio_items(classification: str | None = None,
+                         user: User = Depends(current_user)):
+    """CAREER AUTOPILOT Phase D: persisted SHOWCASE/NEEDS_WORK/NOT_RELEVANT
+    classification (amy/career_portfolio.py) — previously only reached a
+    vault note as formatted text."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        return {"items": ctx.store.list_portfolio_items(user.id, classification=classification)}
+    finally:
+        cdb.close()
+
+
+@router.post("/api/career/portfolio/items")
+def refresh_portfolio_item(body: PortfolioItemRefreshBody, user: User = Depends(current_user)):
+    """Manual on-demand refresh for one repo — same 'manual button, has
+    side effects' precedent as GET /api/career/portfolio above. Always
+    proposes (tier 2), never applies immediately."""
+    cdb, ctx = _ctx(user)
+    try:
+        from ...career_portfolio import propose_portfolio_update
+        item = ctx.store.get_portfolio_item(user.id, body.repo_name)
+        if item is None:
+            raise HTTPException(status_code=404,
+                                detail=f"no portfolio item {body.repo_name!r} on file — "
+                                       "run a portfolio analysis first")
+        return propose_portfolio_update(ctx, body.repo_name, item.get("why", ""),
+                                        item.get("bullets") or [], source="manual_refresh")
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/resume/versions")
+def list_resume_versions(user: User = Depends(current_user)):
+    """Metadata only — id/label/target_track/created_at/char count, never
+    the decrypted content (same 'never return raw resume text over the
+    wire' rule get_career_profile above already follows)."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        return {"versions": ctx.store.list_resume_versions(user.id)}
+    finally:
+        cdb.close()
+
+
+@router.post("/api/career/resume/versions")
+def create_resume_version(body: ResumeVersionBody, user: User = Depends(current_user)):
+    """Generates a track-specific resume draft and ALWAYS proposes it
+    (tier 2) — never auto-saved, regardless of who called this route."""
+    cdb, ctx = _ctx(user)
+    try:
+        from ...career_resume import generate_resume_version
+        return generate_resume_version(ctx, body.target_track, label=body.label)
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/resume/performance")
+def get_resume_performance(user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...career_resume import resume_performance
+        return resume_performance(ctx)
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/opportunities")
+def list_career_opportunities(source: str | None = None, user: User = Depends(current_user)):
+    """CAREER AUTOPILOT Phase E: discovered hiring signals (HN 'Who's
+    Hiring' + GitHub org activity/Product Hunt/Reddit) — stored score/
+    reasons only, never recomputed here."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...opportunity_radar import list_opportunities
+        return {"opportunities": list_opportunities(ctx, source=source)}
+    finally:
+        cdb.close()
+
+
+@router.post("/api/career/interviews")
+def log_career_interview(body: InterviewLogBody, user: User = Depends(current_user)):
+    """CAREER AUTOPILOT Phase F: log an interview — a manual journal
+    entry, not a detection system. Auto-executed + notified (tier 1,
+    fixed internally regardless of caller)."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...interview_memory import log_interview
+        result = log_interview(
+            ctx, application_id=body.application_id, company=body.company,
+            round_type=body.round_type, questions=body.questions,
+            self_assessed_outcome=body.self_assessed_outcome,
+            weakness_tags=body.weakness_tags, notes=body.notes)
+        if "error" in result:
+            raise HTTPException(status_code=404, detail=result["error"])
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/interviews/patterns")
+def get_interview_patterns(user: User = Depends(current_user)):
+    """CAREER AUTOPILOT Phase F: retrospective pattern analysis over
+    logged interviews — never a forecast."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...interview_memory import interview_patterns
+        return interview_patterns(ctx)
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/companies")
+def list_career_companies(city: str | None = None, confidence: str | None = None,
+                          is_target: bool | None = None, user: User = Depends(current_user)):
+    """Company Discovery extension: free-sources-only ATS/Himalayas/
+    TheirStack/GitHub fan-out results."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...company_discovery import list_companies
+        return {"companies": list_companies(ctx, city=city, confidence=confidence,
+                                            is_target=is_target)}
+    finally:
+        cdb.close()
+
+
+@router.patch("/api/career/companies/{company_id}/target")
+def set_career_company_target(company_id: str, body: CompanyTargetBody,
+                              user: User = Depends(current_user)):
+    """Toggle whether a discovered company is fast-tracked by the hourly
+    ats_fast_poll job."""
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...company_discovery import set_company_target
+        if not set_company_target(ctx, company_id, body.is_target):
+            raise HTTPException(status_code=404, detail="company not found")
+        return {"ok": True}
+    finally:
+        cdb.close()
+
+
+@router.get("/api/career/companies/{company_id}/postings")
+def get_career_company_postings(company_id: str, user: User = Depends(current_user)):
+    cdb, ctx = _ctx(user, with_llm=False)
+    try:
+        from ...company_discovery import company_postings
+        return {"postings": company_postings(ctx, company_id)}
     finally:
         cdb.close()
 

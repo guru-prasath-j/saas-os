@@ -506,6 +506,17 @@ def _t_add_task(ctx, args):
     return {"id": GoalEngine(ctx.collab).add_task(args["goal_id"], args["title"])}
 
 
+@register_tool("create_learning_focus",
+               "Create a new learning focus (optionally goal-linked) — "
+               "tracks a topic through the Learning Feed.",
+               _obj({"topic": {"type": "string"},
+                     "goal_id": {"type": "string"}}, ["topic"]), RISK_WRITE)
+def _t_create_learning_focus(ctx, args):
+    from ..learning_feed.sensor import add_focus
+    fid = add_focus(ctx.collab.conn, ctx.user_id, args["topic"], goal_id=args.get("goal_id"))
+    return {"id": fid}
+
+
 @register_tool("approve_action",
                "Approve and execute a pending Approval Inbox item. "
                "Only a human actor may call this.",

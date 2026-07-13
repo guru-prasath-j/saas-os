@@ -69,6 +69,23 @@ def jurisdiction_deadlines(days: int = 90, user: User = Depends(current_user)):
             "deadlines": out, "disclaimers": disclaimers}
 
 
+@router.get("/api/jurisdictions/{pack_id}/loan-config")
+def jurisdiction_loan_config(pack_id: str, user: User = Depends(current_user)):
+    """Phase 4 (Loan Underwriting prep) — thin wrapper over the pack's
+    loan_config section. 404s honestly if the pack has none rather than
+    returning an empty/fabricated config."""
+    from ...jurisdictions import load_pack, loan_config, PackError
+    try:
+        pack = load_pack(pack_id.lower())
+    except PackError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    cfg = loan_config(pack)
+    if cfg is None:
+        raise HTTPException(status_code=404,
+                            detail=f"pack {pack_id!r} has no loan_config section")
+    return cfg
+
+
 @router.get("/api/jurisdictions/{pack_id}")
 def jurisdiction_pack(pack_id: str, user: User = Depends(current_user)):
     from ...jurisdictions import load_pack, PackError

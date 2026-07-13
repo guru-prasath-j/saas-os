@@ -97,6 +97,16 @@ def _job_scout_poll(ctx: JobCtx) -> dict:
     return job_scout_poll(ctx)
 
 
+def _opportunity_radar_scan(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Phase E: drives OpportunityRadarSensor on the SAME
+    interval as job_scout_poll (AMY_JOB_SCOUT_INTERVAL_HOURS — reused
+    config, not a new env var, per the phase's own explicit instruction)
+    — no-ops cleanly when there is no active career goal/target_role
+    (same guard as JobScoutSensor.poll)."""
+    from ..opportunity_radar import scan_opportunities
+    return scan_opportunities(ctx)
+
+
 def _application_followup_check(ctx: JobCtx) -> dict:
     """CAREER AUTOPILOT Part 5: staleness follow-up + ghosting, every 2 days."""
     from ..career_apply import followup_check
@@ -238,6 +248,102 @@ def _life_inference_scan(ctx: JobCtx) -> dict:
     return out
 
 
+def _credit_score_recompute(ctx: JobCtx) -> dict:
+    """Amy Credit Score Module (Phase 3): recomputes the illustrative
+    internal score weekly. Scheduled daily_at (this codebase's
+    compute_next_run has no native weekly schedule type — same idiom as
+    _life_wellbeing_weekly below) but no-ops on every day except Monday:
+    credit-worthiness-shaped factors (payment reliability, cashflow trend,
+    debt ratio, investment profile, ...) don't meaningfully change day to
+    day for a personal-finance app, and a daily recompute would just spam
+    credit_scores with near-identical history rows."""
+    import datetime as _dt
+
+    if _dt.date.today().weekday() != 0:
+        return {"skipped": "not_monday"}
+    from ..finance.credit_engine import record_score
+    result = record_score(ctx)
+    return {"score": result["score"], "id": result["id"]}
+
+
+def _career_graph_rebuild(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Phase B: rebuilds the Career Intelligence Graph
+    weekly (same daily_at + Monday-only no-op idiom as
+    _credit_score_recompute/_life_wellbeing_weekly above). Skill/company/
+    project relationships don't meaningfully shift day to day, and this
+    includes a live GitHub portfolio call — no reason to run it daily."""
+    import datetime as _dt
+
+    if _dt.date.today().weekday() != 0:
+        return {"skipped": "not_monday"}
+    from ..career_graph import rebuild_career_graph
+    return rebuild_career_graph(ctx)
+
+
+def _portfolio_activity_scan(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Phase D: re-checks persisted portfolio_items
+    against live GitHub pushed_at timestamps (same connector_sensor_seen
+    cursor idiom GitHubSensor uses), proposing a targeted refresh only on
+    real new activity. No-ops cleanly without a GitHub connector or any
+    persisted portfolio items yet."""
+    from ..career_portfolio import scan_github_activity
+    return scan_github_activity(ctx)
+
+
+def _course_completion_scan(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Phase D: proposes a resume bullet only for a
+    completed learning_feed_item whose focus topic closes a CURRENT
+    skill gap (Phase B) — not every completion."""
+    from ..career_resume import scan_course_completions
+    return scan_course_completions(ctx)
+
+
+def _ats_fast_poll(ctx: JobCtx) -> dict:
+    """Company Discovery extension: hourly direct Greenhouse/Lever/Ashby
+    poll, scoped to company_intel rows with ats_platform set AND is_
+    target=1 — the user's own curated targets, not every company ever
+    seen. No-ops honestly with none set."""
+    from ..company_discovery import ats_fast_poll
+    return ats_fast_poll(ctx)
+
+
+def _company_discovery_scan(ctx: JobCtx) -> dict:
+    """Company Discovery extension: weekly free-sources-only fan-out
+    (broader ATS refresh + Himalayas/TheirStack + GitHub) — Monday-only
+    no-op inside a daily_at job, same idiom as career_graph_rebuild/
+    career_sprint_generate above (no native weekly schedule type)."""
+    import datetime as _dt
+
+    if _dt.date.today().weekday() != 0:
+        return {"skipped": "not_monday"}
+    from ..company_discovery import company_discovery_scan
+    return company_discovery_scan(ctx)
+
+
+def _career_sprint_generate(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Phase C: Monday sprint generation — no native
+    weekly schedule type exists (same daily_at + self-filter idiom as
+    _career_graph_rebuild/_credit_score_recompute above), scheduled
+    daily_at and no-oping on every day except Monday."""
+    import datetime as _dt
+
+    if _dt.date.today().weekday() != 0:
+        return {"skipped": "not_monday"}
+    from ..career_sprint import generate_sprint
+    return generate_sprint(ctx)
+
+
+def _career_sprint_review(ctx: JobCtx) -> dict:
+    """CAREER AUTOPILOT Phase C: Sunday sprint review — same daily_at +
+    self-filter idiom, no-oping on every day except Sunday."""
+    import datetime as _dt
+
+    if _dt.date.today().weekday() != 6:
+        return {"skipped": "not_sunday"}
+    from ..career_sprint import review_sprint
+    return review_sprint(ctx)
+
+
 def _life_wellbeing_weekly(ctx: JobCtx) -> dict:
     """LIFE AUTOPILOT L5: computes last week's wellbeing_weekly row every
     Monday. No dedicated per-agent kill switch exists for this part (not
@@ -322,7 +428,16 @@ HANDLERS: dict[str, callable] = {
     "life_metrics_daily": _life_metrics_daily,
     "life_inference_scan": _life_inference_scan,
     "life_wellbeing_weekly": _life_wellbeing_weekly,
+    "credit_score_recompute": _credit_score_recompute,
+    "career_graph_rebuild": _career_graph_rebuild,
     "life_review_monthly": _life_review_monthly,
+    "career_sprint_generate": _career_sprint_generate,
+    "career_sprint_review": _career_sprint_review,
+    "portfolio_activity_scan": _portfolio_activity_scan,
+    "course_completion_scan": _course_completion_scan,
+    "opportunity_radar_scan": _opportunity_radar_scan,
+    "ats_fast_poll": _ats_fast_poll,
+    "company_discovery_scan": _company_discovery_scan,
 }
 
 def _default_jobs() -> list[tuple[str, dict]]:
@@ -371,6 +486,15 @@ def _default_jobs() -> list[tuple[str, dict]]:
         ("life_inference_scan",    {"daily_at": "10:00"}),
         ("life_wellbeing_weekly",  {"daily_at": "07:15"}),
         ("life_review_monthly",   {"monthly_day": 1, "at": "06:30"}),
+        ("credit_score_recompute", {"daily_at": "06:50"}),
+        ("career_graph_rebuild",   {"daily_at": "05:40"}),
+        ("career_sprint_generate", {"daily_at": "07:30"}),
+        ("career_sprint_review",   {"daily_at": "20:00"}),
+        ("portfolio_activity_scan", {"every_hours": 12}),
+        ("course_completion_scan", {"every_hours": 6}),
+        ("opportunity_radar_scan", {"every_hours": job_scout_interval_hours}),
+        ("ats_fast_poll",          {"every_hours": 1}),
+        ("company_discovery_scan", {"daily_at": "05:20"}),
     ]
     # Env-gated: the handler re-checks the flag too, because job rows persist
     # in automation_jobs after the env is turned off (ensure_job never deletes).

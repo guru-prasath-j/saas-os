@@ -119,6 +119,8 @@
 
   /* finance overview — KPI grid + two-column body */
   .fin-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:16px}
+  /* risk dashboard — recent-item lists with an inline explain toggle */
+  .risk-list{display:flex;flex-direction:column;gap:6px;margin-top:8px}
   .kpi{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(255,255,255,.02));border:1px solid var(--border);border-radius:var(--r);padding:13px 15px 12px;overflow:hidden}
   .kpi::before{content:"";position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:0 3px 3px 0;background:var(--kpi-accent,var(--border-2));opacity:.9}
   .kpi-label{font-family:var(--display);font-size:10.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
@@ -304,6 +306,9 @@
       <button data-tab="business">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="3" y1="13" x2="21" y2="13"/></svg>
         <span class="label">Business Entities</span></button>
+      <button data-tab="risk">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 2 3 6v6c0 5.5 3.8 9.7 9 11 5.2-1.3 9-5.5 9-11V6z" stroke-linejoin="round"/><line x1="12" y1="8" x2="12" y2="13" stroke-linecap="round"/><circle cx="12" cy="16" r="1" fill="currentColor"/></svg>
+        <span class="label">Risk &amp; Compliance</span></button>
 
       <!-- ── GROWTH ── -->
       <div class="nav-sector">Growth</div>
@@ -1461,6 +1466,31 @@
         </div>
       </div>
 
+      <!-- TAB: RISK & COMPLIANCE (Phase 6 — read-only aggregation over the
+           Fraud/AML/Credit Score/Loan Underwriting demo modules; every
+           number here is illustrative/simulated, never real regulatory or
+           bureau output — see CLAUDE.md's Banking Risk Intelligence entries) -->
+      <div class="tab hidden" id="tab-risk">
+        <div class="card" style="padding:14px 18px">
+          <h3 style="margin:0">Risk &amp; Compliance</h3>
+          <span class="faint" style="font-size:12px">Illustrative demo aggregation over the Fraud/AML/Credit Score/Loan Underwriting modules — not real regulatory, bureau, or lending output.</span>
+        </div>
+        <div id="riskKpis" class="fin-kpis"><span class="faint">Loading…</span></div>
+
+        <div class="card">
+          <b>Recently flagged transactions (Fraud)</b>
+          <div id="riskFraudList" class="risk-list"></div>
+        </div>
+        <div class="card">
+          <b>Recent AML cases</b>
+          <div id="riskAmlList" class="risk-list"></div>
+        </div>
+        <div class="card">
+          <b>Recent loan applications</b>
+          <div id="riskLoanList" class="risk-list"></div>
+        </div>
+      </div>
+
       <!-- TAB: CONNECTORS -->
       <div class="tab hidden" id="tab-connectors">
         <div class="card">
@@ -1958,6 +1988,7 @@ document.getElementById('nav').addEventListener('click', e=>{
   if(tab==='custodial') loadCustodialAccountPicker();
   if(tab==='budget'){ loadFinBudgets(); loadBudgetSuggestions(); }
   if(tab==='business') loadBizEntities();
+  if(tab==='risk') loadRiskDashboard();
   if(tab==='reflect') loadReflect();
   if(tab==='learn'){ loadLearn(); loadFocuses(); loadLearningFeed(); }
   if(tab==='agents') loadAgents();
@@ -5927,6 +5958,81 @@ async function loadBizEntities(){
         <button class="ghost sm" onclick="event.stopPropagation();deleteBizEntity('${e.id}','${e.name.replace(/'/g,"\\'")}')" style="color:var(--danger);padding:4px 8px" title="Remove business">✕</button>
       </div>`).join('');
   }catch(e){el.innerHTML='<p class="muted">'+e.message+'</p>';}
+}
+
+// ---- Risk & Compliance dashboard (Phase 6) — read-only aggregation over
+// the Fraud/AML/Credit Score/Loan Underwriting demo modules. Every number
+// comes straight from /api/risk/dashboard/executive; nothing is invented
+// client-side.
+async function loadRiskDashboard(){
+  const kpiEl=document.getElementById('riskKpis');
+  kpiEl.innerHTML='<span class="faint">Loading…</span>';
+  try{
+    const d=await jget('/api/risk/dashboard/executive');
+    const kpi=(label,value,accent,sub='')=>`
+      <div class="kpi" style="--kpi-accent:${accent}">
+        <div class="kpi-label">${label}</div>
+        <div class="kpi-value">${value}</div>
+        ${sub?`<div class="kpi-sub">${sub}</div>`:''}
+      </div>`;
+    const fraudRate=d.fraud.fraud_rate!=null?(d.fraud.fraud_rate*100).toFixed(1)+'%':'—';
+    const creditScore=d.credit.latest?String(d.credit.latest.score):'—';
+    const creditSub=d.credit.latest?('internal signal'+(d.credit.trend?', '+d.credit.trend:'')):'not computed yet';
+    const approvalRate=d.loans.approval_rate!=null?(d.loans.approval_rate*100).toFixed(0)+'%':'—';
+    kpiEl.innerHTML=
+      kpi('Fraud rate', fraudRate, 'var(--danger)', d.fraud.blocked_count+' blocked')+
+      kpi('AML cases open', String(d.aml.open_or_escalated), 'var(--warn)', d.aml.total_cases+' total')+
+      kpi('Amy Score', creditScore, 'var(--cyan)', creditSub)+
+      kpi('Loan approval rate', approvalRate, 'var(--success)', d.loans.total_applications+' application'+(d.loans.total_applications===1?'':'s'));
+
+    const renderList=(elId,items,rowFn)=>{
+      const el=document.getElementById(elId);
+      if(!items.length){el.innerHTML='<p class="muted" style="font-size:13px">None yet.</p>';return;}
+      el.innerHTML=items.map(rowFn).join('');
+    };
+    const esc=s=>String(s==null?'':s).replace(/</g,'&lt;');
+    renderList('riskFraudList', d.fraud.recent_flagged, t=>`
+      <div class="toggle" style="cursor:default">
+        <div style="flex:1;min-width:0"><b>${esc(t.merchant)||'(no merchant)'}</b>
+          <span class="chip">${esc(t.fraud_risk_level)}</span>
+          <span class="faint">${esc(t.date)} · ${_fmt(Math.abs(t.amount))}</span></div>
+        <button class="ghost sm" onclick="toggleRiskExplain('fraud','${t.id}')">Explain</button>
+      </div>
+      <div class="hidden" id="riskExplain-fraud-${t.id}"></div>`);
+    renderList('riskAmlList', d.aml.recent_cases, c=>`
+      <div class="toggle" style="cursor:default">
+        <div style="flex:1;min-width:0"><b>${esc(c.typology)}</b>
+          <span class="chip">${esc(c.risk_level)}</span>
+          <span class="faint">${esc(c.status)} · ${esc((c.created_at||'').slice(0,10))}</span></div>
+        <button class="ghost sm" onclick="toggleRiskExplain('aml','${c.id}')">Explain</button>
+      </div>
+      <div class="hidden" id="riskExplain-aml-${c.id}"></div>`);
+    renderList('riskLoanList', d.loans.recent_applications, a=>`
+      <div class="toggle" style="cursor:default">
+        <div style="flex:1;min-width:0"><b>${esc(a.loan_type)}</b>
+          <span class="chip">${esc(a.status)}</span>
+          <span class="faint">${esc(a.jurisdiction)} · ${_fmt(a.amount_requested)}</span></div>
+        ${a.status==='rejected'?`<button class="ghost sm" onclick="toggleRiskExplain('loan','${a.id}')">Explain</button>`:''}
+      </div>
+      <div class="hidden" id="riskExplain-loan-${a.id}"></div>`);
+  }catch(e){
+    kpiEl.innerHTML='<p class="muted">'+e.message+'</p>';
+  }
+}
+
+async function toggleRiskExplain(type,id){
+  const box=document.getElementById('riskExplain-'+type+'-'+id);
+  if(!box) return;
+  if(!box.classList.contains('hidden')){box.classList.add('hidden');return;}
+  box.classList.remove('hidden');
+  box.innerHTML='<span class="faint">Loading…</span>';
+  try{
+    const d=await jget('/api/risk/dashboard/explain?type='+encodeURIComponent(type)+'&id='+encodeURIComponent(id));
+    box.innerHTML='<pre style="white-space:pre-wrap;font-size:12px;margin:6px 0 0;padding:8px 10px;background:var(--surface);border-radius:8px">'
+      +JSON.stringify(d,null,2).replace(/</g,'&lt;')+'</pre>';
+  }catch(e){
+    box.innerHTML='<p class="muted">'+e.message+'</p>';
+  }
 }
 
 async function addBizEntity(){

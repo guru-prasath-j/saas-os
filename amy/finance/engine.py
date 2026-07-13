@@ -182,6 +182,57 @@ class FinanceEngine:
                 payload      TEXT NOT NULL,
                 computed_at  TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS aml_cases (
+                id           TEXT PRIMARY KEY,
+                created_at   TEXT NOT NULL,
+                updated_at   TEXT NOT NULL,
+                account_id   TEXT,
+                status       TEXT NOT NULL DEFAULT 'open',
+                typology     TEXT NOT NULL,
+                risk_level   TEXT NOT NULL,
+                score        REAL DEFAULT 0,
+                evidence     TEXT NOT NULL DEFAULT '[]',
+                timeline     TEXT NOT NULL DEFAULT '[]',
+                explanation  TEXT DEFAULT '',
+                sar_draft    TEXT,
+                escalated_at TEXT,
+                closed_at    TEXT
+            );
+            CREATE TABLE IF NOT EXISTS credit_scores (
+                id                       TEXT PRIMARY KEY,
+                computed_at              TEXT NOT NULL,
+                score                    INTEGER NOT NULL,
+                factors                  TEXT NOT NULL DEFAULT '{}',
+                explanation              TEXT DEFAULT '',
+                improvement_suggestions  TEXT NOT NULL DEFAULT '[]'
+            );
+            CREATE TABLE IF NOT EXISTS loan_applications (
+                id                 TEXT PRIMARY KEY,
+                created_at         TEXT NOT NULL,
+                updated_at         TEXT NOT NULL,
+                loan_type          TEXT NOT NULL,
+                jurisdiction       TEXT NOT NULL,
+                amount_requested   REAL NOT NULL,
+                term_months        INTEGER NOT NULL,
+                financing_structure TEXT,
+                status             TEXT NOT NULL DEFAULT 'pending',
+                approval_id        TEXT,
+                credit_score_used  INTEGER,
+                recommended_rate   REAL,
+                recommended_amount REAL,
+                emi                REAL,
+                decision           TEXT NOT NULL DEFAULT '{}'
+            );
+            CREATE TABLE IF NOT EXISTS loan_schedules (
+                id                   TEXT PRIMARY KEY,
+                loan_application_id  TEXT NOT NULL,
+                installment_number   INTEGER NOT NULL,
+                due_date             TEXT NOT NULL,
+                principal            REAL NOT NULL,
+                interest             REAL NOT NULL,
+                emi                  REAL NOT NULL,
+                balance              REAL NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_txn_date  ON transactions(date);
             CREATE INDEX IF NOT EXISTS idx_txn_cat   ON transactions(category);
             CREATE INDEX IF NOT EXISTS idx_sub_renew ON subscriptions(renewal_date);
@@ -191,6 +242,12 @@ class FinanceEngine:
             CREATE INDEX IF NOT EXISTS idx_compliance_entity ON compliance_suggestions(business_entity_id);
             CREATE INDEX IF NOT EXISTS idx_compliance_ledger_entry ON compliance_suggestions(ledger_entry_id);
             CREATE INDEX IF NOT EXISTS idx_rate_type_key ON rate_table(rate_type, key);
+            CREATE INDEX IF NOT EXISTS idx_aml_status ON aml_cases(status);
+            CREATE INDEX IF NOT EXISTS idx_aml_account ON aml_cases(account_id);
+            CREATE INDEX IF NOT EXISTS idx_credit_computed ON credit_scores(computed_at);
+            CREATE INDEX IF NOT EXISTS idx_loan_status ON loan_applications(status);
+            CREATE INDEX IF NOT EXISTS idx_loan_jurisdiction ON loan_applications(jurisdiction);
+            CREATE INDEX IF NOT EXISTS idx_loan_schedule_app ON loan_schedules(loan_application_id);
         """)
         self.conn.commit()
 
@@ -249,6 +306,18 @@ class FinanceEngine:
         # slabs and depreciation blocks (idempotent — only inserts missing keys).
         from .business.rates import seed_defaults as _seed_rate_defaults
         _seed_rate_defaults(self)
+        # Fraud Detection Module (Phase 1): a rule-based risk annotation per
+        # transaction. fraud_reason_codes is a JSON list; fraud_action is the
+        # recommended_action string (allow|require_mfa|hold|escalate|block|
+        # manual_review) as of the last review — see amy/finance/fraud_engine.py.
+        for col, coltype in (("fraud_score", "REAL"), ("fraud_risk_level", "TEXT"),
+                             ("fraud_reason_codes", "TEXT"), ("fraud_action", "TEXT"),
+                             ("fraud_scored_at", "TEXT")):
+            try:
+                self.conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} {coltype}")
+                self.conn.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
 
     # =========================================================================
     # Transactions
@@ -287,6 +356,261 @@ class FinanceEngine:
         c = self.conn.execute("DELETE FROM transactions WHERE id=?", (tid,))
         self.conn.commit()
         return c.rowcount > 0
+
+    def get_transaction(self, tid: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM transactions WHERE id=?", (tid,)).fetchone()
+        return dict(row) if row else None
+
+    # =========================================================================
+    # Fraud Detection Module (Phase 1) — see amy/finance/fraud_engine.py for
+    # the scoring logic. These are pure persistence helpers: they never score
+    # anything themselves, only save/read what fraud_engine already computed.
+    # =========================================================================
+
+    def save_fraud_score(self, transaction_id: str, score: dict) -> bool:
+        c = self.conn.execute(
+            "UPDATE transactions SET fraud_score=?, fraud_risk_level=?,"
+            " fraud_reason_codes=?, fraud_action=?, fraud_scored_at=? WHERE id=?",
+            (score.get("score"), score.get("risk_level"),
+             json.dumps(score.get("reason_codes") or []),
+             score.get("recommended_action"), _now_iso(), transaction_id))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def get_fraud_score(self, transaction_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT fraud_score, fraud_risk_level, fraud_reason_codes,"
+            " fraud_action, fraud_scored_at FROM transactions WHERE id=?",
+            (transaction_id,)).fetchone()
+        if row is None or row["fraud_scored_at"] is None:
+            return None
+        d = dict(row)
+        d["fraud_reason_codes"] = json.loads(d["fraud_reason_codes"] or "[]")
+        return d
+
+    def list_flagged_transactions(self, risk_level: str | None = None,
+                                  limit: int = 100) -> list[dict]:
+        q = ("SELECT * FROM transactions WHERE fraud_scored_at IS NOT NULL"
+             " AND fraud_risk_level IS NOT NULL AND fraud_risk_level != 'LOW'")
+        params: list = []
+        if risk_level:
+            q += " AND fraud_risk_level=?"
+            params.append(risk_level.upper())
+        q += " ORDER BY fraud_scored_at DESC LIMIT ?"
+        params.append(limit)
+        rows = [dict(r) for r in self.conn.execute(q, params).fetchall()]
+        for r in rows:
+            r["fraud_reason_codes"] = json.loads(r["fraud_reason_codes"] or "[]")
+        return rows
+
+    # =========================================================================
+    # AML Monitoring Module (Phase 2) — see amy/finance/aml_engine.py for the
+    # typology detectors. Pure persistence helpers, same convention as the
+    # fraud-score helpers above: they never detect anything themselves.
+    # =========================================================================
+
+    def _row_to_aml_case(self, row) -> dict:
+        d = dict(row)
+        d["evidence"] = json.loads(d["evidence"] or "[]")
+        d["timeline"] = json.loads(d["timeline"] or "[]")
+        return d
+
+    def create_aml_case(self, account_id: str | None, typology: str, risk_level: str,
+                        score: float, evidence: list[str], timeline: list[dict],
+                        explanation: str) -> str:
+        cid = _uuid()
+        now = _now_iso()
+        self.conn.execute(
+            "INSERT INTO aml_cases(id,created_at,updated_at,account_id,status,"
+            "typology,risk_level,score,evidence,timeline,explanation)"
+            " VALUES(?,?,?,?,'open',?,?,?,?,?,?)",
+            (cid, now, now, account_id, typology, risk_level, score,
+             json.dumps(evidence), json.dumps(timeline), explanation))
+        self.conn.commit()
+        return cid
+
+    def get_aml_case(self, case_id: str) -> dict | None:
+        row = self.conn.execute("SELECT * FROM aml_cases WHERE id=?", (case_id,)).fetchone()
+        return self._row_to_aml_case(row) if row else None
+
+    def list_aml_cases(self, status: str | None = None, account_id: str | None = None,
+                       typology: str | None = None, limit: int = 100) -> list[dict]:
+        q = "SELECT * FROM aml_cases WHERE 1=1"
+        params: list = []
+        if status:
+            q += " AND status=?"; params.append(status)
+        if account_id:
+            q += " AND account_id=?"; params.append(account_id)
+        if typology:
+            q += " AND typology=?"; params.append(typology)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [self._row_to_aml_case(r) for r in self.conn.execute(q, params).fetchall()]
+
+    def find_open_aml_case(self, account_id: str | None, typology: str,
+                           evidence: list[str]) -> dict | None:
+        """Dedup check: an existing open/investigating case for the same
+        account+typology whose evidence overlaps this candidate's — used so
+        re-scanning doesn't open a duplicate case for the same underlying
+        transactions. Escalated/closed cases don't block a fresh one (a
+        genuinely new cluster of transactions after a case was closed is a
+        new case, same spirit as approvals' dedup only covering open rows)."""
+        candidates = self.list_aml_cases(account_id=account_id, typology=typology)
+        ev_set = set(evidence)
+        for c in candidates:
+            if c["status"] not in ("open", "investigating"):
+                continue
+            if ev_set & set(c["evidence"]):
+                return c
+        return None
+
+    def update_aml_case_status(self, case_id: str, status: str) -> bool:
+        now = _now_iso()
+        extra = ""
+        params: list = [status, now]
+        if status == "escalated":
+            extra = ", escalated_at=?"
+            params.append(now)
+        elif status == "closed":
+            extra = ", closed_at=?"
+            params.append(now)
+        params.append(case_id)
+        c = self.conn.execute(
+            f"UPDATE aml_cases SET status=?, updated_at=?{extra} WHERE id=?", params)
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def append_aml_case_timeline(self, case_id: str, entry: dict) -> bool:
+        case = self.get_aml_case(case_id)
+        if case is None:
+            return False
+        timeline = case["timeline"] + [entry]
+        c = self.conn.execute(
+            "UPDATE aml_cases SET timeline=?, updated_at=? WHERE id=?",
+            (json.dumps(timeline), _now_iso(), case_id))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def save_aml_sar_draft(self, case_id: str, sar_draft: str) -> bool:
+        c = self.conn.execute(
+            "UPDATE aml_cases SET sar_draft=?, updated_at=? WHERE id=?",
+            (sar_draft, _now_iso(), case_id))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    # =========================================================================
+    # Amy Credit Score (Phase 3) — see amy/finance/credit_engine.py for the
+    # scoring logic. Pure persistence helpers, same convention as the fraud/
+    # AML helpers above: they never compute anything themselves. One row per
+    # computation (a time series for /api/credit/history), not upserted.
+    # =========================================================================
+
+    def _row_to_credit_score(self, row) -> dict:
+        d = dict(row)
+        d["factors"] = json.loads(d["factors"] or "{}")
+        d["improvement_suggestions"] = json.loads(d["improvement_suggestions"] or "[]")
+        return d
+
+    def save_credit_score(self, score: int, factors: dict, explanation: str,
+                          improvement_suggestions: list[str]) -> str:
+        cid = _uuid()
+        self.conn.execute(
+            "INSERT INTO credit_scores(id,computed_at,score,factors,explanation,"
+            "improvement_suggestions) VALUES(?,?,?,?,?,?)",
+            (cid, _now_iso(), score, json.dumps(factors), explanation,
+             json.dumps(improvement_suggestions)))
+        self.conn.commit()
+        return cid
+
+    def get_latest_credit_score(self) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM credit_scores ORDER BY computed_at DESC LIMIT 1").fetchone()
+        return self._row_to_credit_score(row) if row else None
+
+    def list_credit_score_history(self, limit: int = 100) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM credit_scores ORDER BY computed_at DESC LIMIT ?",
+            (limit,)).fetchall()
+        return [self._row_to_credit_score(r) for r in rows]
+
+    # =========================================================================
+    # Loan Underwriting Module (Phase 5) — see amy/finance/loan_engine.py for
+    # the calculators/underwriting logic. Pure persistence helpers, same
+    # convention as the fraud/AML/credit helpers above.
+    # =========================================================================
+
+    def _row_to_loan_application(self, row) -> dict:
+        d = dict(row)
+        d["decision"] = json.loads(d["decision"] or "{}")
+        return d
+
+    def create_loan_application(self, loan_type: str, jurisdiction: str,
+                                amount_requested: float, term_months: int,
+                                financing_structure: str | None,
+                                decision: dict) -> str:
+        aid = _uuid()
+        now = _now_iso()
+        self.conn.execute(
+            "INSERT INTO loan_applications(id,created_at,updated_at,loan_type,"
+            "jurisdiction,amount_requested,term_months,financing_structure,"
+            "status,credit_score_used,recommended_rate,recommended_amount,emi,"
+            "decision) VALUES(?,?,?,?,?,?,?,?,'pending',?,?,?,?,?)",
+            (aid, now, now, loan_type, jurisdiction, amount_requested, term_months,
+             financing_structure, decision.get("explanation", {}).get("credit_score_used"),
+             decision.get("recommended_rate"), decision.get("recommended_amount"),
+             decision.get("emi"), json.dumps(decision)))
+        self.conn.commit()
+        return aid
+
+    def get_loan_application(self, application_id: str) -> dict | None:
+        row = self.conn.execute(
+            "SELECT * FROM loan_applications WHERE id=?", (application_id,)).fetchone()
+        return self._row_to_loan_application(row) if row else None
+
+    def list_loan_applications(self, status: str | None = None,
+                               jurisdiction: str | None = None,
+                               limit: int = 100) -> list[dict]:
+        q = "SELECT * FROM loan_applications WHERE 1=1"
+        params: list = []
+        if status:
+            q += " AND status=?"; params.append(status)
+        if jurisdiction:
+            q += " AND jurisdiction=?"; params.append(jurisdiction)
+        q += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        return [self._row_to_loan_application(r)
+               for r in self.conn.execute(q, params).fetchall()]
+
+    def update_loan_application_status(self, application_id: str, status: str) -> bool:
+        c = self.conn.execute(
+            "UPDATE loan_applications SET status=?, updated_at=? WHERE id=?",
+            (status, _now_iso(), application_id))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def set_loan_application_approval_id(self, application_id: str, approval_id: str) -> bool:
+        c = self.conn.execute(
+            "UPDATE loan_applications SET approval_id=?, updated_at=? WHERE id=?",
+            (approval_id, _now_iso(), application_id))
+        self.conn.commit()
+        return c.rowcount > 0
+
+    def save_loan_schedule(self, application_id: str, rows: list[dict]) -> None:
+        self.conn.execute("DELETE FROM loan_schedules WHERE loan_application_id=?",
+                          (application_id,))
+        for r in rows:
+            self.conn.execute(
+                "INSERT INTO loan_schedules(id,loan_application_id,installment_number,"
+                "due_date,principal,interest,emi,balance) VALUES(?,?,?,?,?,?,?,?)",
+                (_uuid(), application_id, r["installment_number"], r["due_date"],
+                 r["principal"], r["interest"], r["emi"], r["balance"]))
+        self.conn.commit()
+
+    def get_loan_schedule(self, application_id: str) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT * FROM loan_schedules WHERE loan_application_id=?"
+            " ORDER BY installment_number", (application_id,)).fetchall()
+        return [dict(r) for r in rows]
 
     # =========================================================================
     # Budgets

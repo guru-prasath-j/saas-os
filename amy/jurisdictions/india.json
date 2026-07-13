@@ -89,5 +89,20 @@
   "seasonal_notes": [
     { "months": [10, 11], "note": "Festival season — discretionary spending typically rises." }
   ],
+  "loan_config": {
+    "_disclaimer": "illustrative values for a demo project, not verified against current regulation",
+    "loan_limits": {
+      "personal":  { "amount": 2000000,  "currency": "INR", "basis": "max_principal" },
+      "home":      { "amount": 20000000, "currency": "INR", "basis": "max_principal" },
+      "business":  { "amount": 10000000, "currency": "INR", "basis": "max_principal" },
+      "auto":      { "amount": 3000000,  "currency": "INR", "basis": "max_principal" },
+      "education": { "amount": 5000000,  "currency": "INR", "basis": "max_principal" }
+    },
+    "minimum_income": { "amount": 180000, "currency": "INR", "basis": "annual" },
+    "max_debt_to_income_ratio": 0.50,
+    "late_fee_rules": { "type": "percentage_of_overdue", "rate": 0.02, "grace_days": 3 },
+    "interest_calculation_defaults": "reducing_balance",
+    "islamic_finance_available": false
+  },
   "disclaimer": "Figures produced from this pack are ESTIMATES for planning, not professional tax advice. The pack's rates and dates are shown (with effective dates) so you can verify them; confirm filings with a qualified professional."
 }

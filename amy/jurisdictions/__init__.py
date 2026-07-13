@@ -24,6 +24,18 @@ REQUIRED_KEYS = ("id", "name", "currency", "fiscal_year", "calendar_systems",
                  "financing_models", "default_screening_profiles",
                  "obligation_presets", "compliance_deadlines", "disclaimer")
 
+# Phase 4 (Loan Underwriting prep) — loan_config is OPTIONAL: a pack can
+# exist without it (e.g. a future minimal jurisdiction with no loan
+# support), so it's not in REQUIRED_KEYS above. When present it must be
+# well-formed, same "optional-but-validated-if-there" treatment
+# obligation_presets/compliance_deadlines already get in validate_pack().
+LOAN_CONFIG_REQUIRED_KEYS = ("_disclaimer", "loan_limits", "minimum_income",
+                            "max_debt_to_income_ratio", "late_fee_rules",
+                            "interest_calculation_defaults",
+                            "islamic_finance_available")
+LOAN_TYPES = ("personal", "home", "business", "auto", "education")
+INTEREST_CALCULATION_METHODS = ("simple", "compound", "reducing_balance")
+
 
 class PackError(ValueError):
     """Malformed jurisdiction pack."""
@@ -64,7 +76,72 @@ def validate_pack(data: dict) -> list[str]:
                 if not v.get("effective_from"):
                     problems.append(
                         f"{section}.{item.get('id')}: version missing effective_from")
+    if "loan_config" in data:
+        problems.extend(validate_loan_config(data))
     return problems
+
+
+def validate_loan_config(pack: dict) -> list[str]:
+    """Return a list of problems (empty = valid) for pack['loan_config'].
+    Called from validate_pack() whenever the key is present (loan_config
+    itself is optional — see LOAN_CONFIG_REQUIRED_KEYS' comment above)."""
+    cfg = pack.get("loan_config")
+    if cfg is None:
+        return ["pack has no loan_config section"]
+    problems = []
+    for k in LOAN_CONFIG_REQUIRED_KEYS:
+        if k not in cfg:
+            problems.append(f"loan_config missing required key: {k}")
+
+    limits = cfg.get("loan_limits") or {}
+    for lt in LOAN_TYPES:
+        entry = limits.get(lt)
+        if not entry:
+            problems.append(f"loan_config.loan_limits missing entry for {lt!r}")
+            continue
+        if not isinstance(entry.get("amount"), (int, float)) or entry["amount"] <= 0:
+            problems.append(f"loan_config.loan_limits.{lt}.amount must be a positive number")
+        if not entry.get("currency"):
+            problems.append(f"loan_config.loan_limits.{lt}.currency is required")
+
+    mi = cfg.get("minimum_income") or {}
+    if not isinstance(mi.get("amount"), (int, float)) or mi.get("amount", -1) < 0:
+        problems.append("loan_config.minimum_income.amount must be a non-negative number")
+    if not mi.get("currency"):
+        problems.append("loan_config.minimum_income.currency is required")
+    if mi.get("basis") not in ("annual", "monthly"):
+        problems.append("loan_config.minimum_income.basis must be 'annual' or 'monthly'")
+
+    dti = cfg.get("max_debt_to_income_ratio")
+    if not isinstance(dti, (int, float)) or not 0 < dti <= 1:
+        problems.append("loan_config.max_debt_to_income_ratio must be a number in (0, 1]")
+
+    fee = cfg.get("late_fee_rules") or {}
+    fee_type = fee.get("type")
+    if fee_type not in ("percentage_of_overdue", "flat_fee"):
+        problems.append("loan_config.late_fee_rules.type must be "
+                        "'percentage_of_overdue' or 'flat_fee'")
+    elif fee_type == "percentage_of_overdue" and not isinstance(fee.get("rate"), (int, float)):
+        problems.append("loan_config.late_fee_rules.rate is required for percentage_of_overdue")
+    elif fee_type == "flat_fee" and not isinstance(fee.get("amount"), (int, float)):
+        problems.append("loan_config.late_fee_rules.amount is required for flat_fee")
+    if not isinstance(fee.get("grace_days"), int):
+        problems.append("loan_config.late_fee_rules.grace_days must be an integer")
+
+    if cfg.get("interest_calculation_defaults") not in INTEREST_CALCULATION_METHODS:
+        problems.append("loan_config.interest_calculation_defaults must be one of "
+                        + "|".join(INTEREST_CALCULATION_METHODS))
+    if not isinstance(cfg.get("islamic_finance_available"), bool):
+        problems.append("loan_config.islamic_finance_available must be a boolean")
+    return problems
+
+
+def loan_config(pack: dict) -> dict | None:
+    """The pack's Phase-4 loan-config extension, or None if this pack
+    hasn't been extended with one. All figures inside are illustrative
+    (see pack["loan_config"]["_disclaimer"]) — Phase 5 (Loan Underwriting)
+    reads this; this module never computes anything with it."""
+    return pack.get("loan_config")
 
 
 @lru_cache(maxsize=None)

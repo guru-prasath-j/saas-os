@@ -63,6 +63,264 @@ amy/
                          current_value defaults to it — no live price feed)
     income_detect.py     Recurring income-credit detector (same rule→LLM
                          pattern; excludes interest/refund/cashback outright)
+    fraud_engine.py      FRAUD DETECTION MODULE (Phase 1) — illustrative/
+                         simulated rule-based transaction risk scoring, NOT
+                         a real banking fraud system (see its module
+                         docstring). Six signals (velocity, round-number,
+                         spend-spike-vs-own-average, new-beneficiary/first-
+                         time-counterparty, dormant-reactivation, atypical-
+                         day-of-week — the last is an honest substitute for
+                         "time-of-day anomaly": transactions.date has no
+                         time component anywhere in this schema, see quirk
+                         28); UNAVAILABLE_SIGNALS names device-fingerprint/
+                         impossible-travel/login-anomaly/MCC as honestly
+                         uncomputed, never faked. `score_transaction()` is
+                         pure/read-only; `review_transaction(ctx, tid)`
+                         scores then calls `submit_action()` directly with
+                         a severity-computed tier (LOW/MEDIUM auto-apply,
+                         HIGH/CRITICAL park as a tier-2 approval) — see
+                         quirk 28 for why this bypasses AGENT_GATE's static
+                         per-tool tiering. Registry tools: `score_fraud_risk`
+                         (read), `review_fraud_transaction` (write),
+                         `explain_fraud_score` (read, stored score only,
+                         never re-scores), `list_flagged_fraud_transactions`
+                         (read) — `amy/tools/fraud_tools.py`. Executor:
+                         `fraud_review_action` (`amy/automation/executors.py`)
+                         persists the score + emits `fraud.detected` (no
+                         reactive-agent subscriber yet — Phase 1 scope).
+                         Routes: `amy/saas/routers/fraud.py`. No ML model,
+                         no payment-rail simulation, no dashboard UI —
+                         explicitly out of scope for Phase 1.
+    aml_engine.py        AML MONITORING MODULE (Phase 2 of the same
+                         illustrative Banking Risk Intelligence series,
+                         reuses Phase 1's patterns — read fraud_engine.py
+                         first). NOT a real compliance system (see its
+                         module docstring); no sanctions/PEP/country-risk
+                         data anywhere — UNAVAILABLE_SIGNALS names all
+                         four honestly. Four typology detectors:
+                         `detect_structuring` (sub-threshold cluster near
+                         an illustrative reporting threshold),
+                         `detect_layering` (rapid disproportionate in/out),
+                         `detect_cash_spike` (ATM/cash-keyword merchant
+                         proxy + Phase 1's spend-spike-vs-own-average
+                         magnitude check), `detect_circular_transfers`
+                         (portfolio-wide — see quirk 29: uses a DEDICATED
+                         `aml_graph.db` via `knowledge_graph/store.py`'s
+                         `GraphStore` CLASS, NOT the shared `graph.db`,
+                         and a custom directed-cycle DFS over
+                         `GraphStore.edges()`, NOT `traverse()`/
+                         `neighbors()` — both direction-agnostic and would
+                         false-positive on any connected component. Scoped
+                         to the user's own accounts + custodial
+                         beneficiaries only — real cross-institution
+                         layering isn't observable from this schema).
+                         `scan_account_for_aml()` is pure/read-only
+                         (mirrors `fraud_engine.score_transaction`);
+                         `investigate_account(ctx, account_id)` is the
+                         side-effecting counterpart — opens/reconfirms an
+                         `aml_cases` row per triggered typology (deduped
+                         on account+typology+overlapping evidence),
+                         UNGATED (no `submit_action` — "the case table
+                         holds the investigation, the approval table
+                         holds the human decision point"). Case lifecycle
+                         `open→investigating→escalated/closed`;
+                         `escalate_case()`/`generate_sar_draft()` both
+                         call `submit_action(ctx, 2, ...)` with a FIXED
+                         tier 2 (not severity-computed like Phase 1's
+                         `review_transaction` — these are explicit human-
+                         requested steps, not automatic detection output).
+                         `build_sar_draft_text()` always opens AND closes
+                         with a `"DRAFT — NOT A REAL REGULATORY FILING"`
+                         header baked into the text itself (survives a
+                         screenshot) — only ever called by the
+                         `aml_case_sar_draft` executor on approval, never
+                         automatically from a scan. Registry tools:
+                         `score_aml_typologies` (read), `scan_account_for_
+                         aml` (write, but ungated for `actor="human"` —
+                         same registry-classification nuance as Phase 1's
+                         `review_fraud_transaction`), `escalate_aml_case`
+                         (write), `generate_aml_sar_draft` (destructive) —
+                         all always tier-2-gated via their fixed
+                         `submit_action` calls regardless of registry
+                         risk — `explain_aml_alert` (read, stored case
+                         only) — `amy/tools/aml_tools.py`. Executors:
+                         `aml_case_escalate` / `aml_case_sar_draft`
+                         (`amy/automation/executors.py`). Events:
+                         `aml.alert` (every trigger) / `aml.case_opened`
+                         (new case only) — no reactive-agent subscriber
+                         yet. Routes: `amy/saas/routers/aml.py`. No
+                         sanctions/PEP integration, no money-mule
+                         detection (needs multi-account network data this
+                         single-user system doesn't model), no dashboard
+                         UI — explicitly out of scope for Phase 2.
+    credit_engine.py      AMY CREDIT SCORE MODULE (Phase 3 of the same
+                         series — consumes Phase 1's `transactions.
+                         fraud_risk_level` and Phase 2's `aml_cases` as
+                         inputs, doesn't duplicate their detection). NOT
+                         a real bureau product — every generated string
+                         must say "Amy Score — an internal signal, not a
+                         credit bureau score," never FICO/CIBIL/
+                         equivalent. 300-900 range, `WEIGHTS` dict of 8
+                         illustrative-weighted factors (`payment_history`
+                         20, `income_stability` 15, `cashflow_trend` 15,
+                         `debt` 12, `fraud_history` 10, `aml_alerts` 10,
+                         `investment_profile` 10, `business_stability` 8)
+                         + `overdrafts`/`bureau_score` always weight 0 /
+                         `available:false` — see quirk 30 for why
+                         `payment_history` is a disclosed PROXY (this
+                         schema has no bill/loan payment tracking —
+                         `amy/commitments/engine.py` is return-windows/
+                         warranties/renewals/documents, not payment
+                         obligations) and why `overdrafts` can never be
+                         computed (no `accounts.balance` column anywhere).
+                         Unavailable factors are excluded from BOTH the
+                         weighted sum and its normalization denominator,
+                         so a partial-data profile still scores sensibly
+                         instead of erroring. `compute_score(fe)` is
+                         pure/read-only; `record_score(ctx)` persists a
+                         `credit_scores` row + emits `credit.updated` —
+                         no `submit_action`/approval anywhere in this
+                         module (a derived read-model refresh, not an
+                         external/money-moving action, unlike Phase 1/2's
+                         detection tools). `improvement_suggestions` are
+                         static per-factor templates (no LLM call) drawn
+                         ONLY from the lowest-scoring AVAILABLE factors —
+                         never suggests fixing something marked
+                         `available:false`. Registry tools (all
+                         `RISK_READ`, per explicit spec — computing/
+                         storing the score needs no approval gate):
+                         `compute_credit_score`, `credit_score_history`,
+                         `explain_credit_score` (stored row only, never
+                         recomputes), `improve_credit_score` (stored
+                         suggestions only) — `amy/tools/credit_tools.py`.
+                         Job: `credit_score_recompute`, weekly (Monday-
+                         only no-op inside a `daily_at` job — same
+                         `compute_next_run`-has-no-weekly-type idiom as
+                         `life_wellbeing_weekly`). Routes:
+                         `amy/saas/routers/credit.py`. No bureau
+                         reconciliation, no loan-decisioning logic (that's
+                         Phase 5 loan_engine.py below, which consumes
+                         this score) — out of scope for Phase 3.
+    loan_engine.py        LOAN UNDERWRITING MODULE (Phase 5, final phase
+                         of the series) — an illustrative underwriting
+                         SIMULATOR, not a real lending decision engine.
+                         Consumes Phase 3's `get_latest_credit_score()`
+                         and Phase 4's `loan_config` (via
+                         `amy.jurisdictions.load_pack`/`loan_config`) as
+                         READ-ONLY inputs — never recomputes either.
+                         Reuses `amy/finance/afford.py`'s `can_afford()`
+                         AS-IS for the affordability piece (the proposed
+                         EMI treated as the "spend") — no new
+                         affordability calculator. Calculators:
+                         `emi_reducing_balance` (real amortization),
+                         `emi_flat_rate` (simple interest),
+                         `emi_compound` (simplified — total repayment via
+                         monthly compounding spread evenly, since true
+                         compound amortization isn't a standard consumer-
+                         loan shape), `emi_islamic_markup` (ONE shared
+                         simplified cost-plus model across Murabaha/
+                         Ijara/Musharakah — real contracts differ
+                         materially and need Shariah-board review this
+                         demo doesn't implement; `qard_hasan` forces
+                         profit_rate to 0 as a structurally distinct,
+                         honestly-modeled exception, not a
+                         simplification). `build_schedule()` generates a
+                         REAL declining-balance table for
+                         `reducing_balance`, an even-principal-split
+                         table otherwise, final installment absorbing
+                         rounding drift so balance hits exactly 0. NOT
+                         built: floating rate/prepayment/foreclosure/
+                         moratorium (future enhancement, per the prompt's
+                         explicit permission to skip). `underwrite()` is
+                         pure/read-only, building the full decision
+                         contract (approval_probability, risk_category,
+                         recommended_rate/amount, EMI, DTI,
+                         affordability_score, explanation citing the
+                         actual credit score + jurisdiction config values
+                         used) — every jurisdiction/loan-type limit comes
+                         from Phase 4's config, never hardcoded here.
+                         `apply_for_loan(ctx, ...)` ALWAYS parks a FIXED
+                         tier-2 approval regardless of risk_category (not
+                         severity-computed like Phase 1) — "this engine
+                         proposes, it doesn't auto-approve." See quirk 32
+                         for the rejection-status reconciliation-on-read
+                         design (`_reconcile()`) — deliberately NOT a
+                         parallel loan-specific reject endpoint. Registry
+                         tools: `simulate_loan` (read, dry-run),
+                         `apply_for_loan` (write, but ungated for
+                         `actor="human"` — the fixed tier-2
+                         `submit_action` inside it is the real gate),
+                         `explain_loan_rejection`/`simulate_refinancing`/
+                         `compare_loan_offers`/`explain_emi` (all read,
+                         stored-decision-data only, never re-underwrite)
+                         — `amy/tools/loan_tools.py`. Executor:
+                         `loan_decision` (`amy/automation/executors.py`,
+                         approve-only — generates the schedule). Events:
+                         `loan.requested`/`loan.approved` (both real
+                         emit sites) / `loan.rejected` (defined for
+                         future use, no emit site yet — rejection is
+                         handled by reconciliation, not an executor).
+                         Routes: `amy/saas/routers/loan.py`. No real
+                         underwriting, no full Islamic-contract
+                         compliance — explicitly out of scope for Phase
+                         5. (The Compliance Dashboard mentioned as
+                         out-of-scope for Phase 5 IS built — see Phase 6
+                         below, `saas/routers/risk_dashboard.py`.)
+
+  saas/routers/risk_dashboard.py   COMPLIANCE/RISK DASHBOARD (Phase 6,
+                         final phase of the Banking Risk Intelligence
+                         series) — PURE READ-ONLY aggregation over
+                         Phases 1/2/3/5's tables. No `amy/finance/`
+                         companion module by design (the prompt:
+                         "must not introduce new detection/scoring
+                         logic" — counting/grouping existing rows isn't
+                         detection worth a dedicated engine file). No
+                         materialized cache table either — single-user
+                         demo scale, plain Python-side counting over
+                         existing list methods (`list_flagged_
+                         transactions`, `list_aml_cases`,
+                         `list_credit_score_history`/
+                         `get_latest_credit_score`, `loan_engine.
+                         list_applications`) is trivially fast; don't
+                         add one without re-justifying against real
+                         row counts first. Four summaries
+                         (`_fraud_summary`/`_aml_summary`/
+                         `_credit_summary`/`_loan_summary`), each reused
+                         by both its own route and `_executive_summary`
+                         — no duplicated query logic. `_credit_summary`
+                         is explicitly "your score over time," never a
+                         population distribution (there's no population
+                         in a single-user system — fabricating one
+                         would violate this whole series' honesty
+                         rules). The explainability endpoint
+                         (`GET /api/risk/dashboard/explain?type=&id=`,
+                         backed by `_explain()`) dispatches to the ACTUAL
+                         registered `explain_fraud_score`/
+                         `explain_aml_alert`/`explain_credit_score`/
+                         `explain_loan_rejection` tools via
+                         `amy.tools.invoke(actor="human")` — never a
+                         reimplementation; `type=loan` is only
+                         `available:true` for a REJECTED application
+                         (that's what the underlying tool does — an
+                         honest `available:false` otherwise, not a new
+                         "explain any loan decision" tool). Routes:
+                         `GET /api/risk/dashboard/{fraud|aml|credit|
+                         loans|executive}` + the explain endpoint above.
+                         Frontend: `data-tab="risk"` in `index.html`
+                         (Money nav sector) — `loadRiskDashboard()`
+                         calls the executive endpoint once, reuses the
+                         existing `.kpi`/`.fin-kpis` tile pattern (no
+                         chart library — none exists anywhere in
+                         `index.html`, checked before adding one) +
+                         `toggleRiskExplain()` for the inline explain
+                         panel. No per-role dashboards, no new SSE
+                         layer, no geo/heatmap viz — explicitly out of
+                         scope for Phase 6 (and for this project — the
+                         Banking Risk Intelligence demo series is now
+                         complete: Fraud → AML → Credit Score →
+                         Jurisdiction Config → Loan Underwriting →
+                         Compliance Dashboard).
+
     custodial.py         Custodial account logic (SBI-style, never pollutes income)
     custodial_sheets.py  Google Sheets disbursement export
     sync/
@@ -91,7 +349,35 @@ amy/
                          per-instance — see "Event System" below)
   calendars/             Calendar abstraction (R7A-3): gregorian|hijri|fiscal
   jurisdictions/         Packs (R7B): {uae,us,india}.json + loader/versioning
-                         + fx_seed.json. New jurisdiction = new JSON only
+                         + fx_seed.json. New jurisdiction = new JSON only.
+                         Each pack also carries an OPTIONAL `loan_config`
+                         section (Phase 4, Banking Risk Intelligence prep
+                         for Phase 5 Loan Underwriting — config only, no
+                         loan math lives here): `loan_limits` per type
+                         (personal/home/business/auto/education, each
+                         `{amount, currency, basis}` — same shape as the
+                         existing `wealth_threshold` fields),
+                         `minimum_income` (`annual`|`monthly` basis —
+                         differs realistically per jurisdiction),
+                         `max_debt_to_income_ratio`, `late_fee_rules`
+                         (tagged union: `percentage_of_overdue`+`rate` vs
+                         `flat_fee`+`amount` — a real jurisdiction
+                         difference, not an invented one),
+                         `interest_calculation_defaults`
+                         (simple|compound|reducing_balance),
+                         `islamic_finance_available` (only `true` for
+                         `uae`), and its own `_disclaimer` scoped to "these
+                         loan figures are illustrative" (distinct from the
+                         pack's existing `disclaimer`, which covers the
+                         tax/obligation figures). `loan_config(pack)` /
+                         `validate_loan_config(pack)` in
+                         `amy/jurisdictions/__init__.py` — optional but
+                         validated whenever present (wired into
+                         `validate_pack()`), same treatment
+                         `obligation_presets` gets. Route: `GET
+                         /api/jurisdictions/{pack_id}/loan-config`
+                         (`amy/saas/routers/jurisdictions.py`) — see
+                         quirk 31 for the `us.json` (not `usa`) naming.
   obligations/           Obligations engine + agent (R7A-2): zakat/advance tax/
                          quarterly estimates/savings as pack presets
     zakat.py             Full zakat: live gold/silver nisab (gold-api.com,
@@ -366,6 +652,39 @@ POST              /api/finance/custodial/{account_id}/screenshot/parse # OCR + p
 GET               /api/finance/custodial/{account_id}/suggestions      # Gmail-synced debits fuzzy-matched to beneficiaries
 POST              /api/finance/custodial/{account_id}/suggestions/{tid}/confirm  # claim existing debit (no duplicate txn)
 POST              /api/finance/custodial/{account_id}/precheck         # soft anomaly warnings before confirm
+
+# Fraud Detection Module (Phase 1) — illustrative/simulated, see amy/finance/fraud_engine.py
+POST              /api/finance/fraud/transactions/{tid}/review          # score + route through the tier pipeline
+GET               /api/finance/fraud/transactions/{tid}                 # STORED score only, never re-scores
+GET               /api/finance/fraud/flagged                            # list transactions with a stored risk_level != LOW
+
+# AML Monitoring Module (Phase 2) — illustrative/simulated, see amy/finance/aml_engine.py
+POST              /api/finance/aml/accounts/{aid}/scan                  # detect + open/reconfirm cases, ungated
+GET               /api/finance/aml/cases                                # ?status=&account_id=&typology=
+GET               /api/finance/aml/cases/{case_id}
+PATCH             /api/finance/aml/cases/{case_id}                      # status -> investigating|closed only
+POST              /api/finance/aml/cases/{case_id}/escalate             # tier-2 gated (fixed, not severity-computed)
+POST              /api/finance/aml/cases/{case_id}/sar-draft            # tier-2 gated; draft/demo header baked into the text
+
+# Amy Credit Score Module (Phase 3) — illustrative internal score, see amy/finance/credit_engine.py
+POST              /api/credit/recompute                                 # on-demand compute + persist, ungated
+GET               /api/credit/score                                     # latest stored row
+GET               /api/credit/history                                   # ?limit= — trend over time
+
+# Loan Underwriting Module (Phase 5) — illustrative simulator, see amy/finance/loan_engine.py
+POST              /api/loans/simulate                                   # dry-run, no persistence
+POST              /api/loans/apply                                      # creates application + tier-2 approval
+GET               /api/loans                                            # ?status=&jurisdiction=&limit= — reconciled
+GET               /api/loans/{application_id}                           # reconciled (see quirk 32)
+GET               /api/loans/{application_id}/schedule
+
+# Compliance/Risk Dashboard (Phase 6) — read-only aggregation, see amy/saas/routers/risk_dashboard.py
+GET               /api/risk/dashboard/fraud
+GET               /api/risk/dashboard/aml
+GET               /api/risk/dashboard/credit                               # "your score over time" — no population
+GET               /api/risk/dashboard/loans
+GET               /api/risk/dashboard/executive                            # all four combined + generated_at
+GET               /api/risk/dashboard/explain?type=&id=                    # dispatches to the real explain_* tool
 ```
 
 Custodial AI layer: `amy/finance/custodial_ai.py` — regex/stats first, LLM
@@ -715,12 +1034,421 @@ fabricated job postings or company intel.
   becomes `target_role` (mirrored to the profile), postings archived,
   withdrawals re-parked individually.
 
+- **Learning Driven by Jobs (Phase A)**: `job_postings.keywords` used to
+  be hardcoded to `[]` in `career_scout.py` — `JobScoutSensor.poll()` now
+  populates it via `_extract_posting_keywords()` (deterministic tokenize
+  + stopword filter, no LLM dependency — restates `amy/automation/
+  orchestrator.py::_extract_keywords()`'s approach locally rather than
+  importing that module's private helper, per-POSTING instead of
+  cross-posting). `skill_demand_report(ctx, track)` /
+  `skill_demand_reports(ctx)` aggregate keyword frequency per active
+  track (`career_profile.target_role` split on `,`/`/`/`&`/" and " into
+  possibly several tracks — see `_active_tracks()`; the user's own
+  example has 4 at once) over the last `SKILL_DEMAND_WINDOW_DAYS`
+  (90)/`SKILL_DEMAND_MAX_POSTINGS` (100) postings, checking `in_profile`
+  against `career_profile.skills`. Posting→track matching is a
+  **heuristic** (`_track_matches_posting()`, word-overlap against the
+  track name) — `job_postings` has no stored "which track was this
+  searched under" column, so it's applied uniformly to old and new rows
+  rather than trusting a partial tag. The track's own words (e.g.
+  "Flutter"/"Developer" for that track) are excluded from the counted
+  keywords via `_track_all_words()` — every matched posting mentions them
+  by construction, so they're never a genuine skill gap; don't reuse
+  `_track_words()` (the narrower, matching-only word list) for that
+  exclusion, it deliberately keeps generic role suffixes for a different
+  reason (see quirk 33). Proposals go through a NEW `create_learning_focus`
+  registry tool (`amy/tools/builtin.py`, `RISK_WRITE`, next to
+  `create_goal` — none existed before this phase) via `tools.invoke(ctx,
+  ..., actor="agent")`, matching `_learning_agent`'s existing goal-proposal
+  pattern exactly rather than inventing a new tier rule — tier is
+  whatever `AGENT_GATE`/`AMY_AGENT_WRITE_TIER` already says (default 2).
+  Capped at `SKILL_DEMAND_MAX_PROPOSALS_PER_RUN` (3) qualifying skills
+  (>`SKILL_DEMAND_PROPOSAL_THRESHOLD_PCT`=25%) per report call, and
+  deduped against existing same-topic focuses via a **direct SQL query**,
+  not `learning_feed.sensor.list_focuses()` — that helper auto-seeds a
+  default focus for a zero-row user (see quirk 33), which a dedup check
+  must not accidentally trigger. Tool: `skill_demand_report`
+  (`amy/tools/career_tools.py`, `RISK_READ` — the report itself is a
+  read; the proposal side effect is what's actually gated, same pattern
+  as every registry tool with an internally-gated write across this
+  codebase). Event: `career.skill_demand_updated` (genuinely new — distinct
+  from `learning.feed_refreshed`, which is about feed items being
+  fetched, not a demand report being computed).
+
+- **Career Intelligence Graph (Phase B)**: `amy/career_graph.py` (new flat
+  module — same one-module-per-distinct-concern precedent as `career_
+  apply.py`/`career_scout.py`, kept separate from `career_scout.py`
+  rather than added there since this pulls from `job_postings`+
+  `applications`+`career_profile`+GitHub portfolio, not just scouting).
+  `rebuild_career_graph(ctx)` populates `skill`/`company`/`project`/
+  `target_role` nodes and `requires`/`matched_by`/`demonstrates`/
+  `applied_to` edges — into the **SHARED** `graph.db`
+  (`amy/knowledge_graph/store.py`'s `GraphStore`), node-id-namespaced
+  (`skill:`/`company:`/`project:`/`role:`) to coexist with `amy/
+  automation/orchestrator.py`'s `agentgoal:`/`agenttask:` plan-graph
+  nodes already in that file — deliberately NOT a dedicated file the way
+  AML's circular-transfer graph is (see quirk 34 for the full
+  shared-vs-dedicated reasoning). **Never calls `GraphStore.reset()`** —
+  that would wipe the unrelated orchestrator nodes; `add_node`/
+  `add_edge` are idempotent so re-running just refreshes this phase's own
+  nodes/edges (known limitation: stale edges are never pruned). Project
+  nodes come from a live `portfolio_repo_list` + `agents.reactive.
+  _classify_repos()` call each rebuild — confirmed portfolio SHOWCASE/
+  NEEDS-WORK classification is NOT persisted anywhere queryable outside
+  a vault note (`portfolio_analyze()`/`career_apply.py::
+  _showcase_repo_names()` both recompute it fresh every time), so there
+  was nothing to read back instead. `matched_by` edge weight is the
+  average STORED `job_postings.match_score` (never recomputed —
+  `companies_matching_profile()` follows the same rule, and excludes
+  companies with zero SCORED postings rather than treating an unscored
+  posting as a 0, mirroring `career_scout.py::_score_postings()`'s own
+  "missing index = not scored, not scored zero" convention). `top_skill_
+  gap(ctx, target_role)` reuses Phase A's `skill_demand_report()` output
+  directly (propose=False — a read-only roadmap view) rather than
+  recomputing frequency; `ordering_basis` in its output states the
+  ordering is demand-frequency-derived, and no salary/compensation
+  number appears anywhere in this module. `why_rejected(ctx,
+  application_id)` cross-references the linked posting's keywords
+  (EXCLUDING the user's active track's own role-shaped words — same
+  `_track_all_words()` exclusion Phase A applies, found necessary via a
+  failing test: a posting titled "Flutter Developer at Acme" isn't
+  "missing" the skill "Developer") against `career_profile.skills` —
+  explicitly says "your CURRENT skill profile" (this schema has no
+  historical snapshot of skills at application time), returns
+  `confidence: "none"` when the signal is too weak to say anything (no
+  posting keywords, or the candidate already had every matched keyword),
+  and caps confidence at `"low"`/`"moderate"` otherwise — **never
+  `"high"`**, since a keyword-gap correlation is never proof of why a
+  human rejected an application. **None of these 3 query tools depend on
+  the graph being freshly rebuilt** — each queries `job_postings`/
+  `applications`/`career_profile` directly, same style as every Phase A
+  tool; the graph serves exploration (`/api/kg/*`, already generic
+  across node types) and enriches `career_apply.py`'s existing referral
+  search, not as a read dependency here. All 4 tools (`rebuild_career_
+  graph`, `top_skill_gap`, `companies_matching_profile`, `why_rejected`)
+  are `RISK_READ` in `amy/tools/career_tools.py`, per this phase's own
+  explicit "no writes to other tables" framing. Job: `career_graph_
+  rebuild`, weekly (Monday-only no-op inside a `daily_at` job, same
+  idiom as `credit_score_recompute`/`life_wellbeing_weekly`) — no new
+  HTTP route added (the tools are reachable via `/api/assistant/chat`;
+  deliberately not scope-creeping beyond "graph + roadmap" into a new
+  UI-facing endpoint surface).
+
+- **Autonomous Career Sprint (Phase C)**: `amy/career_sprint.py` (new flat
+  module, same one-per-concern precedent as Phase A/B). A weekly plan/
+  review loop — `career_sprint_generate` (Monday) / `career_sprint_review`
+  (Sunday), both `daily_at`-scheduled jobs self-filtering on `date.today().
+  weekday()` (no native weekly schedule type exists — same idiom as
+  `career_graph_rebuild`). **A sprint goal is `domain='career_sprint'`,
+  deliberately NOT `'career'`** — every existing "find the career goal"
+  query (`_active_career_goal`, `job_scout_poll`, `portfolio_review`,
+  `career_goal_stall_check`) does `WHERE domain='career' AND
+  status='active' ORDER BY created_at DESC LIMIT 1` expecting exactly one
+  row; a same-domain sprint goal would out-rank the real goal the instant
+  it's created (more recent `created_at`) and silently hijack every one of
+  those lookups (e.g. `job_scout_poll` would lose the real `target_role`).
+  `career_meta={"sprint": true}` is set too (same JSON-sidecar convention
+  as `finance_meta`) but is cosmetic — the domain value is what actually
+  disambiguates. **Tier 1, via a direct `submit_action(ctx, tier=1, ...)`
+  call, not `tools.invoke(actor="agent")`** — bypassing `_tier_for`'s
+  env-driven policy (which defaults non-external writes to tier 2)
+  exactly the way `amy/life/habits.py::_complete()` hardcodes its own
+  tier for `auto_suggest_check` mode; `_run_career_template`'s own goal/
+  milestone creation is UNGATED instead, since it's the direct result of
+  a user's own `POST /api/agent/goal` request — that precedent doesn't
+  apply to a job firing unprompted on a timer, which needs tier 1's
+  record+notify step. **`submit_action`'s tier<=1 path executes BEFORE
+  its own `create_approval` dedup check runs** (execute-then-audit, not
+  check-then-execute) — a second same-week call would silently create a
+  second goal even though the resulting approval row gets rejected as a
+  duplicate afterward, so `generate_sprint()` does its own pre-check
+  (`_sprint_already_generated()`, querying `approvals` directly) before
+  calling `submit_action`, same idiom as `_complete()`'s own
+  `_habit_done()` pre-check — found via a failing test, not by
+  inspection. Skill gaps come from Phase B's `top_skill_gap()` (never
+  recomputed); outstanding learning-focus items match EITHER the active
+  career goal's `goal_id` OR a topic that case-insensitively matches a
+  current top-skill-gap entry — Phase A's ongoing skill-demand-driven
+  focus proposals (`_propose_focuses_for_demand`) never set `goal_id`, so
+  goal-linkage alone would miss most of Phase A's real output. Application
+  target is the user's own trailing `AMY_CAREER_SPRINT_TRAILING_WEEKS`
+  (4)-week average, or `null` + an honest `"reason"` with no application
+  history — never an arbitrary fixed number. "Skills added this week" in
+  the Sunday review is **always** `available:false` — `career_profile.
+  skills` is a single mutable row with no historical snapshot anywhere in
+  this codebase, and building one just for this diff is out of this
+  phase's scope. Interviews-scheduled is derived from `applications.
+  timeline` entries (`status=='interview'` within the review window), not
+  a new signal. Sunday review writes one idempotent-per-week vault note
+  (`MemoryWriter`, same pattern as `life/review.py::generate_month`) —
+  read-only otherwise, a report not a proposal, so no gating. Routes:
+  `GET /api/career/sprint/current|history`. Tool: `explain_sprint_
+  progress` (`RISK_READ`).
+
+- **Portfolio Builder + Resume Version Manager (Phase D)**: two new flat
+  modules, `amy/career_portfolio.py` and `amy/career_resume.py` — kept
+  separate since they're genuinely different concerns (repo classification
+  persistence vs. resume drafting), same one-per-concern precedent as
+  every other CAREER AUTOPILOT phase. **Both new generation functions
+  (`propose_portfolio_update`, `generate_resume_version`) call
+  `submit_action(ctx, tier=2, ...)` DIRECTLY, bypassing the tools
+  registry entirely** — `RISK_WRITE` + `actor="human"` would otherwise
+  execute immediately (quirk 15), and this phase's own framing is
+  stricter than the usual internal-write default ("no auto-publishing,
+  no exceptions" — public-facing material). Same fixed-tier-2 pattern as
+  AML's `escalate_case`/`generate_sar_draft` and Loan's `apply_for_loan`.
+  `portfolio_items` (new table, `collab.db` via `AutomationStore` — NOT
+  `finance.db`, everything career-related already lives in `collab.db`)
+  persists `_classify_repos()`'s SHOWCASE/NEEDS_WORK/NOT_RELEVANT output,
+  previously reaching only a vault note as formatted text (confirmed via
+  `amy/career_graph.py`'s own module docstring). `persist_classification()`
+  is called from `portfolio_analyze()`
+  (`amy/agents/reactive.py`) right after its EXISTING `_classify_repos()`
+  call — the same classify pass, not a second one; `portfolio_analyze`'s
+  existing vault-note/gap-project/resume-evolution behavior is untouched.
+  **GitHub activity trigger is `pushed_at`-cursor based, NOT commit/
+  release-based** — `GitHubSensor` (`amy/connectors/sensors.py`) has no
+  commit/release polling at all (confirmed reading it in full; only PR
+  review-requests/status-changes and issue-assignment). `scan_github_
+  activity()` compares each persisted repo's live `pushed_at` against a
+  stored cursor via the SAME `sensor_seen_state()`/`mark_sensor_seen()`
+  mechanism GitHubSensor already uses (`connector_sensor_seen` table,
+  sensor name `"portfolio_repo_activity"`) — the cursor is SEEDED at
+  `persist_classification()` time (found via a failing test: without
+  seeding, the very first scan after any portfolio analysis would see
+  "never seen" for every repo and propose an update for all of them
+  immediately, not just on a genuine subsequent change). Match scoring's
+  "portfolio evidence" factor (`amy/career_scout.py::_score_postings()`)
+  now injects REAL showcase repo/keyword evidence via `_portfolio_
+  evidence_line()` when `portfolio_items` exist, replacing the module's
+  former "known simplification" (skills-only) — still degrades to
+  skills-only with no persisted items. **Resume versions are additive to
+  Part 5E's existing master-resume evolution, not a replacement** —
+  `_propose_resume_evolution()`/the `resume_update` executor
+  (`amy/agents/reactive.py`/`amy/automation/executors.py`) already
+  proposes folding portfolio bullets into the ONE master `career_
+  profile.resume_text`; `resume_versions` (new table) is a genuinely
+  different concept — multiple labeled, TRACK-specific drafts derived
+  FROM the master resume + persisted showcase bullets + Phase A's
+  `skill_demand_report()` (used only to ORDER emphasis among skills the
+  candidate already owns — never to insert an unproven one). The
+  course-completion trigger (`scan_course_completions`, only fires when
+  a completed `learning_feed_item`'s focus topic matches a CURRENT Phase
+  B `top_skill_gap` entry) REUSES the existing `resume_update` executor
+  unchanged rather than adding a new one — it proposes one line under a
+  "Continuous learning" section of the master resume, same shape as Part
+  5E's own proposals. Content is Fernet-encrypted
+  (`amy.saas.security`, same convention as `resume_text_enc`) and
+  `list_resume_versions()` never decrypts it — metadata only, matching
+  `get_career_profile`'s "never return raw resume text over the wire"
+  rule. `resume_performance()` marks any version used by fewer than 3
+  applications `confidence:"insufficient_data"` instead of a raw rate.
+  `applications.resume_version_id` (idempotent `ALTER TABLE`, nullable,
+  no join table) attaches via `PATCH /api/career/applications/{id}`'s
+  existing body gaining one optional field. Jobs: `portfolio_activity_
+  scan` (12h), `course_completion_scan` (6h) — frequent scan-job idiom
+  (`meeting_prep_scan`/`interview_debrief_scan`), not the Monday/Sunday-
+  only weekly idiom, since GitHub pushes and course completions happen
+  any day. Tools: `list_portfolio_items`/`list_resume_versions`/`resume_
+  performance` (`RISK_READ`), `propose_portfolio_update`/`generate_
+  resume_version` (`RISK_WRITE` — registry classification nuance only,
+  the real gate is the internal fixed `submit_action` call above).
+
+- **Opportunity Radar (Phase E)**: `amy/opportunity_radar.py` — hiring-
+  signal aggregation, API-backed sources ONLY. **LinkedIn is a hard ban,
+  not an `available:false` stub** — no scraping, no session/cookie
+  automation, under any framing, because LinkedIn actively enforces
+  against it (including individual accounts) and the realistic
+  consequence is the user's own account, used for real applications,
+  getting banned. LinkedIn signals simply never appear in output; there
+  is no code path that even attempts them. Funding/layoff/acquisition/
+  engineering-blog signals are the same kind of absence — no clean
+  public API exists for them, so they're never in `reasons`, not
+  padded in as `available:false` noise on every result. Four real
+  sources: **HN "Who's Hiring"** — `mcp_servers/hackernews_server.py`
+  gained ONE new tool, `whos_hiring(query, limit)` (still the public,
+  keyless Algolia HN Search API — first finds the latest thread authored
+  by `whoishiring`, then searches `tags=comment,story_<id>` for its
+  hiring comments; `search_stories` alone can't reach comments, only
+  `tags=story` hits). Discovered postings reuse the EXISTING `job_
+  postings` table (`source="hn_whos_hiring"`) — same shape `JobScoutSensor`
+  already uses, deduped via the same `add_posting_if_new` `UNIQUE(uid,
+  url)`. **GitHub org activity** — grounded in Phase B's REAL `companies_
+  matching_profile()` output (never an arbitrary company list); company
+  name → GitHub org slug is a best-effort guess (`_slugify_company`),
+  honestly approximate. Stored in a NEW `opportunity_signals` table
+  (company-level signals that aren't a specific posting — a different
+  shape than `job_postings`, per the phase's own explicit instruction).
+  Deduped via the SAME `sensor_seen_state()`/`mark_sensor_seen()` cursor
+  idiom Phase D's `scan_github_activity` already uses (sensor name
+  `"opportunity_github_activity"`, keyed `company:repo`) — a still-active
+  repo isn't re-signaled every poll. **Product Hunt / Reddit** — the
+  exact same generic-MCP-source, honest-`available:false`-until-
+  registered pattern `career_apply.py::_company_intel()` already
+  established for web search: `call_mcp_tool` with tolerant candidate
+  tool names, `ConnectorCallError` → `{"available": False}`, no new
+  connector-resolution code. **Scoring is deterministic, never an LLM
+  guess** (`score_opportunity()`) — `reasons` only ever includes
+  `skill_match_Npct` when there ARE extractable keywords (`career_scout.
+  py::_extract_posting_keywords`, the SAME extractor `job_postings.
+  keywords` already uses) and `portfolio_evidence_N_projects` only when
+  `N > 0` real persisted showcase `portfolio_items` (Phase D) overlap
+  those keywords — a reason is never emitted with no backing number.
+  **Scored ONCE at discovery, persisted immediately, never recomputed on
+  read** — `job_postings.match_score`/`match_factors` (existing columns,
+  reused) for posting-shaped opportunities, `opportunity_signals.score`/
+  `detail` for company-level ones; `list_opportunities()`/`explain_
+  opportunity_score()` only ever read what was stored, same "explain
+  never re-fabricates" rule every `explain_*` tool in this codebase
+  follows. `OpportunityRadarSensor(Sensor)` (`amy/operational/sensors.
+  py`'s base, same pattern `JobScoutSensor`/`GitHubSensor` already use —
+  no new base invented) copies `JobScoutSensor.poll()`'s no-active-
+  career-goal/no-target-role guard verbatim; each source scan is
+  independently try/excepted (mirrors `_connector_sensor_scan`'s per-
+  sensor isolation). **No `submit_action` anywhere in this phase** —
+  discovery is ungated exactly like `JobScoutSensor`'s own `job_postings`
+  writes; only actually applying (the EXISTING `career_apply.prepare_
+  application`/approval pipeline) is gated, no shortcut here. Job:
+  `opportunity_radar_scan`, reusing the EXISTING `job_scout_interval_
+  hours` variable (`AMY_JOB_SCOUT_INTERVAL_HOURS`) rather than a new env
+  var, per the phase's own explicit instruction. Tools: `list_
+  opportunities`/`explain_opportunity_score` (`RISK_READ` — discovery
+  only, no write tool this phase). Route: `GET /api/career/opportunities
+  ?source=`.
+
+- **Interview Memory (Phase F, final phase)**: `amy/interview_memory.py`
+  — a MANUALLY-LOGGED journal with pattern analysis over time, explicitly
+  NOT a passive detection system — every field traces to what the user
+  reported, whether via the structured route or the LLM-assisted chat
+  path (which only reorganizes, never invents a question/weakness the
+  user didn't actually describe). **`interview_debrief_check`
+  (`agents/reactive.py`, Part 5E) was NOT duplicated** — confirmed
+  reading it in full: it already prompts exactly once per career-linked
+  calendar event ending (vault-note skeleton + one notification, deduped
+  via its existing prefs-table guard). This phase only added one line to
+  that notification's body pointing at `log_interview_from_chat`/`POST
+  /api/career/interviews` as the structured, queryable destination — its
+  own once-per-event dedup and vault-note behavior are untouched, no
+  second "an interview just happened" detector was built. **`company` on
+  `interview_logs` is DERIVED from the linked `application_id`'s posting
+  at write time when one is given, never independently trusted** —
+  `applications` itself has no `company` column (always resolved via
+  `get_posting()`, same pattern `career_inbound.py` already uses), so a
+  caller passing both `application_id` AND a (possibly stale/wrong)
+  `company` gets the real linked value, not their guess. `application_id`
+  is nullable — an interview not yet tracked as a formal application (a
+  referral chat, an early informational round) still gets a company-only
+  row from the caller's own text. **Tier 1, via a direct
+  `submit_action(ctx, tier=1, ...)` call** — the same established pattern
+  `amy/life/habits.py::_complete()` and `amy/career_sprint.py::generate_
+  sprint()` already use for "internal, reversible, no-external-system
+  action that still needs a record+notify step," not `_tier_for
+  ("write")`'s env-driven default of tier 2 — this is the user's own
+  self-report, so it's always auto-executed + notified regardless of
+  actor or `AMY_AGENT_WRITE_TIER`. New executor: `interview_log_create`.
+  **Skill-gap cross-referencing is READ-ONLY** — `interview_patterns()`'s
+  `linked_skill_gaps` looks up `f"skill:{tag.lower()}"` in the EXISTING
+  shared `graph.db` (`career_graph.py`'s `_graph_path`/`skill:` node
+  convention, Phase B) via `GraphStore.get_node()`; a weakness tag that
+  doesn't exactly match a real node stays unlinked, never fuzzy-guessed
+  or backfilled — no graph write happens anywhere in this module.
+  `interview_weakness_report()` reuses `interview_patterns()` verbatim
+  (no duplicated aggregation, no drift between the two). `log_interview_
+  from_chat()` resolves `application_id` via the SAME `_company_token`
+  heuristic (`career_inbound.py`) `interview_debrief_check` already uses
+  against the user's own `interview`/`offer`-status applications — no
+  match stays honestly unlinked. Tools: `log_interview`/`log_interview_
+  from_chat` (`RISK_WRITE` — registry classification nuance only, the
+  real gate is the internal fixed `submit_action(tier=1)` call),
+  `interview_patterns`/`interview_weakness_report` (`RISK_READ`). Routes:
+  `POST /api/career/interviews`, `GET /api/career/interviews/patterns`.
+  This is the final phase in the Career Autopilot build order — no
+  further phases chain after it.
+
+- **Company Discovery + ATS Fast-Track (extends Phase E)**:
+  `amy/company_discovery.py` — FREE SOURCES ONLY, no exceptions. A
+  source needing a credit card or a paid plan beyond a trial allowance
+  is simply absent from this module's output, never stubbed
+  `available:false` (same "absent, not padded" convention Phase E's
+  funding/layoff handling already established) — Naukri/NaukriGulf/
+  Bayt/GulfTalent/Fantastic.jobs/Crunchbase/LinkedIn-Jobs-in-any-form/
+  Clutch/TechBehemoths/GoodFirms/Tracxn/YourStory/MAGNiTT/Cutshort/
+  Wellfound/Instahyre are all permanently excluded, documented once in
+  the module docstring, an acknowledged coverage gap (weaker Indian/
+  Gulf-region coverage, no LinkedIn enrichment) rather than silently
+  worked around. **The prompt's claimed "existing `company_intel` stub
+  and normalizer in `career_scout.py`" doesn't exist there** — confirmed
+  by reading both files: `company_intel` (table + `_company_intel()`
+  stub) is `career_apply.py`'s, `career_scout.py` has none. Three real,
+  free tiers: **Tier 1** (Greenhouse/Lever/Ashby public JSON feeds,
+  fetched via stdlib `urllib.request` directly — same precedent as
+  `amy/obligations/zakat.py::_fetch_spot_usd()` for a free/keyless
+  official API, not a new MCP server and not `requests` as a new main-
+  app dependency); **Tier 2** (Himalayas/TheirStack via the SAME
+  generic-MCP-source/honest-`available:false` pattern `career_apply.py::
+  _company_intel()`/`opportunity_radar.py`'s Product Hunt/Reddit legs
+  already use — registering these connectors is a user action via the
+  EXISTING `POST /api/mcp/connectors` route, never something this module
+  inserts on the user's behalf; TheirStack degrades to
+  `available:False` for the rest of a run on any `ConnectorCallError`,
+  never erroring the whole job); **GitHub** (repo search has no
+  `location:` qualifier — that's a user/org search qualifier — so
+  location-targeted discovery is a bounded two-step: `search_
+  repositories` by keyword, then one `search_users` location check per
+  candidate org, independently try/excepted per candidate).
+  `detect_ats_platform(url)` is a pure regex matcher (Greenhouse/Lever/
+  Ashby URL shapes, `None` — never a guess — on no match) called from
+  TWO places: directly during discovery, and opportunistically inside
+  `amy/automation/store.py::add_posting_if_new()` — the ONE choke point
+  every posting-discovery path in this codebase already funnels through
+  (`JobScoutSensor`, `opportunity_radar.py`'s HN scan, this module's own
+  polls), so hooking it there covers all of them for free without
+  touching each call site individually. **Cadence split**: `ats_fast_
+  poll` (hourly) is scoped ONLY to `company_intel` rows with
+  `ats_platform` set AND `is_target=1` (the user's own curated targets);
+  `company_discovery_scan` (weekly, Monday-only `daily_at` self-filter,
+  same idiom as `career_graph_rebuild`) refreshes EVERY `ats_platform`-
+  known company regardless of `is_target` — broader, slower. Confidence
+  scoring (`_persist_hits`): `sources_count >= 2 OR matched_via ==
+  "both"` → `"high"`, else `"verify"` — the prompt's exact rule.
+  `company_intel`'s real PK is `(uid, company)` — no synthetic `id`, so
+  one was added (idempotent `ALTER TABLE` + a one-time `randomblob`
+  backfill for pre-existing rows; `upsert_company_intel()` now also
+  supplies a fresh id on its INSERT branch only, never touching an
+  existing row's id on conflict) for the new `/api/career/companies/{id}`
+  routes to address — `(uid, company)` stays the real upsert key
+  everywhere, unchanged. LinkedIn slug enrichment is free-search-lookup
+  only (`enrich_linkedin_slug`, the exact `_company_intel()` stub
+  pattern) — a `linkedin.com/company/` URL in a real web-search result,
+  never derived/guessed from the company name. Discovery stays tier-0
+  read-only into the pipeline — a fast-tracked posting never auto-enters
+  matching/application, same as every other discovery source. Tools:
+  `list_companies`/`recent_fast_track_postings` (`RISK_READ`),
+  `set_company_target` (`RISK_WRITE`, executes directly — the user's own
+  curation over their own local data, no external effect, same as
+  `update_career_application`). Routes: `GET /api/career/companies
+  ?city=&confidence=&is_target=`, `PATCH /api/career/companies/{id}/
+  target`, `GET /api/career/companies/{id}/postings`.
+
 ```
 GET/PUT           /api/career/profile
 PATCH             /api/career/goal                       # ladder roles (Part 5F)
 GET               /api/career/postings | applications | portfolio
-PATCH             /api/career/applications/{id}          # human-reported outcome, not gated
+PATCH             /api/career/applications/{id}          # human-reported outcome, not gated; resume_version_id optional (Phase D)
 POST              /api/career/postings/{id}/apply        # 409 + ?force=true on duplicate-company
+GET               /api/career/skill-demand?track=&propose=  # Phase A — has side effects like /portfolio
+# Phase B (Career Intelligence Graph) has no new HTTP route — 4 tools only, see above
+GET               /api/career/sprint/current | history       # Phase C
+GET               /api/career/portfolio/items                # Phase D
+POST              /api/career/portfolio/items                # Phase D — manual refresh, always proposes
+GET               /api/career/resume/versions | performance   # Phase D — metadata only, never decrypted content
+GET               /api/career/opportunities?source=           # Phase E
+POST              /api/career/resume/versions                 # Phase D — always proposes, never auto-saves
+POST              /api/career/interviews                      # Phase F — tier 1, auto-executed + notified
+GET               /api/career/interviews/patterns              # Phase F
+GET               /api/career/companies?city=&confidence=&is_target=  # Company Discovery
+PATCH             /api/career/companies/{id}/target
+GET               /api/career/companies/{id}/postings
 ```
 
 ## Life Autopilot
@@ -1016,7 +1744,28 @@ nine inference agents' weekly-rollup checks; each independently
 re-checks its own kill switch) · `life_wellbeing_weekly` (07:15,
 LIFE AUTOPILOT L5 — computes last week's wellbeing_weekly row; no-ops
 except on Monday) · `life_review_monthly` (1st, 06:30, LIFE AUTOPILOT
-L6 — monthly Life Review vault note, idempotent per month).
+L6 — monthly Life Review vault note, idempotent per month) ·
+`credit_score_recompute` (06:50, AMY CREDIT SCORE MODULE Phase 3 —
+weekly, Monday-only no-op inside a `daily_at` job same as
+`life_wellbeing_weekly`; recomputes and persists the illustrative Amy
+Score) · `career_graph_rebuild` (05:40, CAREER AUTOPILOT Phase B —
+weekly, same Monday-only idiom; rebuilds the shared Career Intelligence
+Graph) · `career_sprint_generate` (07:30, CAREER AUTOPILOT Phase C —
+weekly, Monday-only; generates the week's career sprint goal) ·
+`career_sprint_review` (20:00, CAREER AUTOPILOT Phase C — weekly,
+Sunday-only; writes the sprint review vault note) · `portfolio_activity_
+scan` (every 12h, CAREER AUTOPILOT Phase D — pushed_at-cursor GitHub
+activity detection, proposes a targeted portfolio_items refresh) ·
+`course_completion_scan` (every 6h, CAREER AUTOPILOT Phase D — proposes
+a master-resume bullet only for a completed learning item that closes a
+current skill gap) · `opportunity_radar_scan` (reuses `job_scout_poll`'s
+own interval, default 12h — CAREER AUTOPILOT Phase E — HN "Who's Hiring"
++ GitHub org activity + Product Hunt/Reddit hiring-signal discovery,
+scores once at discovery, no LinkedIn in any form) · `ats_fast_poll`
+(hourly — Company Discovery extension — direct Greenhouse/Lever/Ashby
+polling, scoped to `is_target=1` companies only) · `company_discovery_
+scan` (weekly, Monday-only — Company Discovery extension — broader
+ATS refresh + free-tier Himalayas/TheirStack + GitHub fan-out).
 
 ```
 GET               /api/automation/status | jobs | runs | llm-stats | dead-letters | learned-rules
@@ -1054,6 +1803,18 @@ github.pr_review_requested / pr_status_changed / issue_assigned   # CONNECTOR CO
 plane.task_assigned / task_due_soon / task_status_changed
 career.goal_set / job_discovered / application_prepared / application_sent /
   application_status_changed / portfolio_analyzed   # CAREER AUTOPILOT
+career.skill_demand_updated   # Phase A — {track, postings_analyzed, top_skill}; no subscriber yet
+career.sprint_generated / sprint_reviewed   # Phase C — no subscriber yet
+career.opportunity_detected   # Phase E — {source, company, score}; no subscriber yet
+career.interview_logged   # Phase F — {application_id, company, round_type, self_assessed_outcome}; no subscriber yet
+career.job_posting_detected_fast   # Company Discovery extension — {posting_id, company, platform}; no subscriber yet
+fraud.detected   # Fraud Detection Module Phase 1 — {transaction_id, risk_level,
+                 # recommended_action, reason_code_count} only; no subscriber yet
+aml.alert / aml.case_opened   # AML Monitoring Module Phase 2 — {case_id, typology,
+                 # risk_level[, evidence_count]} only; no subscriber yet
+credit.updated   # Amy Credit Score Module Phase 3 — {score, computed_at} only; no subscriber yet
+loan.requested / loan.approved   # Loan Underwriting Module Phase 5 — real emit sites.
+                 # loan.rejected is defined but has no emit site (see quirk 32)
 ```
 
 ### Event bus factory + reactive-agent wiring (quirk 20)
@@ -1150,6 +1911,13 @@ OAuth redirect: `{base_url}/api/connectors/google/callback` — must match Googl
 25. `FinanceEngine.overview()` reports the month containing the **most recent transaction** (`latest_month_range()`), not the real calendar month — an imported historical statement that ends before "today" would otherwise render the dashboard as all-zero. Response now includes `"period": "YYYY-MM"`; the frontend (`loadFinOverview()` in `index.html`) shows a "Showing {month} — the most recent month with data" banner whenever `period` isn't the current month. Every OTHER caller (`this_month_spend`/`effective_monthly_income`/`balance_estimate`/`budget_status` default params, obligations/zakat, values screening, budget suggestions, closers) still defaults to the real calendar month via `_this_month_range()` — `latest_month_range()` is dashboard-overview-only; pass `date_range=` explicitly if a caller needs the same "most recent data" behavior elsewhere.
 26. `subscription_detect.py` / `investment_detect.py` / `income_detect.py` all bucket recurrence candidates by `(account_id, merchant.lower())`, not merchant alone — the same merchant name recurring across two different accounts (household's two cards, two SIP-linked accounts) must not be merged before the cadence/amount checks, or interleaved dates/amounts corrupt the detector and silently drop a real recurring item. Same precedent as `amy/finance/dedup.py`'s account-scoped bucketing.
 27. CSV/XLS import has a manual column-mapping fallback UI (`renderColumnMappingUI()` in `index.html`) for when `POST .../preview/csv` returns `needs_mapping: true` (unrecognized headers — auto-detect, saved map, and bank preset all missed). It renders a header/sample-row picker (Date/Description required; Debit+Credit or a single Amount+optional Dr/Cr-type column), then `POST .../column-map` followed by re-running the same preview call, which should now succeed via the saved-map path.
+28. Fraud Detection Module (`amy/finance/fraud_engine.py`): (a) `AGENT_GATE` assigns one **static** tier per tool name and only fires for `actor="agent"` calls — it can't vary tier by a specific score's severity, and the module's real callers (the API routes, the assistant tool) are `actor="human"`, which skips `AGENT_GATE` entirely. So HIGH/CRITICAL→tier-2 routing is enforced by `review_transaction()` calling `submit_action()` directly with a severity-computed tier — the same pattern already used in `amy/agents/reactive.py` for `resume_update`/`career_wind_down`. Don't assume registering `review_fraud_transaction` as `RISK_WRITE` is what protects a CRITICAL score from auto-executing; it isn't, by itself. (b) `transactions.date` is a date-only `"YYYY-MM-DD"` string with no time-of-day component across every import path (CSV/PDF/Gmail) — a literal time-of-day fraud signal can't be computed from real data here; `fraud_engine.py` marks it in `UNAVAILABLE_SIGNALS` and uses a day-of-week signal (`atypical_day_of_week`) as the honest substitute instead of fabricating an hour. Any future signal/feature that wants intraday timing needs a real schema change first.
+29. AML Monitoring Module (`amy/finance/aml_engine.py`): (a) circular-transfer detection deliberately does NOT write into the shared `index/{uid}/graph.db` — it uses a dedicated `aml_graph.db` via the same `GraphStore` class. `graph.db` backs `/api/graph/viz` and `career_apply.py`'s referral search (an untyped substring scan over every node label, no type filter) — mixing financial account/beneficiary nodes into it would risk them surfacing in an unrelated career-referral chat answer or the general knowledge-graph visualization. Don't "consolidate" the two graphs without re-solving that leak risk first. (b) `GraphStore.neighbors()`/`traverse()` are direction-agnostic (they union `src=?` and `dst=?` — an A→B edge and a B→A edge look identical to them), so `aml_engine.py`'s cycle detection (`_find_directed_cycles`) works off `GraphStore.edges()` directly (which DOES preserve `src`/`dst`) with its own small DFS, never `traverse()`. Reusing `traverse()` for "is this circular" would silently produce false positives for any merely-connected set of accounts. (c) Circular-transfer detection only sees money movement across the user's OWN linked accounts + custodial beneficiaries — bank statements in this schema never carry a counterparty account identifier, so real cross-institution AML layering isn't observable here; this is disclosed in the module docstring, not a bug to "fix" by trying to infer external counterparties from free-text merchant strings alone.
+30. Amy Credit Score Module (`amy/finance/credit_engine.py`): (a) `payment_history` is NOT real bill/loan payment history — this schema has no such tracking. `amy/commitments/engine.py`'s `KINDS` are `return_window/warranty/renewal/document/custom` (life-admin deadlines), and `subscriptions.status` is free-text with no "missed payment" semantic anywhere in the codebase. The factor is computed as a disclosed proxy (commitment completion rate + subscription non-active ratio) — don't reinterpret an "expired" commitment as a missed bill payment anywhere else in this codebase either; it means a return window or warranty lapsed. (b) `overdrafts` is hard-coded `available:false` because `accounts` has NO `balance` column anywhere in this schema — `FinanceEngine.balance_estimate()` is a monthly income-minus-spend delta, not a running account balance. For the same reason, "savings" isn't a separate factor from `investment_profile` — a second factor reading the same `investments` table under a different name would be double-counting, not a real second signal. (c) Unavailable factors are excluded from both the numerator AND the normalization denominator when combining the weighted average — a factor being `available:false` must never silently count as a 0, or a user with (say) no business entity would be penalized for something this system simply doesn't know, not something bad.
+31. Jurisdiction pack ids don't match ISO/common-name expectations 1:1 — the US pack is `amy/jurisdictions/us.json` with `id: "us"`, NOT `usa.json`/`"usa"` (a wrong guess here 404s `load_pack("usa")` silently via `PackError`, it doesn't fall back). Packs are flat files (`amy/jurisdictions/{id}.json`), never subdirectories, and there is no separate `tax.json` — each pack's tax figures live inline as its own `tax_facts` array. Phase 4's `loan_config` section (see the jurisdictions module-tree entry above) is OPTIONAL per pack — always check `loan_config(pack) is not None` (or catch the route's 404) before assuming a pack has one; don't assume every jurisdiction pack has loan support just because these three demo packs do.
+32. Loan Underwriting Module (`amy/finance/loan_engine.py`) rejection is handled by **reconciliation-on-read**, not a dedicated executor or a loan-specific reject endpoint. `executors.reject()` is generic — it only marks the `approvals` row `'rejected'`, with no per-action-type hook to sync `loan_applications.status`. `loan_engine._reconcile()` (called by `get_application()`/`list_applications()`, and therefore by both `GET /api/loans` routes) checks: if a `'pending'` application's linked approval is `'rejected'`/`'expired'`, update and return that status. **Do not add a parallel `POST /api/loans/{id}/reject` endpoint** — a human rejecting through the standard Approval Inbox UI (the real path, same as every other Banking Risk Intelligence phase) would bypass it, leaving `loan_applications.status` silently stuck at `'pending'` forever; that was the exact bug this design avoids. If a future change needs an actual "on-rejection" side effect (e.g. a notification), add it inside `_reconcile()` itself, not a second decision path.
+33. `amy.learning_feed.sensor.list_focuses(collab_conn, uid)` is NOT a pure read — for a user with zero `learning_focuses` rows it auto-seeds one from the legacy single-focus resolver (`resolve_focus()`), a real side effect meant for the Learn tab's first-time UX. Any new code that wants to check "does a focus for X already exist" (e.g. `career_scout.py`'s skill-demand dedup, quirk before this one's spirit) must query `learning_focuses` directly (`SELECT topic FROM learning_focuses WHERE uid=? AND active=1`), never via `list_focuses()`, or the check itself will silently create an unwanted default focus. Relatedly, `career_scout.py` keeps TWO different track-word helpers on purpose — `_track_words()` (excludes generic role suffixes like "developer"/"engineer", used for posting↔track matching, since matching on those alone would hit nearly any tech posting) and `_track_all_words()` (keeps every word including those suffixes, used to exclude the track's own name from counted skill-demand keywords, since even "developer" showing up in 100% of a "Flutter Developer" track's postings isn't a skill gap). Don't collapse them into one list — each exists for a specific, different reason.
+34. Two career-adjacent graphs exist in this codebase and they are deliberately NOT the same choice of shared-vs-dedicated file. `amy/finance/aml_engine.py`'s circular-transfer graph uses a DEDICATED `aml_graph.db` because financial account/beneficiary nodes in the shared `graph.db` would leak into `career_apply.py`'s referral search (an untyped substring scan over every node label) and the general knowledge-graph viz. `amy/career_graph.py`'s Career Intelligence Graph (Phase B) uses the OPPOSITE choice — the SHARED `graph.db` — because there's no such cross-domain concern: `graph.db` is already career-adjacent (`amy/automation/orchestrator.py`'s `agentgoal:`/`agenttask:` plan-graph nodes), and adding `skill:`/`company:`/`project:`/`role:`-prefixed nodes there directly improves that same referral search. Don't "fix inconsistency" by making these match each other — each is the correct choice for its own domain. Corollary: `career_graph.py::rebuild_career_graph()` must NEVER call `GraphStore.reset()` (unlike `aml_engine.py`, which resets its dedicated graph every run) — that would wipe the unrelated orchestrator.py nodes out of the shared file. `career_graph.py`'s `why_rejected()` independently rediscovered `career_scout.py`'s "exclude the track's own role-shaped words" lesson (quirk 33) — found via a failing test, not by inspection — worth remembering as a general rule any NEW code reading `job_postings.keywords` for a specific posting should apply too, not just the two call sites that currently do.
 
 ## Common Pattern
 

@@ -79,6 +79,84 @@ LIFE_PATTERN_DETECTED = "life.pattern_detected"        # L3
 LIFE_HABIT_AUTOCOMPLETED = "life.habit_autocompleted"  # L4
 LIFE_WELLBEING_WEEK_COMPUTED = "life.wellbeing_week_computed"  # L5
 
+# Fraud Detection Module (Phase 1, amy/finance/fraud_engine.py). Payload is
+# {transaction_id, risk_level, recommended_action, reason_code_count} —
+# never the raw score breakdown. Not yet in AGENT_RELEVANT_EVENTS below —
+# no reactive agent subscribes to it in Phase 1 (same precedent as
+# career.* events, which were only added to that warn-set once a real
+# subscriber existed).
+FRAUD_DETECTED = "fraud.detected"
+
+# AML Monitoring Module (Phase 2, amy/finance/aml_engine.py). aml.alert
+# fires on every detector trigger (even a re-confirmed existing case);
+# aml.case_opened fires only when a NEW aml_cases row was created. Payloads
+# are {case_id, typology, risk_level[, evidence_count]} — never raw
+# transaction amounts/merchants. Not yet in AGENT_RELEVANT_EVENTS — no
+# reactive agent subscribes to either in Phase 2 (same precedent as
+# fraud.detected above).
+AML_ALERT = "aml.alert"
+AML_CASE_OPENED = "aml.case_opened"
+
+# Amy Credit Score Module (Phase 3, amy/finance/credit_engine.py) — an
+# illustrative internal score, never a real bureau product. Payload is
+# {score, computed_at} only. Not yet in AGENT_RELEVANT_EVENTS — no
+# reactive agent subscribes yet (same precedent as the two above).
+CREDIT_UPDATED = "credit.updated"
+
+# Loan Underwriting Module (Phase 5, amy/finance/loan_engine.py) — an
+# illustrative underwriting simulation, never a real lending decision.
+# loan.requested fires when apply_for_loan() persists a new application
+# (before the human decides); loan.approved fires from the loan_decision
+# executor once a human approves the tier-2 request. loan.rejected is
+# defined for documentation/future use but no code path emits it today —
+# rejection is handled by lazy reconciliation against the approvals table
+# on read (see loan_engine._reconcile()'s docstring) rather than a
+# dedicated executor, so there's no natural emit site yet; add one if a
+# future reactive agent needs to react to a rejection specifically. Not
+# yet in AGENT_RELEVANT_EVENTS — no reactive agent subscribes yet (same
+# precedent as the three above).
+LOAN_REQUESTED = "loan.requested"
+LOAN_APPROVED = "loan.approved"
+LOAN_REJECTED = "loan.rejected"
+
+# CAREER AUTOPILOT Phase A ("Learning Driven by Jobs", amy/career_scout.py's
+# skill_demand_report()). A genuinely different concern from
+# LEARNING_FEED_REFRESHED (feed ITEMS being fetched for an existing focus) —
+# this fires when a market-demand report over job_postings.keywords is
+# computed. Payload: {track, postings_analyzed, top_skill}. Not yet in
+# AGENT_RELEVANT_EVENTS — no reactive agent subscribes yet.
+CAREER_SKILL_DEMAND_UPDATED = "career.skill_demand_updated"
+
+# CAREER AUTOPILOT Phase C (amy/career_sprint.py) — the weekly sprint
+# generate/review loop. sprint_generated payload: {week, status,
+# skill_gaps_addressed, skill_gaps_total}; sprint_reviewed payload: {week,
+# tasks_completed, tasks_planned, applications_sent, interviews_scheduled}.
+# Not yet in AGENT_RELEVANT_EVENTS — no reactive agent subscribes yet
+# (same precedent as CAREER_SKILL_DEMAND_UPDATED above).
+CAREER_SPRINT_GENERATED = "career.sprint_generated"
+CAREER_SPRINT_REVIEWED = "career.sprint_reviewed"
+
+# CAREER AUTOPILOT Phase E (amy/opportunity_radar.py) — fires once per
+# newly-scored opportunity (HN "Who is Hiring" posting or a company-level
+# opportunity_signals row). Payload: {source, company, score} only. Not
+# yet in AGENT_RELEVANT_EVENTS — no reactive agent subscribes yet, same
+# precedent as CAREER_SKILL_DEMAND_UPDATED/CAREER_SPRINT_GENERATED.
+CAREER_OPPORTUNITY_DETECTED = "career.opportunity_detected"
+
+# CAREER AUTOPILOT Phase F (amy/interview_memory.py, final phase) — a
+# manually-logged journal entry, not a detection event. Payload:
+# {application_id, company, round_type, self_assessed_outcome}. Not yet
+# in AGENT_RELEVANT_EVENTS — no reactive agent subscribes yet, same
+# precedent as every other Phase A-E career event.
+CAREER_INTERVIEW_LOGGED = "career.interview_logged"
+
+# Company Discovery + ATS Fast-Track (extends CAREER AUTOPILOT Phase E,
+# amy/company_discovery.py). Fires once per NEW posting discovered via a
+# direct Greenhouse/Lever/Ashby ATS poll. Payload: {posting_id, company,
+# platform}. Not yet in AGENT_RELEVANT_EVENTS — no reactive agent
+# subscribes yet, same precedent as every other career event.
+CAREER_JOB_POSTING_DETECTED_FAST = "career.job_posting_detected_fast"
+
 # Event types a reactive agent (amy/agents/reactive.py) actually .subscribe()s
 # to today. Kept as a plain literal set HERE rather than imported from
 # amy.agents.reactive, so this module stays import-free of agents/automation

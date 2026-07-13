@@ -9,9 +9,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from amy.jurisdictions import (PackError, list_packs, load_pack,
-                               list_obligation_presets, obligation_preset,
-                               resolve_version, upcoming_deadlines,
+from amy.jurisdictions import (LOAN_TYPES, PackError, list_packs, load_pack,
+                               list_obligation_presets, loan_config,
+                               obligation_preset, resolve_version,
+                               upcoming_deadlines, validate_loan_config,
                                validate_pack)
 from amy.fx import FxConverter
 from amy.locale_fmt import format_money, group_number, prompt_hint
@@ -107,6 +108,59 @@ def test_fourth_jurisdiction_is_json_only(tmp_path):
     bad = dict(template)
     del bad["disclaimer"]
     assert any("disclaimer" in p for p in validate_pack(bad))
+
+
+# --- Phase 4: loan_config extension --------------------------------------------
+
+def test_all_three_packs_have_a_valid_loan_config():
+    for pid in ("india", "uae", "us"):
+        pack = load_pack(pid)          # still loads/validates after the extension
+        cfg = loan_config(pack)
+        assert cfg is not None
+        assert validate_loan_config(pack) == []
+        assert cfg["_disclaimer"]
+        for lt in LOAN_TYPES:
+            entry = cfg["loan_limits"][lt]
+            assert entry["amount"] > 0
+            assert entry["currency"]
+        assert 0 < cfg["max_debt_to_income_ratio"] <= 1
+        assert cfg["late_fee_rules"]["type"] in ("percentage_of_overdue", "flat_fee")
+        assert isinstance(cfg["late_fee_rules"]["grace_days"], int)
+
+
+def test_islamic_finance_only_true_for_uae():
+    assert loan_config(load_pack("uae"))["islamic_finance_available"] is True
+    assert loan_config(load_pack("india"))["islamic_finance_available"] is False
+    assert loan_config(load_pack("us"))["islamic_finance_available"] is False
+
+
+def test_late_fee_rules_shape_matches_type():
+    india_fee = loan_config(load_pack("india"))["late_fee_rules"]
+    assert india_fee["type"] == "percentage_of_overdue"
+    assert isinstance(india_fee["rate"], (int, float))
+    us_fee = loan_config(load_pack("us"))["late_fee_rules"]
+    assert us_fee["type"] == "flat_fee"
+    assert isinstance(us_fee["amount"], (int, float))
+
+
+def test_loan_config_is_optional_but_validated_when_present():
+    # a pack with no loan_config at all is a valid state, not an error —
+    # loan_config() returns None rather than raising or fabricating one
+    template = {"id": "x"}
+    assert loan_config(template) is None
+
+    # but a PRESENT, broken loan_config is caught, not half-accepted
+    pack = dict(load_pack("india"))
+    broken = dict(pack["loan_config"])
+    broken["loan_limits"] = dict(broken["loan_limits"])
+    del broken["loan_limits"]["home"]
+    del broken["max_debt_to_income_ratio"]
+    pack = {**pack, "loan_config": broken}
+    problems = validate_loan_config(pack)
+    assert any("home" in p for p in problems)
+    assert any("max_debt_to_income_ratio" in p for p in problems)
+    # and validate_pack() (the one load_pack() actually calls) surfaces the same
+    assert any("loan_config" in p for p in validate_pack(pack))
 
 
 # --- FX -----------------------------------------------------------------------

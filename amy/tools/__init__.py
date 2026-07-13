@@ -14,3 +14,7 @@ from . import mcp_bridge  # noqa: F401  — registers the MCP source bridge tool
 from . import connector_tools  # noqa: F401  — GitHub/Plane/Meet tools (CONNECTOR COMPLETION)
 from . import career_tools  # noqa: F401  — job search/portfolio/application tools (CAREER AUTOPILOT)
 from . import life_tools  # noqa: F401  — health targets tool (LIFE AUTOPILOT)
+from . import fraud_tools  # noqa: F401  — fraud detection tools (Phase 1)
+from . import aml_tools  # noqa: F401  — AML monitoring tools (Phase 2)
+from . import credit_tools  # noqa: F401  — Amy Credit Score tools (Phase 3)
+from . import loan_tools  # noqa: F401  — Loan Underwriting tools (Phase 5)

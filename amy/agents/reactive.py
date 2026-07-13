@@ -885,6 +885,17 @@ def portfolio_analyze(events, ctx, target_role: str | None = None,
         except Exception as exc:
             _log.warning("portfolio: LLM narrative pass failed, using fallback: %s", exc)
 
+    # CAREER AUTOPILOT Phase D: persist the classification this SAME pass
+    # just computed — previously reached only a vault note as formatted
+    # text (see amy/career_portfolio.py's module docstring).
+    try:
+        from ..career_portfolio import persist_classification
+        entries_by_repo = {str(e.get("repo") or ""): e for e in entries}
+        persist_classification(ctx, target_role, showcase, needs_work, not_relevant,
+                               entries_by_repo=entries_by_repo)
+    except Exception as exc:
+        _log.warning("portfolio: persisting classification failed: %s", exc)
+
     queued = 0
     if gap_projects:
         reasoning = (f"Portfolio gap projects for '{target_role}': {len(gap_projects)} "
@@ -1199,7 +1210,10 @@ def interview_debrief_check(events, ctx) -> int:
                     body=("A debrief note skeleton is in your vault "
                           f"(Interview Debrief - {company} - {date_str}) — "
                           "two minutes now beats a blank memory next round. "
-                          "Skippable; this is the only prompt for this event."),
+                          "For a structured, searchable record, tell the "
+                          "assistant about it (log_interview_from_chat) or "
+                          "POST /api/career/interviews. Skippable; this is "
+                          "the only prompt for this event."),
                     priority="normal",
                     related_entity={"entity_type": "calendar_event",
                                     "id": event_id})
